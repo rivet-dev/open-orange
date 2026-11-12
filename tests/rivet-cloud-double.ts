@@ -31,6 +31,8 @@ export interface RivetCloudDoubleOptions {
 	poolOutcome?: "ready" | { fault: "platform" | "user"; message: string; state: "degraded" | "down" };
 	regions: string[];
 	token: string;
+	// `token` is a cluster token, which Rivet Cloud lets update a pool but not create one.
+	tokenIsClusterToken?: boolean;
 	// Cloud storage refuses the upload with this S3-style error.
 	// `html` answers as the storage front end does, with a page instead of the XML error.
 	uploadRejection?: { code: string; message: string; status: number } | { html: string; status: number };
@@ -370,6 +372,10 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 					return;
 				}
 				const existing = pools.get(key);
+				if (existing === undefined && options.tokenIsClusterToken === true) {
+					error(response, 403, "Forbidden", `Cluster tokens cannot create runner pool '${key.split("/")[1]}'. Create it from the dashboard first.`);
+					return;
+				}
 				const pool: CloudPool = {
 					build_id: build.id,
 					cidr_allowlist: body.cidr_allowlist as string[],

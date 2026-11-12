@@ -143,6 +143,17 @@ test("a rejected token fails before anything is built and names where the token 
 	});
 });
 
+test("a cluster token that cannot create a new pool fails with what to do next, and no bug report link", async () => {
+	await withDeploy({ builds: { bld_ready: "ready" }, tokenIsClusterToken: true }, async (cloud, project, env) => {
+		const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--build", "bld_ready"], env);
+		assert.equal(code, 1, output);
+		assert.match(output, /Cluster tokens cannot create runner pool 'default'\./);
+		assert.match(output, /Create pool default in the dashboard at https:\/\/dashboard\.rivet\.dev, or deploy once after `orange login`\./);
+		assert.doesNotMatch(output, /organization that owns the cluster|Looks like a bug/);
+		assert.equal(cloud.pools.size, 0);
+	});
+});
+
 test("a cluster with several regions needs --region and lists them", async () => {
 	await withDeploy({ regions: ["iad", "fra"] }, async (cloud, project, env) => {
 		const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url], env);

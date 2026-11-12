@@ -101,7 +101,11 @@ export function createRivetCloudClient(options: RivetCloudOptions): RivetCloudCl
 		method: "GET" | "POST" | "PUT",
 		path: string,
 		schema: z.ZodType<T>,
-		{ body, missingIsUndefined = false }: { body?: unknown; missingIsUndefined?: boolean } = {},
+		{
+			body,
+			forbiddenHint,
+			missingIsUndefined = false,
+		}: { body?: unknown; forbiddenHint?: string; missingIsUndefined?: boolean } = {},
 	): Promise<{ value: T | undefined }> => {
 		const url = new URL(`/v2/clusters/${cluster}${path}`, options.apiUrl);
 		const send = async (token: string): Promise<Response> =>
@@ -137,7 +141,7 @@ export function createRivetCloudClient(options: RivetCloudOptions): RivetCloudCl
 		const text = await response.text();
 		if (response.status === 404 && missingIsUndefined) return { value: undefined };
 		if (!response.ok) {
-			throw apiError(action, options.cluster, response.status, text, token);
+			throw apiError(action, options.cluster, response.status, text, token, forbiddenHint);
 		}
 		if (text.length === 0) return { value: undefined };
 		let json: unknown;
@@ -188,7 +192,9 @@ export function createRivetCloudClient(options: RivetCloudOptions): RivetCloudCl
 		},
 		async putPool(region, pool, body) {
 			const action = `roll out pool ${pool} in region ${region}`;
-			return required(await call(action, "PUT", poolPath(region, pool), poolSchema, { body }), action);
+			// A cluster token can update a pool but not create one, and a login token can do both.
+			const forbiddenHint = `Create pool ${pool} in the dashboard at https://dashboard.rivet.dev, or deploy once after \`orange login\`.`;
+			return required(await call(action, "PUT", poolPath(region, pool), poolSchema, { body, forbiddenHint }), action);
 		},
 	};
 }
@@ -199,7 +205,8 @@ function sentence(text: string): string {
 
 // Rivet Cloud errors are `{ _tag, message, errors? }`. The token is never part of the message.
 // A rejected token, a missing permission, or a plan limit is for the user to fix, not a bug in Orange.
-function apiError(action: string, cluster: string, status: number, text: string, token: string): Error {
+// `forbiddenHint` replaces the 403 advice for a call that runs after the token already reached the cluster.
+function apiError(action: string, cluster: string, status: number, text: string, token: string, forbiddenHint?: string): Error {
 	let parsed: z.infer<typeof apiErrorSchema> | undefined;
 	try {
 		const result = apiErrorSchema.safeParse(JSON.parse(text));
@@ -216,6 +223,9 @@ function apiError(action: string, cluster: string, status: number, text: string,
 	}
 	if (status === 401) {
 		return new ExpectedFailure(`Couldn't ${action}. Rivet Cloud rejected the token: ${reason}\nPass a valid Rivet Cloud token with --token or RIVET_CLOUD_TOKEN. Or run \`orange login\`.`);
+	}
+	if (status === 403 && forbiddenHint !== undefined) {
+		return new ExpectedFailure(`Couldn't ${action}. ${sentence(reason)}\n${forbiddenHint}`);
 	}
 	if (status === 403) {
 		return new ExpectedFailure(`Couldn't ${action}. The token has no access to cluster ${cluster}: ${reason}\nUse a token from the organization that owns the cluster.`);

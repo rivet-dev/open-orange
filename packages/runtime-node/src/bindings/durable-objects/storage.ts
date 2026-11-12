@@ -34,10 +34,14 @@ import { createSyncKvStorage, DurableObjectKvStore } from "./sync-kv.js";
 import { sqlStatementError } from "./sqlite-errors.js";
 import { errorMessage } from "../unknown-values.js";
 
+const unimplementedStorageMembers = new Set<PropertyKey>([
+	"getBookmarkForTime",
+	"onNextSessionRestoreBookmark",
+]);
+
 function unsupportedStorageMember(property: PropertyKey): Error {
-	const name = typeof property === "symbol" ? property.description : property;
 	return new Error(
-		`DurableObjectStorage.${name ?? "unknown"} is not implemented`,
+		`DurableObjectStorage.${String(property)} is not implemented`,
 	);
 }
 
@@ -1417,11 +1421,13 @@ export function createDurableObjectStorage(
 	);
 	const storage = new Proxy(target, {
 		get(storage, property): unknown {
-			if (Reflect.has(storage, property)) {
-				const value: unknown = Reflect.get(storage, property, storage);
-				return typeof value === "function" ? value.bind(storage) : value;
+			if (unimplementedStorageMembers.has(property)) {
+				throw unsupportedStorageMember(property);
 			}
-			throw unsupportedStorageMember(property);
+			// A member Cloudflare does not define reads as undefined, as on workerd, so a library can
+			// probe the object to tell which SQLite client it was given.
+			const value: unknown = Reflect.get(storage, property, storage);
+			return typeof value === "function" ? value.bind(storage) : value;
 		},
 	});
 	turnDatabases.set(storage, database);

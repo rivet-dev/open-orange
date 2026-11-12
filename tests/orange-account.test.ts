@@ -253,5 +253,22 @@ test("an admin token and a cluster the token cannot see each fail with what to d
 		const other = await orange(["deploy", "--cluster", "someone-elses", "--token", "ci-token-value", ...rollout(cloud)]);
 		assert.equal(other.code, 1, other.output);
 		assert.match(other.output, /this token may belong to another organization/);
+		// The user's to fix, not a bug in Orange.
+		assert.doesNotMatch(admin.output + other.output, /Looks like a bug/);
+	});
+});
+
+test("an unreachable Rivet Cloud fails the deploy with one clear reason and no bug report link", { timeout: 120_000 }, async () => {
+	await withAccount(async ({ cloud, orange, writeSession }) => {
+		const { refreshToken } = cloud.issueSession();
+		// An expired session must refresh first, so this covers the sign-in request and the API call.
+		await writeSession({ accessToken: "expired", expiresAt: Date.now() - 1_000, refreshToken });
+		await cloud.close();
+		for (const credentials of [[], ["--token", "ci-token-value"]]) {
+			const deploy = await orange(["deploy", "--cluster", cluster, ...credentials, ...rollout(cloud)]);
+			assert.equal(deploy.code, 1, deploy.output);
+			assert.equal(deploy.output.match(/Couldn't reach Rivet Cloud at /g)?.length, 1, deploy.output);
+			assert.doesNotMatch(deploy.output, /Looks like a bug/);
+		}
 	});
 });

@@ -13,6 +13,7 @@ import { bundleWorker, type ModuleRule } from "../build/bundle-worker.js";
 import { runCustomBuild } from "./dev.js";
 import { customBuildDoneVariable } from "./serve.js";
 import { unresolvedRuntimeModules } from "../build/rewrite-module-imports.js";
+import { ExpectedFailure, exitWithOutcome } from "../cli/issue-report.js";
 import { startSpinner } from "../cli/spinner.js";
 import { createTheme, type Theme } from "../cli/theme.js";
 import { loadWranglerConfiguration } from "../config/load-wrangler.js";
@@ -133,7 +134,7 @@ export async function runDeployCommand(
 		return await executeDeployCommand(args, io);
 	} catch (error: unknown) {
 		io.error(error instanceof Error ? error.message : String(error));
-		return 1;
+		return error instanceof ExpectedFailure ? exitWithOutcome(1) : 1;
 	}
 }
 

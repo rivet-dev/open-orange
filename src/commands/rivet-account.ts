@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 
+import { ExpectedFailure, exitWithOutcome } from "../cli/issue-report.js";
 import { isRivetMcpConfigured } from "./mcp.js";
 
 // Sign-in and the cluster link. These read and write the files of the Rivet CLI, so `rivet login`
@@ -139,7 +140,8 @@ async function postAuth(apiUrl: string, path: string, body: unknown): Promise<{ 
 		});
 	} catch (error: unknown) {
 		const cause = error instanceof Error ? error.message : String(error);
-		throw new Error(`Couldn't reach Rivet Cloud at ${url.origin}: ${cause}`);
+		// A network failure is the machine's or Rivet Cloud's, not a bug in Orange.
+		throw new ExpectedFailure(`Couldn't reach Rivet Cloud at ${url.origin}: ${cause}`);
 	}
 	return { ok: response.ok, status: response.status, text: await response.text() };
 }
@@ -155,7 +157,7 @@ function isCurrent(session: Session): boolean {
  */
 async function latestSession(apiUrl: string, held: Session): Promise<Session> {
 	const latest = (await readCredentials()).sessions[sessionKey(apiUrl)];
-	if (latest === undefined) throw new Error(sessionExpiredMessage);
+	if (latest === undefined) throw new ExpectedFailure(sessionExpiredMessage);
 	if (latest.refresh_token !== held.refresh_token && isCurrent(latest)) return latest;
 	const { ok, status, text } = await postAuth(apiUrl, "refresh", { refresh_token: latest.refresh_token });
 	if (ok) {
@@ -169,7 +171,7 @@ async function latestSession(apiUrl: string, held: Session): Promise<Session> {
 		const after = (await readCredentials()).sessions[sessionKey(apiUrl)];
 		if (after !== undefined && after.refresh_token !== latest.refresh_token) return await latestSession(apiUrl, latest);
 		await saveSession(apiUrl, undefined);
-		throw new Error(sessionExpiredMessage);
+		throw new ExpectedFailure(sessionExpiredMessage);
 	}
 	throw new Error(`Couldn't refresh the Rivet Cloud session (HTTP ${status}): ${text.slice(0, 200)}`);
 }
@@ -407,6 +409,6 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 		}
 	} catch (error: unknown) {
 		io.error(error instanceof Error ? error.message : String(error));
-		return 1;
+		return error instanceof ExpectedFailure ? exitWithOutcome(1) : 1;
 	}
 }

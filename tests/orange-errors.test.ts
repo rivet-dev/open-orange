@@ -47,7 +47,7 @@ test("a failed command links to a prefilled issue that holds the error but no se
 	const envSecret = "tr0ub4dor-and-3";
 	// A real API that repeats the caller's credentials and a server path in its error, as a proxy might.
 	const api = createServer((request, response) => {
-		response.writeHead(401, { "content-type": "application/json" });
+		response.writeHead(500, { "content-type": "application/json" });
 		response.end(
 			JSON.stringify({
 				code: "bad_token",
@@ -70,8 +70,8 @@ test("a failed command links to a prefilled issue that holds the error but no se
 			assert.equal(code, 1, output);
 			const { body, title } = reportedIssue(output);
 			assert.match(title, /^orange deploy: /);
-			assert.match(title, /Rivet Cloud rejected the token/);
-			assert.match(body, /Rivet Cloud rejected the token/);
+			assert.match(title, /\(HTTP 500\): rejected/);
+			assert.match(body, /\(HTTP 500\): rejected/);
 			const report = title + body;
 			for (const leak of [secret, "hunter2hunter2", "pa55word", project.directory, "/etc/orange"]) {
 				assert.ok(!report.includes(leak), `${leak} leaked into:\n${report}`);

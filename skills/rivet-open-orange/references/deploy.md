@@ -83,6 +83,7 @@ For a D1 app, the local database is empty at first. Apply the app's migrations t
 |---|---|
 | 401 | The token is missing, invalid, or expired. The user runs `orange login` again. |
 | 403 or 404 | The cluster belongs to another organization, or does not exist. |
+| 403 when the pool does not exist yet | A cluster token cannot create a pool. The user creates it in the dashboard, or deploys once after `orange login`. |
 | 402 | The organization's plan or payment method does not cover the pool. |
 | 400 | A value is invalid. Orange prints each field error. |
 | Pool `degraded` or `down` | The deploy stops and prints the command that rolls the pool back. |

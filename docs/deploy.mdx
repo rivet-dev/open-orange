@@ -180,8 +180,10 @@ Never put a secret in `vars`. Everything in `vars` goes into the image.
 
 ## Deploy from CI
 
-Set a cluster token from the dashboard, with the Read and Deploy scopes, in
-`RIVET_CLOUD_TOKEN`.
+Make a cluster token in the Rivet dashboard: open the cluster, then **Settings** →
+**API tokens**. Give it the Read and Deploy scopes, and set it in `RIVET_CLOUD_TOKEN`.
+A cluster token cannot create a runner pool, so the pool must exist first. Create it in
+the dashboard, or deploy one time with `orange login`.
 
 ```sh
 $ RIVET_CLOUD_TOKEN=<cluster token> orange deploy --cluster my-cluster
@@ -235,8 +237,9 @@ In CI, name the cluster with `--cluster` or `RIVET_CLUSTER`. The cluster token i
 4. Orange registers a build, uploads the tarball to the build's upload URL,
    and waits until the build is `ready`. Rivet Cloud prepares a build in 3 to
    5 minutes.
-5. Orange rolls the runner pool out to the build. It creates the pool if it
-   does not exist, and prints `Creating pool default`. Every later deploy rolls
+5. Orange rolls the runner pool out to the build. With an `orange login` session, it
+   creates the pool if it does not exist, and prints `Creating pool default`. With a
+   cluster token, the pool must exist. Every later deploy rolls
    the same pool out to a new build, and prints `Rolling out pool default`
    instead. An existing pool keeps its CIDR allowlist, machine type,
    and node count unless you pass `--machine-type` or `--node-count`.

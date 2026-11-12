@@ -7,7 +7,17 @@
 // importer's runtime `dependencies`. Packages that only other importers or
 // development dependencies use stay in `packages` and `snapshots`, and pnpm
 // never installs them.
+//
+// It also leaves out packages that `orange serve` never loads, so they are not in the image:
+// - `@rivet-dev/services` (135 MB): Orange starts Services only beside a local Engine
+//   (`hostsTailServices` in runner.ts), and `orange serve` always connects to RIVET_ENDPOINT.
 export function imageLockfile(workspaceLockfile: string): string {
+	return withoutDependencyEdges(rootRuntimeLockfile(workspaceLockfile), unusedByServe);
+}
+
+const unusedByServe: ReadonlySet<string> = new Set(["@rivet-dev/services"]);
+
+function rootRuntimeLockfile(workspaceLockfile: string): string {
 	const lines = workspaceLockfile.split("\n");
 	const importers = lines.indexOf("importers:");
 	const packages = lines.indexOf("packages:");
@@ -35,6 +45,35 @@ export function imageLockfile(workspaceLockfile: string): string {
 		"",
 		...lines.slice(packages),
 	].join("\n");
+}
+
+// Removes each snapshot's dependency on the named packages. pnpm installs only what is
+// reachable, so it installs none of them. A frozen install checks only the importers against
+// package.json, so it accepts the result.
+function withoutDependencyEdges(lockfile: string, names: ReadonlySet<string>): string {
+	const lines = lockfile.split("\n");
+	const snapshots = lines.indexOf("snapshots:");
+	if (snapshots === -1) throw new Error("The pnpm-lock.yaml has no snapshots");
+	const out = lines.slice(0, snapshots + 1);
+	// A section header, such as `    optionalDependencies:`, waits until the section has an entry
+	// left, so no section is left empty.
+	let header: string | undefined;
+	for (const line of lines.slice(snapshots + 1)) {
+		if (/^ {6}\S/.test(line)) {
+			const name = line.trim().replace(/:.*$/, "").replace(/^'(.*)'$/, "$1");
+			if (names.has(name)) continue;
+		} else {
+			header = undefined;
+			if (/^ {4}\S.*:$/.test(line)) {
+				header = line;
+				continue;
+			}
+		}
+		if (header !== undefined) out.push(header);
+		header = undefined;
+		out.push(line);
+	}
+	return out.join("\n");
 }
 
 // The same lockfile without some of the root importer's dependencies, for an image that does not

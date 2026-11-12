@@ -822,7 +822,7 @@ interface DockerfileOptions {
 	builtOnHost?: boolean;
 	configPath?: string;
 	environment?: string;
-	// The pnpm that wrote the lockfile, such as `pnpm@10.13.1`.
+	// The pnpm that wrote the lockfile, such as `pnpm@10.34.9`.
 	packageManager: string;
 	// The project's place below /app, when `main` is outside the project. Empty otherwise.
 	projectDirectory?: string;

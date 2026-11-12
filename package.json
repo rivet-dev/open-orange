@@ -2,7 +2,7 @@
   "name": "open-orange",
   "version": "1.0.0",
   "description": "Cloudflare Workers compatibility layer for Rivet",
-  "packageManager": "pnpm@10.13.1",
+  "packageManager": "pnpm@10.34.9",
   "engines": {
     "node": ">=22"
   },

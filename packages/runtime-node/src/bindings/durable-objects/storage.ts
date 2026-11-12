@@ -34,15 +34,21 @@ import { createSyncKvStorage, DurableObjectKvStore } from "./sync-kv.js";
 import { sqlStatementError } from "./sqlite-errors.js";
 import { errorMessage } from "../unknown-values.js";
 
-const unimplementedStorageMembers = new Set<PropertyKey>([
+// DurableObjectStorage members that workerd defines and Orange does not implement.
+// https://github.com/cloudflare/workerd/blob/81d1f18e18fa5b454ec47dde90817497b8a0cd70/src/workerd/api/actor-state.h#L329-L348
+const unimplementedStorageMembers = new Set([
+	"disableReplicas",
+	"ensureReplicas",
 	"getBookmarkForTime",
+	"onNextSessionRestore",
 	"onNextSessionRestoreBookmark",
+	"snapshot",
 ]);
 
-function unsupportedStorageMember(property: PropertyKey): Error {
-	return new Error(
-		`DurableObjectStorage.${String(property)} is not implemented`,
-	);
+function storageUnsupported(name: string): Error {
+	const error = new Error(`DurableObjectStorage.${name} is not implemented`);
+	error.name = "NotSupportedError";
+	return error;
 }
 
 // workerd keeps its local development bookmark in the `_cf_METADATA` table under key 2.
@@ -1421,8 +1427,11 @@ export function createDurableObjectStorage(
 	);
 	const storage = new Proxy(target, {
 		get(storage, property): unknown {
-			if (unimplementedStorageMembers.has(property)) {
-				throw unsupportedStorageMember(property);
+			if (
+				typeof property === "string" &&
+				unimplementedStorageMembers.has(property)
+			) {
+				throw storageUnsupported(property);
 			}
 			// A member Cloudflare does not define reads as undefined, as on workerd, so a library can
 			// probe the object to tell which SQLite client it was given.

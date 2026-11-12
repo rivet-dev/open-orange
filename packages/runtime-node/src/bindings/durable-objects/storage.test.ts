@@ -280,19 +280,24 @@ test("keeps Cloudflare and Rivet-reserved SQLite names private", () => {
 test("keeps unimplemented storage members explicit", () => {
 	const storage = storageFor(new FakeDatabase());
 	for (const member of [
+		"disableReplicas",
+		"ensureReplicas",
 		"getBookmarkForTime",
+		"onNextSessionRestore",
 		"onNextSessionRestoreBookmark",
+		"snapshot",
 	]) {
-		assert.throws(
-			() => Reflect.get(storage, member),
-			new RegExp(`DurableObjectStorage\\.${member} is not implemented`),
-		);
+		assert.throws(() => Reflect.get(storage, member), {
+			name: "NotSupportedError",
+			message: `DurableObjectStorage.${member} is not implemented`,
+		});
 	}
 });
 
 test("reads a member Cloudflare does not define as undefined", () => {
 	const storage = storageFor(new FakeDatabase());
-	for (const member of ["prepare", "batch", "then", Symbol.iterator]) {
+	// `primary` is a Cloudflare member, and on a primary it is undefined too.
+	for (const member of ["batch", "prepare", "primary", "then", Symbol.iterator]) {
 		assert.equal(Reflect.get(storage, member), undefined);
 	}
 });

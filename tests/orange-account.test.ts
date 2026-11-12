@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -80,8 +81,8 @@ async function withAccount(body: (account: Account) => Promise<void>): Promise<v
 
 const rollout = (cloud: RivetCloudDouble): string[] => ["--cloud-api", cloud.url, "--build", "bld_ready"];
 
-test("orange login, link, and deploy need no flags or variables after the first sign-in", { timeout: 180_000 }, async () => {
-	await withAccount(async ({ cloud, credentialsPath, orange }) => {
+test("orange login, link, and deploy need no flags or variables after the first sign-in, and link refuses a missing cluster", { timeout: 180_000 }, async () => {
+	await withAccount(async ({ cloud, credentialsPath, orange, projectDirectory }) => {
 		const login = await orange(["login", "--no-browser", "--cloud-api", cloud.url]);
 		assert.equal(login.code, 0, login.output);
 		assert.match(login.output, /ABCD-1234/);
@@ -89,7 +90,13 @@ test("orange login, link, and deploy need no flags or variables after the first 
 		// Only the user can read the session.
 		assert.equal((await stat(credentialsPath)).mode & 0o777, 0o600);
 
-		assert.equal((await orange(["link", "--cluster", cluster, "--org", "my-org"])).code, 0);
+		const missing = await orange(["link", "--cluster", "no-such-cluster", "--cloud-api", cloud.url]);
+		assert.equal(missing.code, 1, missing.output);
+		assert.match(missing.output, /cluster no-such-cluster\. Cluster not found\./);
+		assert.doesNotMatch(missing.output, /Linked cluster|Looks like a bug/);
+		assert.equal(existsSync(join(projectDirectory, ".rivet", "project.json")), false);
+
+		assert.equal((await orange(["link", "--cluster", cluster, "--org", "my-org", "--cloud-api", cloud.url])).code, 0);
 		const whoami = await orange(["whoami", "--cloud-api", cloud.url]);
 		assert.equal(whoami.stdout.trim(), "Ada <ada@example.com>", whoami.output);
 		assert.match(whoami.output, /Linked cluster: acme/);

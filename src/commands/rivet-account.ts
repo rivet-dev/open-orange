@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { ExpectedFailure, exitWithOutcome } from "../cli/issue-report.js";
 import { isRivetMcpConfigured } from "./mcp.js";
+import { createRivetCloudClient } from "./rivet-cloud-api.js";
 
 // Sign-in and the cluster link. These read and write the files of the Rivet CLI, so `rivet login`
 // and `orange login` share one session.
@@ -320,7 +321,7 @@ export function renderAccountHelp(command: string): string {
 		case "whoami":
 			return ["open-orange whoami", "", "Show the signed-in account and the linked cluster.", "", "  --token <token>     Describe this Rivet Cloud token instead.", shared].join("\n");
 		case "link":
-			return ["open-orange link", "", "Link this directory to a Rivet cluster, so `orange deploy` needs no --cluster.", "Writes .rivet/project.json. Shares the link with the Rivet CLI.", "", "  --cluster <name>    Cluster to link. Required.", "  --org <slug>        Organization that the cluster belongs to."].join("\n");
+			return ["open-orange link", "", "Link this directory to a Rivet cluster, so `orange deploy` needs no --cluster.", "Writes .rivet/project.json. Shares the link with the Rivet CLI.", "Checks that the cluster exists when signed in.", "", "  --cluster <name>    Cluster to link. Required.", "  --org <slug>        Organization that the cluster belongs to.", shared].join("\n");
 		default:
 			return ["open-orange unlink", "", "Remove this directory's link to a Rivet cluster."].join("\n");
 	}
@@ -384,6 +385,19 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 			}
 			case "link": {
 				if (values.cluster === undefined) throw new Error("orange link needs a cluster. Pass --cluster <name>.");
+				// The same call that `orange deploy` makes first, so a cluster that does not exist fails here.
+				const auth = await resolveCloudAuth(values.token, apiUrl);
+				const organization = values.org ?? (process.env.RIVET_ORG?.trim() || undefined);
+				if (auth === undefined) {
+					io.error(`Not signed in, so Orange did not check that cluster ${values.cluster} exists. Run \`orange login\` to check it.`);
+				} else {
+					await createRivetCloudClient({
+						apiUrl,
+						cluster: values.cluster,
+						...(organization === undefined ? {} : { organization }),
+						token: (force) => auth.token(force),
+					}).listRegions();
+				}
 				const path = linkPath(process.cwd());
 				await mkdir(dirname(path), { recursive: true });
 				const link = { cluster: values.cluster, ...(values.org === undefined ? {} : { org: values.org }) };

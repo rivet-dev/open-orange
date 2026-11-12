@@ -19,7 +19,7 @@ declare const capnweb: {
 	RpcSession: new (
 		transport: CapnWebRpcTransport,
 		localMain?: object,
-	) => { getRemoteMain(): CapnWebStub };
+	) => { getRemoteMain(): CapnWebStub; getStats(): { exports: number; imports: number } };
 	RpcStub: abstract new (...args: never[]) => object;
 	RpcTarget: abstract new () => object;
 };

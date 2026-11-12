@@ -55,8 +55,9 @@ import {
 	type WorkflowEngineObject,
 	workflowEngineClassName,
 } from "./bindings/workflows/engine-object.js";
-import { AgentOsWorkerLoaderBackend } from "./bindings/worker-loader/agentos.js";
+import { AgentOsWorkerLoaderBackend, workerLoaderPoolSize } from "./bindings/worker-loader/agentos.js";
 import {
+	DynamicWorkerPool,
 	WorkerLoader,
 	workerLoaderVmBundlePath,
 	type WorkerLoaderBackend,
@@ -220,8 +221,21 @@ function requestBody(
 // backend.
 let sharedWorkerLoaderBackend: WorkerLoaderBackend | undefined;
 function workerLoaderBackend(): WorkerLoaderBackend {
-	sharedWorkerLoaderBackend ??= new AgentOsWorkerLoaderBackend(() => workerLoaderVmBundlePath(import.meta.url));
+	sharedWorkerLoaderBackend ??= new AgentOsWorkerLoaderBackend({
+		bundlePath: () => workerLoaderVmBundlePath(import.meta.url),
+		onDiagnostic(message): void {
+			send({ message, type: "background-error" });
+		},
+		poolSize: workerLoaderPoolSize(runtimeSettings()),
+	});
 	return sharedWorkerLoaderBackend;
+}
+
+// One pool bounds the dynamic Workers of every Worker Loader binding.
+let sharedWorkerLoaderPool: DynamicWorkerPool | undefined;
+function workerLoaderPool(warn: (message: string) => void): DynamicWorkerPool {
+	sharedWorkerLoaderPool ??= DynamicWorkerPool.fromSettings(runtimeSettings(), warn);
+	return sharedWorkerLoaderPool;
 }
 
 function requestHeaders(request: IncomingMessage): Headers {
@@ -615,6 +629,7 @@ async function createBindings(
 			case "worker_loader": {
 				const loader = new WorkerLoader({
 					backend: workerLoaderBackend(),
+					pool: workerLoaderPool((message) => send({ message, type: "warning" })),
 					onDiagnostic(diagnostic): void {
 						send({ message: diagnostic, type: "background-error" });
 					},

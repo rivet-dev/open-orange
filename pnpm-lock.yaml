@@ -12,8 +12,8 @@ importers:
         specifier: 3.1153.0
         version: 3.1153.0
       '@rivet-dev/agentos-core':
-        specifier: 0.4.1
-        version: 0.4.1
+        specifier: 0.4.8
+        version: 0.4.8
       '@rivet-dev/durable-object-migrator':
         specifier: 1.0.2
         version: 1.0.2
@@ -172,8 +172,8 @@ importers:
         specifier: 3.1153.0
         version: 3.1153.0
       '@rivet-dev/agentos-core':
-        specifier: 0.4.1
-        version: 0.4.1
+        specifier: 0.4.8
+        version: 0.4.8
       '@rivet-dev/durable-object-migrator':
         specifier: 1.0.2
         version: 1.0.2
@@ -1309,6 +1309,7 @@ packages:
   '@opentelemetry/propagator-jaeger@2.11.0':
     resolution: {integrity: sha512-RUOqgoIqXOPQTOhpBrs07Y8sBlxVoLY5Fka6ueZ0prW+k6fWQsba/nHDY4gm+gmfuwtRqbX5Y9YKhDvktjbIqQ==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Package no longer supported. See https://github.com/open-telemetry/opentelemetry-js/pull/7077
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
@@ -1345,18 +1346,21 @@ packages:
   '@opentelemetry/sdk-trace-base@2.11.0':
     resolution: {integrity: sha512-H19x/TX/LZdqiYOjM7fqtSxwlplC5pgelavqbQdHbhdq0q/AI/TGkM2dfGuuynTXmJPeF2HoZVoPDu+TGoW78A==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
   '@opentelemetry/sdk-trace-base@2.12.0':
     resolution: {integrity: sha512-JOERgZCxRM06FEJ5kEWxlSRChah6MmXDx3KwCruqEv/iEyLkTokCSemf2y1w8oIHtfrr8EVTpzebq/31vn2Cpg==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
   '@opentelemetry/sdk-trace-node@2.11.0':
     resolution: {integrity: sha512-CuvCMJmZxswhNLlM2LfuLOW3h3fZujA4hsG4B+Sz4dX2zvaXO8Ng74cnDHWD64gLszTlhiG3c0iNUjj4g+0/sA==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
@@ -1420,40 +1424,40 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@rivet-dev/agentos-core@0.4.1':
-    resolution: {integrity: sha512-ECNqmFPmzAqeOhGaKu2W/5wtGe9XNZ7Sc1WV+hLwdscBbCRj6BpFvPNu8oMX0slmkZEeAJf4A4PjM8ncZztOpA==}
+  '@rivet-dev/agentos-core@0.4.8':
+    resolution: {integrity: sha512-EekiSBrBGAR6VI41BlzQyaIDRXGxHillrojST5t8XnZ30jfzqpymWkPC997G+MT5NPyPcrv/q3duAjX06imzXQ==}
 
-  '@rivet-dev/agentos-runtime-core@0.4.1':
-    resolution: {integrity: sha512-YFQpDzbeIz+QF6s+cu1Q4s1h9TBaT9vYtbm/WVsDe7QitObxwGozqp/koskuSaopbB+BEm4UVkQpjtg6Gua4FQ==}
+  '@rivet-dev/agentos-runtime-core@0.4.8':
+    resolution: {integrity: sha512-uCNXNPJXisctZrRonSvjzPxazwQErPZaOrtogibnONd11D6KxDT2u/p89BqihUiK3KCQs8NLkVr3WaYgwZ+0bA==}
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.1':
-    resolution: {integrity: sha512-Zrev58wT1fIEf+k0PFgKkQ3fdeSyp4T7EfvkMVFB4OiSEzpeL6DX0nHEM4AEy61gTY2ccMD+X3MfbnTHjogQiQ==}
+  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.8':
+    resolution: {integrity: sha512-ZaL+MEHqtbP1WRF575m2LQFP6tBcIPb6p4vKnZGYuUad2o9qqE1qeOhG3YhFdymrE8QUMHwFKDvL/+7Ep1k/7Q==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.1':
-    resolution: {integrity: sha512-uS4mA5npaqK5Xehp9B8YkNvAmd2ElV7KxKDRedns3V4s5Ewv9owRWWRCgOXxprm+Y038LTcktfAlysg0w7KNZw==}
+  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.8':
+    resolution: {integrity: sha512-chpzdQjs4SdSGrlTj6MSAk14/E91kyb6zcrbw2CJCn2tE4CJi0BUqgFAdWHKfZznwbnWXNB7vU9oBxYLmHSQQw==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.1':
-    resolution: {integrity: sha512-4eetZA+Nyokvgw2fDTySdFDOAoPmLuoFzo+LpJ4xmcilFQJVTWvcn35tWb/tTwgUF1Oyoeen2Oe2G0EyW5h7Dg==}
+  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.8':
+    resolution: {integrity: sha512-ysmQ8kfBNAhRGodTkSJUftb7PowrxBhhDil66mSKVOQwO6jN21/K6M+K8y0DGTS5d1azqf+fZe2UzewMb3dUbQ==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.1':
-    resolution: {integrity: sha512-yCiMyfsZuX+HaIKwxdesT08qzyOHKvYehjT0gwSIMWLEgYpZI0hIbPk75MPu5TklRalBwpohaMPKO7wI5Sa7SQ==}
+  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.8':
+    resolution: {integrity: sha512-DEJNL3VcxWqRwIDcOSWHQ3APTNFZRvv6wokWP4dV4dwHsNc8dCKMLf8B2qYKw3Qljb7loinppeOu6WRwDaJgqw==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@rivet-dev/agentos-runtime-sidecar@0.4.1':
-    resolution: {integrity: sha512-Srh6B650kbAOP+qkkTfos3HWZySBx0KaA0cn0tOmANxeT9QIM3fUYws5eXis78hVPWZUH+zucAyVSuvGVdX+kQ==}
+  '@rivet-dev/agentos-runtime-sidecar@0.4.8':
+    resolution: {integrity: sha512-SUeyGdmSKl6NyLhFoLo5KJa48b84Cg40Dcw80CxY+62u4tNIiops3XpZEp2Xzeh2USD7GaYfvVBfzYba9votmw==}
     engines: {node: '>=20'}
 
   '@rivet-dev/durable-object-migrator@1.0.2':
@@ -1639,6 +1643,9 @@ packages:
   '@smithy/core@3.36.0':
     resolution: {integrity: sha512-3hJiwG1F5t1SoXqp/yOCmYXziyx7ZVqF63S5W6YU201e/qwVaHPex+E/3vvyY9a3ORq/b+BydeNZpP2saQ9X2g==}
     engines: {node: '>=18.0.0'}
+    deprecated: |-
+      Deprecated due to a bug in custom logger data redaction. Upgrade to the latest version. If you used a custom logger with this
+        version, review your logs and rotate any credentials or other secrets. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/core@3.39.0':
     resolution: {integrity: sha512-JJ/46AWQ4ipS1N2eZmUj7yzIhH8NhQIfAE+dce7NSB6dmFh+7hvD4pbofcoT4I0Xzfy/LNhZx3V2QhwYyAiqdg==}
@@ -2284,17 +2291,9 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
-  gaxios@6.7.1:
-    resolution: {integrity: sha512-LDODD4TMYx7XXdpwxAVRAIAuB0bzv0s+ywFonY46k126qzQHT9ygyoa9tncmOiQmmDrik65UYsEkv3lbfqQ3yQ==}
-    engines: {node: '>=14'}
-
   gaxios@7.3.1:
     resolution: {integrity: sha512-kB3rzJV7d9juLZh8/56QTXCwQfxyhdOMdyYk1HdQKFtF8TJTDTZQJtixWIwXdE9Jji91mC41DUNpjleo4L4eAQ==}
     engines: {node: '>=18'}
-
-  gcp-metadata@6.1.1:
-    resolution: {integrity: sha512-a4tiq7E0/5fTjxPAaH4jpjkSv/uCaU2p5KC6HVGrvl0cDjA8iBZv4vv1gyzlmK0ZUKqwpOyQMKzZQe3lTit77A==}
-    engines: {node: '>=14'}
 
   gcp-metadata@8.1.2:
     resolution: {integrity: sha512-zV/5HKTfCeKWnxG0Dmrw51hEWFGfcF2xiXqcA3+J90WDuP0SvoiSO5ORvcBsifmx/FoIjgQN3oNOGaQ5PhLFkg==}
@@ -2338,33 +2337,13 @@ packages:
     resolution: {integrity: sha512-i1ydyHrqcIxXkWh/uBmVkzCvIuq5yiK2ATndIe5XxKholrG/MTYP9xGYka4sQhrbIAgGjL2B6NOE7rFaiF3fXw==}
     engines: {node: '>=18'}
 
-  google-auth-library@9.15.1:
-    resolution: {integrity: sha512-Jb6Z0+nvECVz+2lzSMt9u98UsoakXxA2HGHMCxh+so3n90XgYWkq5dur19JAJV7ONiJY22yBTyJB1TSkvPq9Ng==}
-    engines: {node: '>=14'}
-
-  google-logging-utils@0.0.2:
-    resolution: {integrity: sha512-NEgUnEcBiP5HrPzufUkBzJOD/Sxsco3rLNo1F1TNf7ieU8ryUzBhqba8r756CjLX7rn3fHl6iLEwPYuqpoKgQQ==}
-    engines: {node: '>=14'}
-
   google-logging-utils@1.1.3:
     resolution: {integrity: sha512-eAmLkjDjAFCVXg7A1unxHsLf961m6y17QFqXqAXGj/gVkKFrEICfStRfwUlGNfeCEjNRa32JEWOUTlYXPyyKvA==}
     engines: {node: '>=14'}
 
-  googleapis-common@7.2.0:
-    resolution: {integrity: sha512-/fhDZEJZvOV3X5jmD+fKxMqma5q2Q9nZNSF3kn1F18tpxmA86BcTxAGBQdM0N89Z3bEaIs+HVznSmFJEAmMTjA==}
-    engines: {node: '>=14.0.0'}
-
-  googleapis@144.0.0:
-    resolution: {integrity: sha512-ELcWOXtJxjPX4vsKMh+7V+jZvgPwYMlEhQFiu2sa9Qmt5veX8nwXPksOWGGN6Zk4xCiLygUyaz7xGtcMO+Onxw==}
-    engines: {node: '>=14.0.0'}
-
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
     engines: {node: '>= 0.4'}
-
-  gtoken@7.1.0:
-    resolution: {integrity: sha512-pCcEwRi+TKpMlxAQObHDQ56KawURgyAf6jtIY046fJ5tIv3zDe/LEIubckAO8fj6JnAxLdmWkUfNyulQ2iKdEw==}
-    engines: {node: '>=14.0.0'}
 
   has-symbols@1.1.0:
     resolution: {integrity: sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==}
@@ -2475,10 +2454,6 @@ packages:
   is-promise@4.0.0:
     resolution: {integrity: sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==}
 
-  is-stream@2.0.1:
-    resolution: {integrity: sha512-hFoiJiTl63nn+kstHGBtewWSKnQLpyb155KHheA1l39uvtO9nWIop1p3udqPcUd/xbF1VLMO4n7OI6p7RbngDg==}
-    engines: {node: '>=8'}
-
   isomorphic-ws@5.0.0:
     resolution: {integrity: sha512-muId7Zzn9ywDsyXgTIafTry2sV3nySZeUDe6YedVd1Hvuuep5AsIlqK+XefWpYTyJG5e503F2xIuT2lcU6rCSw==}
     peerDependencies:
@@ -2579,10 +2554,6 @@ packages:
   miniflare@5.20260903.0-alpha:
     resolution: {integrity: sha512-VCZIFxOqFXeibRBJWwTlppqbv2lkeO10IX3QBRGK9j1QiMAfH/OSsCvbjp1MslBMhVZmy2VTRlVaVnsKnbDp6A==}
     engines: {node: '>=22.0.0'}
-
-  minimatch@10.2.6:
-    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
-    engines: {node: 18 || 20 || >=22}
 
   minimatch@11.0.5:
     resolution: {integrity: sha512-snPlVppFcYWfLLFQGhDxUyBcHNtMlWmn3jtj7pEaO+DP8pqL0IvAzXhMYmn1z9ASNtgmwLBdFxSf4tMUB0OTKA==}
@@ -2759,6 +2730,7 @@ packages:
   prebuild-install@7.1.3:
     resolution: {integrity: sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==}
     engines: {node: '>=10'}
+    deprecated: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
     hasBin: true
 
   process-warning@5.1.0:
@@ -3099,9 +3071,6 @@ packages:
     resolution: {integrity: sha512-5+M4YX5pEFeXSdMyt3J5iXr949UC+j6yHRkZUEv6ljTusAfdCdS4pSTudnYGzYEbKkdK5xIE0E3i5xzIzoiFrQ==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
-  url-template@2.0.8:
-    resolution: {integrity: sha512-XdVKMF4SJ0nP/O7XIPB0JwAEuT9lDIYnNsK8yGVe43y0AWoKeJNdv3ZNWh7ksJ6KqQFjOO6ox/VEitLnaVNufw==}
-
   urlpattern-polyfill@10.1.0:
     resolution: {integrity: sha512-IGjKp/o0NL3Bso1PymYURCJxMPNAf/ILOpendP9f5B6e1rTJgdgiOvgfoT8VxCAdY+Wisb9uhGaJJf3yZ2V9nw==}
 
@@ -3110,10 +3079,6 @@ packages:
 
   uuid@12.0.1:
     resolution: {integrity: sha512-9obBF8sMIHJWNQaO6IGOG8giGa/jUpKX34bz6o4whVs8M0WAvhID2tNxYp6A2XEBJPuZSX8wsS/6TEKfIDc+nw==}
-    hasBin: true
-
-  uuid@9.0.1:
-    resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
     hasBin: true
 
   vary@1.1.2:
@@ -4298,48 +4263,40 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@rivet-dev/agentos-core@0.4.1':
+  '@rivet-dev/agentos-core@0.4.8':
     dependencies:
-      '@aws-sdk/client-s3': 3.1153.0
-      '@rivet-dev/agentos-runtime-core': 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar': 0.4.1
+      '@rivet-dev/agentos-runtime-core': 0.4.8
+      '@rivet-dev/agentos-runtime-sidecar': 0.4.8
       '@xterm/headless': 6.0.0
-      better-sqlite3: 12.11.1
       croner: 10.0.1
-      googleapis: 144.0.0
       long-timeout: 0.1.1
-      minimatch: 10.2.6
       zod: 4.5.4
-      zod-to-json-schema: 3.25.2(zod@4.5.4)
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
 
-  '@rivet-dev/agentos-runtime-core@0.4.1':
+  '@rivet-dev/agentos-runtime-core@0.4.8':
     dependencies:
       '@bare-ts/lib': 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar': 0.4.1
+      '@rivet-dev/agentos-runtime-sidecar': 0.4.8
       zod: 4.5.4
       zod-to-json-schema: 3.25.2(zod@4.5.4)
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.1':
+  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.8':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.1':
+  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.8':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.1':
+  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.8':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.1':
+  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.8':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar@0.4.1':
+  '@rivet-dev/agentos-runtime-sidecar@0.4.8':
     optionalDependencies:
-      '@rivet-dev/agentos-runtime-sidecar-darwin-arm64': 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar-darwin-x64': 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu': 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu': 0.4.1
+      '@rivet-dev/agentos-runtime-sidecar-darwin-arm64': 0.4.8
+      '@rivet-dev/agentos-runtime-sidecar-darwin-x64': 0.4.8
+      '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu': 0.4.8
+      '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu': 0.4.8
 
   '@rivet-dev/durable-object-migrator@1.0.2':
     dependencies:
@@ -4643,18 +4600,21 @@ snapshots:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
+    optional: true
 
   bignumber.js@9.3.1: {}
 
   bindings@1.5.0:
     dependencies:
       file-uri-to-path: 1.0.0
+    optional: true
 
   bl@4.1.0:
     dependencies:
       buffer: 5.7.1
       inherits: 2.0.4
       readable-stream: 3.6.2
+    optional: true
 
   blake3-wasm@2.1.5: {}
 
@@ -4737,7 +4697,8 @@ snapshots:
 
   chalk@5.6.2: {}
 
-  chownr@1.1.4: {}
+  chownr@1.1.4:
+    optional: true
 
   chownr@3.0.0: {}
 
@@ -4784,8 +4745,10 @@ snapshots:
   decompress-response@6.0.0:
     dependencies:
       mimic-response: 3.1.0
+    optional: true
 
-  deep-extend@0.6.0: {}
+  deep-extend@0.6.0:
+    optional: true
 
   degenerator@5.0.1:
     dependencies:
@@ -4969,7 +4932,8 @@ snapshots:
 
   events@3.3.0: {}
 
-  expand-template@2.0.3: {}
+  expand-template@2.0.3:
+    optional: true
 
   expand-tilde@2.0.2:
     dependencies:
@@ -5047,7 +5011,8 @@ snapshots:
       node-domexception: 1.0.0
       web-streams-polyfill: 3.3.3
 
-  file-uri-to-path@1.0.0: {}
+  file-uri-to-path@1.0.0:
+    optional: true
 
   fill-range@7.1.1:
     dependencies:
@@ -5095,23 +5060,13 @@ snapshots:
 
   fresh@2.0.0: {}
 
-  fs-constants@1.0.0: {}
+  fs-constants@1.0.0:
+    optional: true
 
   fsevents@2.3.3:
     optional: true
 
   function-bind@1.1.2: {}
-
-  gaxios@6.7.1:
-    dependencies:
-      extend: 3.0.2
-      https-proxy-agent: 7.0.6
-      is-stream: 2.0.1
-      node-fetch: 2.7.0
-      uuid: 9.0.1
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
 
   gaxios@7.3.1:
     dependencies:
@@ -5119,15 +5074,6 @@ snapshots:
       https-proxy-agent: 7.0.6
       node-fetch: 3.3.2
     transitivePeerDependencies:
-      - supports-color
-
-  gcp-metadata@6.1.1:
-    dependencies:
-      gaxios: 6.7.1
-      google-logging-utils: 0.0.2
-      json-bigint: 1.0.0
-    transitivePeerDependencies:
-      - encoding
       - supports-color
 
   gcp-metadata@8.1.2:
@@ -5174,7 +5120,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  github-from-package@0.0.0: {}
+  github-from-package@0.0.0:
+    optional: true
 
   glob-parent@5.1.2:
     dependencies:
@@ -5197,51 +5144,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  google-auth-library@9.15.1:
-    dependencies:
-      base64-js: 1.5.1
-      ecdsa-sig-formatter: 1.0.11
-      gaxios: 6.7.1
-      gcp-metadata: 6.1.1
-      gtoken: 7.1.0
-      jws: 4.0.1
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
-
-  google-logging-utils@0.0.2: {}
-
   google-logging-utils@1.1.3: {}
 
-  googleapis-common@7.2.0:
-    dependencies:
-      extend: 3.0.2
-      gaxios: 6.7.1
-      google-auth-library: 9.15.1
-      qs: 6.16.0
-      url-template: 2.0.8
-      uuid: 9.0.1
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
-
-  googleapis@144.0.0:
-    dependencies:
-      google-auth-library: 9.15.1
-      googleapis-common: 7.2.0
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
-
   gopd@1.2.0: {}
-
-  gtoken@7.1.0:
-    dependencies:
-      gaxios: 6.7.1
-      jws: 4.0.1
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
 
   has-symbols@1.1.0: {}
 
@@ -5328,7 +5233,8 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ini@1.3.8: {}
+  ini@1.3.8:
+    optional: true
 
   invariant@2.2.4:
     dependencies:
@@ -5351,8 +5257,6 @@ snapshots:
   is-number@7.0.0: {}
 
   is-promise@4.0.0: {}
-
-  is-stream@2.0.1: {}
 
   isomorphic-ws@5.0.0(ws@8.22.2):
     dependencies:
@@ -5427,7 +5331,8 @@ snapshots:
 
   mime@4.1.1: {}
 
-  mimic-response@3.1.0: {}
+  mimic-response@3.1.0:
+    optional: true
 
   miniflare@5.20260903.0-alpha:
     dependencies:
@@ -5441,16 +5346,13 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  minimatch@10.2.6:
-    dependencies:
-      brace-expansion: 5.0.12
-
   minimatch@11.0.5:
     dependencies:
       '@isaacs/nonrecursive-glob-match': 1.1.0
       brace-expansion: 5.0.12
 
-  minimist@1.2.8: {}
+  minimist@1.2.8:
+    optional: true
 
   minipass@7.1.3: {}
 
@@ -5458,13 +5360,15 @@ snapshots:
     dependencies:
       minipass: 7.1.3
 
-  mkdirp-classic@0.5.3: {}
+  mkdirp-classic@0.5.3:
+    optional: true
 
   module-details-from-path@1.0.4: {}
 
   ms@2.1.3: {}
 
-  napi-build-utils@2.0.0: {}
+  napi-build-utils@2.0.0:
+    optional: true
 
   negotiator@1.1.0:
     dependencies:
@@ -5475,6 +5379,7 @@ snapshots:
   node-abi@3.96.0:
     dependencies:
       semver: 7.8.5
+    optional: true
 
   node-domexception@1.0.0: {}
 
@@ -5611,6 +5516,7 @@ snapshots:
       simple-get: 4.0.1
       tar-fs: 2.1.5
       tunnel-agent: 0.6.0
+    optional: true
 
   process-warning@5.1.0: {}
 
@@ -5687,6 +5593,7 @@ snapshots:
       ini: 1.3.8
       minimist: 1.2.8
       strip-json-comments: 2.0.1
+    optional: true
 
   readable-stream@3.6.2:
     dependencies:
@@ -5887,13 +5794,15 @@ snapshots:
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
 
-  simple-concat@1.0.1: {}
+  simple-concat@1.0.1:
+    optional: true
 
   simple-get@4.0.1:
     dependencies:
       decompress-response: 6.0.0
       once: 1.4.0
       simple-concat: 1.0.1
+    optional: true
 
   smart-buffer@4.2.0: {}
 
@@ -5974,7 +5883,8 @@ snapshots:
     dependencies:
       ansi-regex: 5.0.1
 
-  strip-json-comments@2.0.1: {}
+  strip-json-comments@2.0.1:
+    optional: true
 
   supports-color@10.2.2: {}
 
@@ -5984,6 +5894,7 @@ snapshots:
       mkdirp-classic: 0.5.3
       pump: 3.0.4
       tar-stream: 2.2.0
+    optional: true
 
   tar-fs@3.1.3(bare-buffer@3.7.1):
     dependencies:
@@ -6004,6 +5915,7 @@ snapshots:
       fs-constants: 1.0.0
       inherits: 2.0.4
       readable-stream: 3.6.2
+    optional: true
 
   tar-stream@3.2.2(bare-buffer@3.7.1):
     dependencies:
@@ -6065,6 +5977,7 @@ snapshots:
   tunnel-agent@0.6.0:
     dependencies:
       safe-buffer: 5.2.1
+    optional: true
 
   type-is@2.1.0:
     dependencies:
@@ -6097,15 +6010,11 @@ snapshots:
 
   url-join@5.1.1: {}
 
-  url-template@2.0.8: {}
-
   urlpattern-polyfill@10.1.0: {}
 
   util-deprecate@1.0.2: {}
 
   uuid@12.0.1: {}
-
-  uuid@9.0.1: {}
 
   vary@1.1.2: {}
 

@@ -4,6 +4,7 @@ import { glob, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { builtinModules } from "node:module";
 import { dirname, join } from "node:path";
+import type { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -114,9 +115,9 @@ async function bundleExpressApp(): Promise<string> {
 	return `${imports.join("\n")}\nglobalThis.__expressBuiltins = { ${table.join(", ")} };\n${result.outputFiles[0]?.text ?? ""}`;
 }
 
-test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs", async () => {
-	const env: NodeJS.ProcessEnv = { ...process.env, CI: "1", NO_COLOR: "1" };
-	const child = spawn(
+function spawnDev(settings: NodeJS.ProcessEnv = {}): ChildProcess & { stdout: Readable } {
+	const env: NodeJS.ProcessEnv = { ...process.env, ...settings, CI: "1", NO_COLOR: "1" };
+	return spawn(
 		process.execPath,
 		[
 			"--import",
@@ -135,6 +136,10 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			env,
 			stdio: ["ignore", "pipe", "pipe"] },
 	);
+}
+
+test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs", async () => {
+	const child = spawnDev();
 	let output = "";
 	child.stdout.on("data", (chunk) => {
 		output += String(chunk);
@@ -310,6 +315,138 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 		assert.equal(sandbox.read.content, undefined);
 		assert.equal(sandbox.read.error, "ENOENT");
 		await rm(dirname(hostFile), { force: true, recursive: true });
+	} finally {
+		await stop(child);
+	}
+});
+
+test("stops idle dynamic Workers without interrupting calls in flight", async () => {
+	const child = spawnDev({
+		ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: "1500",
+		ORANGE_WORKER_LOADER_MAX_WORKERS: "2",
+	});
+	try {
+		const port = await waitForReady(child);
+		const response = await fetch(`http://127.0.0.1:${port}/eviction`);
+		assert.equal(response.status, 200, await response.clone().text());
+		const result: unknown = await response.json();
+		assert.ok(isRecord(result), JSON.stringify(result));
+		const { full, ...rest } = result;
+		assert.deepEqual(rest, {
+			// After the idle timeout, get() with the same name calls getCode again and
+			// the Worker starts with fresh module state.
+			named: [1, 2, 1],
+			loads: 2,
+			// A held load() stub keeps working after its idle Worker stops: the next
+			// call loads the same code again.
+			heldCounts: [1, 1],
+			// Calls that outlast the idle timeout finish, and a full pool of busy
+			// Workers does not stop them.
+			slept: [{ value: 3_000 }, { value: 3_000 }],
+			// Idle Workers give up their slots, so more load() calls than the limit
+			// all succeed.
+			sequential: [1, 1, 1, 1, 1, 1],
+			// With both Workers handling a call made in the same tick, load() throws
+			// and both calls finish.
+			sameTick: "WorkerLoaderLimitError",
+			sameTickCalls: [{ value: 2 }, { value: 2 }],
+		});
+		// With every slot busy, load() throws the typed error that names the limit.
+		assert.ok(isRecord(full) && isRecord(full.error), JSON.stringify(full));
+		assert.equal(full.error.name, "WorkerLoaderLimitError");
+		assert.match(String(full.error.message), /the limit is 2\. Raise ORANGE_WORKER_LOADER_MAX_WORKERS/);
+	} finally {
+		await stop(child);
+	}
+});
+
+test("keeps a dynamic Worker running until every body it streams ends, and frees the slots of Workers that fail to start", async () => {
+	const child = spawnDev({
+		// The parent collects garbage to drop its stubs while a body streams.
+		NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --expose-gc`,
+		ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: "1000",
+		ORANGE_WORKER_LOADER_MAX_WORKERS: "2",
+	});
+	try {
+		const port = await waitForReady(child);
+		const lines = Array.from({ length: 10 }, (_, i) => `line ${i}\n`).join("");
+		// A body that streams for 3 s, past the idle timeout, arrives in full, also when the
+		// parent holds no stub for the dynamic Worker while it streams.
+		for (const query of ["", "?drop=1"]) {
+			const response = await fetch(`http://127.0.0.1:${port}/stream${query}`);
+			assert.equal(response.status, 200);
+			assert.equal(await response.text(), lines, `stream${query}`);
+		}
+		// A body that a dynamic Worker streams into an `env` capability for 3 s, from
+		// ctx.waitUntil() after its response and while the parent holds no stub, arrives in full.
+		const upload = await fetch(`http://127.0.0.1:${port}/upload`);
+		assert.equal(upload.status, 200, await upload.clone().text());
+		assert.deepEqual(await upload.json(), { received: lines, started: "started" });
+
+		// Each load whose getCode throws fails with that error, and more of them than the limit
+		// leave room for the next load.
+		const response = await fetch(`http://127.0.0.1:${port}/failedStarts`);
+		assert.equal(response.status, 200, await response.clone().text());
+		assert.deepEqual(await response.json(), {
+			errors: [0, 1, 2].map((i) => ({ error: { message: `no code for broken-${i}`, name: "Error" } })),
+			loaded: { value: 1 },
+		});
+	} finally {
+		await stop(child);
+	}
+});
+
+test("refuses to start with an idle timeout that Node.js timers cannot hold", async () => {
+	const child = spawnDev({ ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: "2147483648" });
+	try {
+		await assert.rejects(
+			waitForReady(child),
+			/exited before readiness \(code 1\)[\s\S]*ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS must be an integer from 1 to 2147483647/,
+		);
+	} finally {
+		await stop(child);
+	}
+});
+
+test("loads bursts of dynamic Workers larger than the VM pool, each in a fresh VM even after idle Workers stop", async () => {
+	const child = spawnDev({
+		ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: "1000",
+		ORANGE_WORKER_LOADER_POOL_SIZE: "2",
+	});
+	try {
+		const port = await waitForReady(child);
+		const loadAtOnce = async (n: number): Promise<unknown[]> => {
+			const response = await fetch(`http://127.0.0.1:${port}/pool?n=${n}`);
+			assert.equal(response.status, 200, await response.clone().text());
+			const results: unknown = await response.json();
+			assert.ok(Array.isArray(results) && results.length === n, JSON.stringify(results));
+			return results;
+		};
+		// The first dynamic Worker of each network mode boots on demand and
+		// starts filling that mode's pool.
+		await loadAtOnce(2);
+		for (let round = 0; round < 2; round += 1) {
+			// Leaves time for the pool to fill and, after round 0, for every
+			// Worker to pass its idle timeout and stop. A stopped Worker's VM
+			// must be disposed, never handed to the next Worker.
+			await new Promise((resolveWait) => setTimeout(resolveWait, 5_000));
+			// A burst larger than the pool loads every Worker: some from the pool,
+			// the rest on demand. None sees another's files, globals, or env, each
+			// VM holds only its own Worker, and none can change Orange's runtime.
+			const results = await loadAtOnce(10);
+			for (const result of results) {
+				assert.ok(isRecord(result) && isRecord(result.value), JSON.stringify(result));
+				const id = String(result.value.id);
+				assert.deepEqual(result.value, {
+					env: [`POOL_SECRET_${id}`],
+					file: "ENOENT",
+					global: null,
+					id,
+					runtime: "EROFS",
+					workerRoots: 1,
+				});
+			}
+		}
 	} finally {
 		await stop(child);
 	}

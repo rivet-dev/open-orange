@@ -146,6 +146,16 @@ export function openCapnWebRpcSession(
 	return new RpcSession(transport, localMain).getRemoteMain();
 }
 
+// Like `openCapnWebRpcSession`, plus the session's live import and export counts. A call in
+// flight, a held result stub, and a stream being read each hold an import.
+export function openCapnWebRpcSessionWithStats(
+	transport: CapnWebRpcTransport,
+	localMain?: object,
+): { main: CapnWebStub; stats(): { exports: number; imports: number } } {
+	const session = new RpcSession(transport, localMain);
+	return { main: session.getRemoteMain(), stats: () => session.getStats() };
+}
+
 export function getActiveCapnWebHttpBatchSessionCount(): number {
 	return activeHttpBatchSessions;
 }

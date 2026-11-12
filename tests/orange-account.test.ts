@@ -89,6 +89,10 @@ test("orange login, link, and deploy need no flags or variables after the first 
 		assert.match(login.output, /Signed in as ada@example\.com/);
 		// Only the user can read the session.
 		assert.equal((await stat(credentialsPath)).mode & 0o777, 0o600);
+		const again = await orange(["login", "--no-browser", "--cloud-api", cloud.url]);
+		assert.equal(again.code, 0, again.output);
+		assert.match(again.output, /Already signed in as ada@example\.com/);
+		assert.doesNotMatch(again.output, /one-time code/);
 
 		const missing = await orange(["link", "--cluster", "no-such-cluster", "--cloud-api", cloud.url]);
 		assert.equal(missing.code, 1, missing.output);
@@ -172,6 +176,18 @@ test("a session the server no longer accepts fails the deploy, asks for a new si
 		const whoami = await orange(["whoami", "--cloud-api", cloud.url]);
 		assert.equal(whoami.code, 1, whoami.output);
 		assert.match(whoami.output, /Not signed in/);
+	});
+});
+
+test("orange login replaces a saved session that the server no longer refreshes", { timeout: 120_000 }, async () => {
+	await withAccount(async ({ cloud, orange, writeSession }) => {
+		await writeSession({ accessToken: "expired", expiresAt: Date.now() - 1_000, refreshToken: "revoked" });
+		const login = await orange(["login", "--no-browser", "--cloud-api", cloud.url]);
+		assert.equal(login.code, 0, login.output);
+		assert.match(login.output, /ABCD-1234/);
+		assert.match(login.output, /Signed in as ada@example\.com/);
+		const deploy = await orange(["deploy", "--cluster", cluster, ...rollout(cloud)]);
+		assert.equal(deploy.code, 0, deploy.output);
 	});
 });
 

@@ -222,6 +222,18 @@ export async function resolveCloudAuth(flag: string | undefined, apiUrl: string)
 	};
 }
 
+// The saved session for this API while it still works. One the server no longer refreshes is gone.
+async function workingSession(apiUrl: string): Promise<Session | undefined> {
+	const saved = (await readCredentials()).sessions[sessionKey(apiUrl)];
+	if (saved === undefined || isCurrent(saved)) return saved;
+	try {
+		return await latestSession(apiUrl, saved);
+	} catch (error: unknown) {
+		if (error instanceof ExpectedFailure && error.message === sessionExpiredMessage) return undefined;
+		throw error;
+	}
+}
+
 function openBrowser(url: string): boolean {
 	if (process.platform !== "darwin" && process.env.DISPLAY === undefined && process.env.WAYLAND_DISPLAY === undefined) {
 		return false;
@@ -315,7 +327,7 @@ export function renderAccountHelp(command: string): string {
 	const shared = "  --cloud-api <url>   Rivet Cloud API. Default https://cloud-api.rivet.dev.";
 	switch (command) {
 		case "login":
-			return ["open-orange login", "", "Sign in to Rivet Cloud in a browser. Shares the session with `rivet login`.", "", "  --no-browser        Print the sign-in URL instead of opening a browser.", shared].join("\n");
+			return ["open-orange login", "", "Sign in to Rivet Cloud in a browser. Shares the session with `rivet login`.", "Keeps a session that still works. Run `orange logout` first to sign in again.", "", "  --no-browser        Print the sign-in URL instead of opening a browser.", shared].join("\n");
 		case "logout":
 			return ["open-orange logout", "", "Remove the Rivet Cloud session.", "", shared].join("\n");
 		case "whoami":
@@ -345,8 +357,13 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 		const apiUrl = values["cloud-api"] ?? defaultCloudApi;
 		switch (command) {
 			case "login": {
-				const session = await login(apiUrl, values["no-browser"] !== true, io);
-				io.error(`Signed in as ${session.user.email}.`);
+				const existing = await workingSession(apiUrl);
+				if (existing !== undefined) {
+					io.error(`Already signed in as ${existing.user.email}. To sign in as someone else, run \`orange logout\` first.`);
+				} else {
+					const session = await login(apiUrl, values["no-browser"] !== true, io);
+					io.error(`Signed in as ${session.user.email}.`);
+				}
 				// A broken link file is `orange deploy`'s error to report, not sign-in's.
 				const linked = (() => {
 					try {

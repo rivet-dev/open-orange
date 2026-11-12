@@ -289,3 +289,10 @@ test("keeps unimplemented storage members explicit", () => {
 		);
 	}
 });
+
+test("reads a member Cloudflare does not define as undefined", () => {
+	const storage = storageFor(new FakeDatabase());
+	for (const member of ["prepare", "batch", "then", Symbol.iterator]) {
+		assert.equal(Reflect.get(storage, member), undefined);
+	}
+});

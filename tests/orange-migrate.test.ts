@@ -771,6 +771,7 @@ test("a backfill killed halfway resumes at its saved place, and a repeat run cha
 		assert.equal(resumed.code, 0, resumed.output);
 		assert.deepEqual(api.listCursors, ["4"]);
 		assert.match(resumed.output, /Room: 2 moved, 0 failed/);
+		assert.match(resumed.output, /Run this command once more in a few minutes/);
 
 		for (const name of names) {
 			assert.deepEqual(await roomState(orangeDev.origin, `/rooms/${name}`), before.get(name));
@@ -782,6 +783,7 @@ test("a backfill killed halfway resumes at its saved place, and a repeat run cha
 		const repeat = await orange(backfill, destination.directory, environment);
 		assert.equal(repeat.code, 0, repeat.output);
 		assert.match(repeat.output, /^Room: 0 moved, 0 failed, already moved: 6\.$/m);
+		assert.doesNotMatch(repeat.output, /Run this command once more/);
 		const room0 = await roomState(orangeDev.origin, "/rooms/room-0");
 		assert.equal(room0.messages.at(-1)?.body, "after the move");
 		assert.equal(room0.messages.length, 5);

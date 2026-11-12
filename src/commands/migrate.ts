@@ -608,6 +608,7 @@ async function runBackfill(args: readonly string[], io: MigrateCommandIo, enviro
 	process.once("SIGINT", onSignal);
 	process.once("SIGTERM", onSignal);
 	let failures = 0;
+	let totalMoved = 0;
 	let internalFailure: unknown;
 	try {
 		// One binding per class, because every binding of a class reaches the same objects.
@@ -664,6 +665,7 @@ async function runBackfill(args: readonly string[], io: MigrateCommandIo, enviro
 				if (internalFailure === undefined && isInternalFailure(error)) internalFailure = error;
 			}
 			failures += result.failed.length;
+			totalMoved += moved;
 			// A finished run starts over next time, which finds objects that Cloudflare listed late.
 			if (result.failed.length === 0) await rm(positionPath, { force: true });
 		}
@@ -678,7 +680,8 @@ async function runBackfill(args: readonly string[], io: MigrateCommandIo, enviro
 		io.error(`Orange failed on its own side: ${internalFailure instanceof Error ? internalFailure.message : String(internalFailure)}`);
 		return 1;
 	}
-	io.log("Run this command once more in a few minutes. Cloudflare lists new objects late.");
+	// A run that moved nothing already confirms the move, so it needs no second run.
+	if (totalMoved > 0) io.log("Run this command once more in a few minutes. Cloudflare lists new objects late.");
 	return 0;
 }
 

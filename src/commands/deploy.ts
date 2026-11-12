@@ -10,6 +10,7 @@ import { parseArgs, parseEnv } from "node:util";
 
 import { type AdditionalModuleSearch, findAdditionalModules } from "../build/additional-modules.js";
 import { bundleWorker, type ModuleRule } from "../build/bundle-worker.js";
+import { withoutRootDependencies } from "../build/image-lockfile.js";
 import { runCustomBuild } from "./dev.js";
 import { customBuildDoneVariable } from "./serve.js";
 import { unresolvedRuntimeModules } from "../build/rewrite-module-imports.js";
@@ -229,6 +230,7 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 				configPath: config.configPath,
 				entrypoint: config.entrypoint,
 				moduleRules: config.moduleRules,
+				usesWorkerLoader: config.bindings.some((binding) => binding.type === "worker_loader"),
 				warn: (message) => io.error(message),
 			},
 			// A secrets file can sit in the project, and its values never enter the image.
@@ -610,6 +612,7 @@ async function writeBuildContext(
 		configPath?: string | undefined;
 		entrypoint: string | undefined;
 		moduleRules: readonly ModuleRule[];
+		usesWorkerLoader: boolean;
 		warn(message: string): void;
 	},
 	excludedPaths: ReadonlySet<string>,
@@ -669,17 +672,25 @@ async function writeBuildContext(
 	}
 	// Packages resolve here, where they are installed. `workspace:` and `file:../` dependencies would
 	// not resolve inside the image, which holds only this directory.
+	// Without a bundle, the image cannot tell what the Worker imports, so it keeps every package.
+	let usesSandbox = true;
 	if (worker.entrypoint !== undefined) {
+		const outputPath = join(workerContext, relative(imageRoot, worker.entrypoint));
 		const bundle = await bundleWorker({
 			entrypoint: worker.entrypoint,
 			moduleRewrites: unresolvedRuntimeModules(),
 			moduleRules: worker.moduleRules,
-			outputPath: join(workerContext, relative(imageRoot, worker.entrypoint)),
+			outputPath,
 			packagesOnly: true,
 		});
 		for (const warning of bundle.warnings) worker.warn(`! ${warning}`);
+		// The bundle keeps `@cloudflare/sandbox` as an import, which `orange serve` resolves.
+		usesSandbox = (await readFile(outputPath, "utf8")).includes('"@cloudflare/sandbox"');
 	}
-	const { packageManager } = await copyRunningOrange(contextDirectory);
+	const { packageManager } = await copyRunningOrange(
+		contextDirectory,
+		imageOnlyWhenUsed({ usesSandbox, usesWorkerLoader: worker.usesWorkerLoader }),
+	);
 	await writeFile(
 		dockerfilePath,
 		dockerfile({ ...image, packageManager, projectDirectory: projectInImage.split(sep).join("/") }),
@@ -729,7 +740,19 @@ async function writeRuntimePackageJson(projectRoot: string, workerDirectory: str
 // what the registry has under this version. Its dependencies install from the
 // lockfile that the build of this Orange wrote, so the image build resolves
 // nothing and gets the tree that this Orange was tested with.
-async function copyRunningOrange(contextDirectory: string): Promise<{ packageManager: string }> {
+// agentOS (with googleapis, about 400 MB) and the sandbox providers load only when a Worker uses
+// them, so an image for a Worker that does not leaves them out.
+function imageOnlyWhenUsed(uses: { usesSandbox: boolean; usesWorkerLoader: boolean }): ReadonlySet<string> {
+	const omitted = new Set<string>();
+	if (!uses.usesSandbox) omitted.add("@rivet-dev/sandbox-adapter");
+	if (!uses.usesSandbox && !uses.usesWorkerLoader) omitted.add("@rivet-dev/agentos-core");
+	return omitted;
+}
+
+async function copyRunningOrange(
+	contextDirectory: string,
+	omitted: ReadonlySet<string>,
+): Promise<{ packageManager: string }> {
 	const file = fileURLToPath(import.meta.url);
 	const packageRoot = orangePackageRoot(dirname(file));
 	const orangeDirectory = join(contextDirectory, orangeContext);
@@ -755,10 +778,10 @@ async function copyRunningOrange(contextDirectory: string): Promise<{ packageMan
 		`${JSON.stringify(
 			{
 				...Object.fromEntries(
-					["name", "version", "type", "packageManager", "dependencies"].map((key) => [
-						key,
-						Reflect.get(record, key),
-					]),
+					["name", "version", "type", "packageManager"].map((key) => [key, Reflect.get(record, key)]),
+				),
+				dependencies: Object.fromEntries(
+					Object.entries(Reflect.get(record, "dependencies") ?? {}).filter(([name]) => !omitted.has(name)),
 				),
 				// The image is linux/amd64 on glibc, so other native builds stay out.
 				pnpm: { supportedArchitectures: { cpu: ["x64"], libc: ["glibc"], os: ["linux"] } },
@@ -767,7 +790,10 @@ async function copyRunningOrange(contextDirectory: string): Promise<{ packageMan
 			2,
 		)}\n`,
 	);
-	await cp(lockfile, join(orangeDirectory, "pnpm-lock.yaml"));
+	await writeFile(
+		join(orangeDirectory, "pnpm-lock.yaml"),
+		withoutRootDependencies(await readFile(lockfile, "utf8"), omitted),
+	);
 	if (!fromSource) await cp(dist, join(orangeDirectory, "dist"), { recursive: true });
 	const packageManager = Reflect.get(record, "packageManager");
 	if (typeof packageManager !== "string" || !packageManager.startsWith("pnpm@")) {

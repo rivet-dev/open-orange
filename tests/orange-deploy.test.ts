@@ -240,6 +240,33 @@ test("--dry-run writes a credential-free runner image and calls no API", async (
 	});
 });
 
+test("an image installs agentOS and the sandbox providers only for a Worker that imports @cloudflare/sandbox", async () => {
+	await withDeploy({}, async (cloud, project) => {
+		const imageDependencies = async (): Promise<string[]> => {
+			const { code, output } = await orangeDeploy(project, ["--dry-run", "--cloud-api", cloud.url, "--cluster", cluster, "--token", token, "--tag", "t1"]);
+			assert.equal(code, 0, output);
+			const manifest = JSON.parse(await readFile(join(deployDirectory(project), "context", "orange", "package.json"), "utf8"));
+			const lockfile = await readFile(join(deployDirectory(project), "context", "orange", "pnpm-lock.yaml"), "utf8");
+			// The frozen install in the image fails unless the lockfile's root lists the same packages.
+			for (const name of ["@rivet-dev/agentos-core", "@rivet-dev/sandbox-adapter"]) {
+				assert.equal(name in manifest.dependencies, lockfile.includes(`\n      '${name}':\n`), name);
+			}
+			return Object.keys(manifest.dependencies);
+		};
+
+		const plain = await imageDependencies();
+		assert.ok(plain.includes("rivetkit"));
+		assert.ok(!plain.includes("@rivet-dev/agentos-core"));
+		assert.ok(!plain.includes("@rivet-dev/sandbox-adapter"));
+
+		const entrypoint = join(project.directory, "src", "index.ts");
+		await writeFile(entrypoint, `${await readFile(entrypoint, "utf8")}\nexport { getSandbox } from "@cloudflare/sandbox";\n`);
+		const sandbox = await imageDependencies();
+		assert.ok(sandbox.includes("@rivet-dev/agentos-core"));
+		assert.ok(sandbox.includes("@rivet-dev/sandbox-adapter"));
+	});
+});
+
 test("orange deploy refuses a variable Rivet sets and -e KEY=VAL before it builds or calls anything", async () => {
 	await withDeploy({}, async (cloud, project, env) => {
 		const secret = await orangeDeploy(project, ["--cloud-api", cloud.url, "--var", "RIVET_TOKEN:x"], env);

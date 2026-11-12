@@ -140,7 +140,9 @@ $ curl localhost:8787/bob
 | `transactionSync()` and `transaction()` | Supported | |
 | Alarms | Supported | |
 | `getCurrentBookmark()`, `waitForBookmark()` | Supported | Bookmarks use the local `workerd` format. |
-| `getBookmarkForTime()`, `onNextSessionRestoreBookmark()` | Not supported | Throw `DurableObjectStorage.<name> is not implemented`. |
+| `getBookmarkForTime()`, `onNextSessionRestoreBookmark()` | Not supported | Reading one throws a `NotSupportedError`. |
+| `snapshot()`, `onNextSessionRestore()` | Not supported | Reading one throws a `NotSupportedError`. |
+| `ensureReplicas()`, `disableReplicas()` | Not supported | Reading one throws a `NotSupportedError`. |
 | `blockConcurrencyWhile()`, `waitUntil()`, `abort()` | Supported | `abort()` restarts the whole Rivet Actor. |
 | `ctx.exports` | Supported | |
 | Standard WebSockets | Supported | |
@@ -637,6 +639,8 @@ These add to the [reserved tables](#reserved-tables) and the shorter
 - Per-request `ctx.props` values.
 - Point-in-time recovery with `getBookmarkForTime()` and
   `onNextSessionRestoreBookmark()`.
+- Snapshots with `snapshot()` and `onNextSessionRestore()`.
+- Read replicas with `ensureReplicas()` and `disableReplicas()`.
 - `ctx.restore()` and `ctx.configureReadReplication()`.
 - `stub.connect()` and the `connect()` handler.
 - Bindings to another Worker with `environment` or `namespace_id`.

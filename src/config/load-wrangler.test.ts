@@ -43,14 +43,13 @@ test("resolves TOML configuration and supported bindings", async () => {
 	);
 });
 
-test("accepts other compatibility profiles and warns about ignored flags", async () => {
+test("accepts other compatibility profiles, warns about ignored flags, and keeps quiet about Node.js flags that Cloudflare needs", async () => {
 	const config = await loadWranglerConfiguration({
 		configPath: fixture("wrangler-other-profile.jsonc"),
 	});
 
 	assert.equal(config.compatibilityDate, "2024-01-01");
 	assert.deepEqual(config.warnings, [
-		'Orange always has Node.js APIs, so it does not need compatibility_flags ["nodejs_compat"]',
 		'Orange ignores compatibility_flags ["streams_enable_constructors"]',
 	]);
 });

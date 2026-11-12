@@ -569,16 +569,13 @@ function resolveCompatibilityProfile(config: WranglerConfig): {
 				flag !== navigationPrefersAssetServing.disable,
 		)
 		.sort();
-	// Node.js APIs are always on, so a flag that turns them on needs no warning that reads as if they were off.
-	const nodeFlags = ignoredFlags.filter((flag) => alwaysOnNodeFlags.has(flag));
+	// Orange always has Node.js APIs, and Cloudflare still needs these flags (the Agents SDK needs
+	// nodejs_compat), so Orange accepts them without a warning that reads as "remove this flag".
 	const otherFlags = ignoredFlags.filter((flag) => !alwaysOnNodeFlags.has(flag));
 	return {
 		compatibilityDate,
 		compatibilityFlags,
 		warnings: [
-			...(nodeFlags.length === 0
-				? []
-				: [`Orange always has Node.js APIs, so it does not need compatibility_flags ${JSON.stringify(nodeFlags)}`]),
 			...(otherFlags.length === 0 ? [] : [`Orange ignores compatibility_flags ${JSON.stringify(otherFlags)}`]),
 		],
 	};

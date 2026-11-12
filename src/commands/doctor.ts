@@ -112,8 +112,10 @@ function checkRivetKit(): Check {
 		assertPinnedRivetKitBuild(discoverInstalledRivetKitBuild());
 		return { detail: `${PINNED_RIVETKIT_VERSION} · engine binary ready`, id: "rivetkit", status: "ok", title: "RivetKit" };
 	} catch (error: unknown) {
+		// A failed require adds "Require stack:" and one path per line, so the check shows the first line.
+		const message = error instanceof Error ? error.message : String(error);
 		return {
-			detail: error instanceof Error ? error.message : String(error),
+			detail: message.split("\n", 1)[0]?.trim() ?? message,
 			hint: "Reinstall open-orange so the pinned RivetKit packages are installed.",
 			id: "rivetkit",
 			status: "fail",

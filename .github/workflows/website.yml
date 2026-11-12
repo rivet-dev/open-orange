@@ -1,0 +1,65 @@
+name: website
+
+# Builds website/ and publishes it to R2 with rivet-dev/deploy-to-bucket: production on pushes
+# to main, a preview for each same-repository PR. website-cleanup.yml deletes a PR's preview
+# when it closes. Setup (bucket, router Worker, DNS, certificates, secrets, variables):
+# https://github.com/rivet-dev/deploy-to-bucket/blob/main/SETUP.md
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "docs/**"
+      - "packages/cloudflare-conformance/**"
+      - "README.md"
+      - ".github/workflows/website.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "website/**"
+      - "docs/**"
+      - "packages/cloudflare-conformance/**"
+      - "README.md"
+      - ".github/workflows/website.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Match website-cleanup.yml so cleanup waits for active uploads.
+concurrency:
+  group: website-r2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  website:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            website/pnpm-lock.yaml
+      # The site reads the conformance results and docs from the root workspace at build time.
+      - name: Build website
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir website install --frozen-lockfile
+          pnpm --dir website build
+      - name: Publish website
+        uses: rivet-dev/deploy-to-bucket@beb51d7be20dde717cd681b4d6de34e233da65a9
+        with:
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          account-id: ${{ vars.R2_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          domain: ${{ vars.WEBSITE_DOMAIN }}
+          preview-domain: ${{ vars.WEBSITE_PREVIEW_DOMAIN }}
+          directory: website/dist

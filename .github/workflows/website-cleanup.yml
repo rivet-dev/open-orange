@@ -1,0 +1,31 @@
+name: website cleanup
+
+# Deletes a closed PR's website preview. See website.yml.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: website-r2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: rivet-dev/deploy-to-bucket@beb51d7be20dde717cd681b4d6de34e233da65a9
+        with:
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          account-id: ${{ vars.R2_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          domain: ${{ vars.WEBSITE_DOMAIN }}
+          preview-domain: ${{ vars.WEBSITE_PREVIEW_DOMAIN }}

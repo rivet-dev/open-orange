@@ -216,11 +216,9 @@ A module is not complete until the same commit includes all three:
 
 ## Agent skill
 
-- `skills/rivet-open-orange/` is the agent skill for running, deploying, and
-  migrating with Orange. `.github/workflows/sync-skill.yml` publishes it to
-  `rivet-dev/skills` on each push to `main`, and the Rivet MCP serves it.
-- When a commit changes a command, flag, output line, `orange doctor --json`
-  event, or step that the skill names, update the skill in the same commit.
+- The `rivet-open-orange` agent skill lives in `rivet-dev/skills` at
+  `skills/rivet-open-orange/`. When a commit changes a command, flag, output line,
+  `orange doctor --json` event, or step that the skill names, open a PR there too.
 
 ## Website docs
 

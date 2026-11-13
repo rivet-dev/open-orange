@@ -132,10 +132,10 @@ export async function exportDurableObjectFacet(
 /**
  * Forks this facet's actor to a new actor at the request's key, then its children under the new
  * actor. The fork copies the last durable commit, so the read commits the object's open turn first,
- * and never sees a transaction in progress. Calls from this facet to its children wait until each
- * child is copied, so none reaches the copy, and the copied tree is one consistent cut: nothing
- * else can call a facet. A fork that the engine refuses for good is returned, so the clone copies
- * rows instead.
+ * and never sees a transaction in progress. The children are the ones the forked actor names, so
+ * they match its snapshot. Calls from this facet to its children wait until each child is copied,
+ * so none reaches the copy. A fork that the engine refuses, or that did not make this clone's
+ * actor, is returned, so the clone copies rows instead.
  */
 export async function forkDurableObjectFacet(
 	actor: DurableObjectFacetCloneActor,
@@ -143,21 +143,24 @@ export async function forkDurableObjectFacet(
 	readInObject: <Result>(read: () => Result) => Promise<Result>,
 ): Promise<DurableObjectFacetForkOutcome> {
 	const request = requireForkRequest(requestValue);
-	const { children, depth } = await readInObject(() => {
-		const held = [...readIncarnations(actor.database)].map(([name, incarnation]) => {
-			const release = Promise.withResolvers<void>();
-			enqueueDurableObjectFacetWork(actor.actorId, [name], new Set(), () => release.promise);
-			return { incarnation, name, release: release.resolve };
-		});
-		return { children: held, depth: requireDurableObjectFacetDepth(actor.database) };
+	const held = new Map<string, () => void>();
+	const hold = (name: string): void => {
+		if (held.has(name)) return;
+		const release = Promise.withResolvers<void>();
+		enqueueDurableObjectFacetWork(actor.actorId, [name], new Set(), () => release.promise);
+		held.set(name, release.resolve);
+	};
+	const depth = await readInObject(() => {
+		for (const name of readIncarnations(actor.database).keys()) hold(name);
+		return requireDurableObjectFacetDepth(actor.database);
 	});
 	try {
 		await actor.database.whenDurable(actor.database.commitTicket());
 		const client = actor.host.client();
 		const input: DurableObjectFacetForkInput = { cloneId: request.cloneId, depth };
-		let forkedActorId: string;
+		let forkError: unknown;
 		try {
-			forkedActorId = await forkWhenStorageAccepts(() =>
+			await forkWhenStorageAccepts(() =>
 				client.fork(actor.host.actorName, actor.actorId, request.key, input),
 			);
 		} catch (error: unknown) {
@@ -165,37 +168,60 @@ export async function forkDurableObjectFacet(
 			if (code === "fork_failed" || code === "fork_too_deep" || code === "fork_unavailable") {
 				return code;
 			}
-			// A clone that runs again after a crash finds its own fork. A fork still in progress
-			// answers once it starts. Any other failure, such as a token without the fork grant,
-			// falls back to the row copy, which only costs time.
-			if (code !== "duplicate_key" && code !== "fork_pending") {
-				console.warn(
-					`[durable-object] facet fork failed, copying rows instead: ${error instanceof Error ? error.message : String(error)} clone_id=${request.cloneId}`,
-				);
-				return "fork_error";
-			}
-			const clonedBy = await client
-				.get(actor.host.actorName, request.key)
-				.action({ args: [], name: durableObjectFacetActions.clonedBy });
-			if (clonedBy !== request.cloneId) {
-				throw new Error("Durable Object facet clone destination holds another clone", { cause: error });
-			}
-			forkedActorId = await client.resolve(actor.host.actorName, request.key);
+			forkError = error;
 		}
-		const forked = { actorId: forkedActorId, className: "", depth: 1 };
+		// A failed call can still have made the fork, for example when its reply was lost, and a
+		// clone that runs again after a crash finds its own fork. Both continue with that fork.
+		const forked = await readForkedFacet(actor.host, request.key, forkError);
+		if (forked?.cloneId !== request.cloneId) {
+			// Any other failure, such as a token without the fork grant or a destination that an
+			// earlier row copy created, falls back to the row copy, which only costs time.
+			console.warn(
+				`[durable-object] facet fork failed, copying rows instead: ${forkError instanceof Error ? forkError.message : forkError === undefined ? "the destination holds another clone" : String(forkError)} clone_id=${request.cloneId}`,
+			);
+			return "fork_error";
+		}
+		// A child that this facet registered while the fork ran is in the snapshot too.
+		for (const [name] of forked.children) hold(name);
+		const parent = { actorId: forked.actorId, className: "", depth: 1 };
 		await Promise.all(
-			children.map((child) =>
+			forked.children.map(([name, incarnation]) =>
 				cloneDurableObjectFacetActor(actor.host, {
 					cloneId: request.cloneId,
 					depth: depth + 1,
-					dstKey: durableObjectFacetKey(actor.host, forked, child.name, child.incarnation),
-					srcKey: durableObjectFacetKey(actor.host, facetParent(actor), child.name, child.incarnation),
+					dstKey: durableObjectFacetKey(actor.host, parent, name, incarnation),
+					srcKey: durableObjectFacetKey(actor.host, facetParent(actor), name, incarnation),
 				}),
 			),
 		);
 		return "forked";
 	} finally {
-		for (const child of children) child.release();
+		for (const release of held.values()) release();
+	}
+}
+
+/** What a facet actor at a fork's key holds. The fork's own failure, if any, makes it optional. */
+async function readForkedFacet(
+	host: DurableObjectFacetHost,
+	key: readonly string[],
+	forkError: unknown,
+): Promise<DurableObjectFacetForkState | undefined> {
+	const client = host.client();
+	const read = async (): Promise<DurableObjectFacetForkState> =>
+		requireForkState(
+			await client.get(host.actorName, key).action({ args: [], name: durableObjectFacetActions.clonedBy }),
+		);
+	if (forkError === undefined) return await read();
+	try {
+		// A fork still in progress answers once it starts.
+		const code = rivetActorErrorCode(forkError);
+		if (code !== "duplicate_key" && code !== "fork_pending" && !(await client.exists(host.actorName, key))) {
+			return undefined;
+		}
+		return await read();
+	} catch (error: unknown) {
+		console.warn("[durable-object] facet fork destination could not be read", error);
+		return undefined;
 	}
 }
 
@@ -206,7 +232,13 @@ const forkAttempts = 8;
 async function forkWhenStorageAccepts(fork: () => Promise<string>): Promise<string> {
 	for (let attempt = 1; ; attempt++) {
 		try {
-			return await fork();
+			// Tests widen the window before the fork, or lose the reply of a fork that the engine
+			// made, as a timeout would.
+			const fault = process.env.ORANGE_TEST_FACET_FORK_FAULT;
+			if (fault === "slow") await sleep(500);
+			const forked = await fork();
+			if (fault === "reply-lost") throw new Error("The facet fork reply was lost");
+			return forked;
 		} catch (error: unknown) {
 			if (!isRivetStorageOverloaded(error) || attempt === forkAttempts) throw error;
 			await sleep(100 * 2 ** (attempt - 1));
@@ -237,12 +269,24 @@ export function storeForkedDurableObjectFacet(
 		database.executeSync(`DELETE FROM ${durableObjectMetadataTable}`);
 	}
 	writeDurableObjectMetadata(database, "facet", unboundDurableObjectFacetRecord(input.depth));
-	writeDurableObjectMetadata(database, "clone", input.cloneId);
+	writeDurableObjectMetadata(database, "fork", input.cloneId);
 }
 
-/** The clone that filled this facet, or undefined. */
-export function readDurableObjectFacetCloneId(database: RivetSynchronousSqliteExecutor): unknown {
-	return readDurableObjectMetadata(database, "clone");
+/** The fork that made this facet actor, if any, and the children it names. */
+export interface DurableObjectFacetForkState {
+	readonly actorId: string;
+	readonly children: [name: string, incarnation: number][];
+	readonly cloneId: unknown;
+}
+
+export function readDurableObjectFacetForkState(
+	actor: DurableObjectFacetCloneActor,
+): DurableObjectFacetForkState {
+	return {
+		actorId: actor.actorId,
+		children: [...readIncarnations(actor.database)],
+		cloneId: readDurableObjectMetadata(actor.database, "fork"),
+	};
 }
 
 /** Returns chunk `index`, and drops the chunks below `confirmed`, which the importer already holds. */
@@ -275,7 +319,8 @@ export function releaseDurableObjectFacetExport(snapshotId: unknown): void {
  * Replaces this facet's storage and children with the source's snapshot. Children are copied to
  * new keys first, and this facet's own rows, with the incarnations that point at them, commit in
  * one transaction last, so a crash leaves the old facet whole. A request that already committed
- * does nothing, not even abort the object, so the parent can run it again after a crash.
+ * does nothing, not even abort the object, so the parent can run it again after a crash. A fork of
+ * the same clone is not a committed import: its children may be missing, so the import replaces it.
  */
 export async function importDurableObjectFacet(
 	actor: DurableObjectFacetCloneActor,
@@ -462,6 +507,22 @@ function requireForkRequest(value: unknown): DurableObjectFacetForkRequest {
 		throw new TypeError("Durable Object facet fork request is invalid");
 	}
 	return { cloneId, key };
+}
+
+function requireForkState(value: unknown): DurableObjectFacetForkState {
+	const actorId = field(value, "actorId");
+	const children = field(value, "children");
+	if (
+		typeof actorId !== "string" ||
+		!Array.isArray(children) ||
+		!children.every(
+			(child: unknown) =>
+				Array.isArray(child) && typeof child[0] === "string" && Number.isSafeInteger(child[1]),
+		)
+	) {
+		throw new TypeError("Durable Object facet fork state is invalid");
+	}
+	return { actorId, children, cloneId: field(value, "cloneId") };
 }
 
 function requireForkInput(value: unknown): DurableObjectFacetForkInput {

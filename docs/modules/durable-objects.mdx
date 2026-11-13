@@ -522,11 +522,14 @@ What you can rely on:
 
 - `dst` holds the data of `src` as of the `clone()` call. Calls to `dst` always
   see the copy.
-- The copy is whole or absent. It survives a restart, a crash, and the
-  parent's `ctx.abort()`. A clone that runs again after a crash finds its own
-  fork and changes nothing.
-- The copied tree is consistent. Only a parent can call its facets, and calls
-  from `src` to its children wait until each child is forked.
+- The copy is whole or absent. It survives a restart and a crash. After the
+  parent's `ctx.abort()`, the parent's next facet call stores the record again
+  and the clone runs then; a crash before that loses the clone. A clone that
+  runs again after a crash finds its own fork and changes nothing.
+- The copied tree is consistent. The children that Orange forks are the ones
+  that the forked actor names, and calls from `src` to its children wait until
+  each child is forked. A child that `src` writes on its own while the fork
+  runs can carry those writes into the copy.
 - The copy is the SQLite database itself: rowids, `AUTOINCREMENT` counters,
   generated columns, triggers, views, FTS5 tables, and value types.
 - `clone(name, name)` aborts the facet and keeps its storage. A `src` that
@@ -542,6 +545,7 @@ Engine refuses a fork, Orange copies rows instead and logs
 | `fork_too_deep` | `src` is already 16 forks deep, for example after 16 clones of clones. The row copy starts a new chain. |
 | `fork_unavailable` | The Engine cannot fork. |
 | `fork_failed` | `src` never started, so it has nothing to fork. |
+| `fork_error` | Any other failure, such as a token without the fork grant, or a `dst` key that a row copy interrupted by a crash created. |
 
 The row copy reads every row of `src` in one synchronous call, which blocks the
 runtime process, and writes them to `dst` in one transaction. Set

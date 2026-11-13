@@ -177,6 +177,25 @@ export class Parent extends DurableObject {
 			}
 			case "/read-d":
 				return new Response(`d=${await this.f("d").getValue()}`);
+			case "/delete-then-read-d":
+				facets.delete("d");
+				return new Response(`d=${await this.f("d").getValue()}`);
+			case "/spawn-during-clone": {
+				// src registers a new child on its own timer while each clone forks it.
+				const src = this.f("s");
+				await src.startSpawning();
+				const copies = [];
+				for (let index = 0; index < 3; index++) {
+					await new Promise((resolve) => setTimeout(resolve, 20));
+					facets.clone("s", `d${index}`);
+					copies.push(await this.f(`d${index}`).spawned());
+				}
+				await src.stopSpawning();
+				return Response.json({
+					copied: copies.every((copy) => copy.count > 0),
+					missing: copies.flatMap((copy) => copy.missing),
+				});
+			}
 			case "/tree": {
 				// src has children and grandchildren, and dst runs another class.
 				const src = this.f("s");
@@ -344,6 +363,30 @@ export class NestedFacet extends DurableObject {
 			setTimeout(tick, 0);
 		};
 		tick();
+	}
+	startSpawning() {
+		let count = 0;
+		this.spawning = true;
+		const spawn = async () => {
+			if (!this.spawning) return;
+			count += 1;
+			await this.child(`t${count}`).setValue(count);
+			this.ctx.storage.kv.put("spawned", count);
+			setTimeout(spawn, 0);
+		};
+		return spawn();
+	}
+	stopSpawning() {
+		this.spawning = false;
+	}
+	// Every child that the copied count names holds its value.
+	async spawned() {
+		const count = this.ctx.storage.kv.get("spawned") ?? 0;
+		const missing = [];
+		for (let index = 1; index <= count; index++) {
+			if ((await this.child(`t${index}`).getValue()) !== index) missing.push(`t${index}`);
+		}
+		return { count, missing };
 	}
 	stopTicking() {
 		this.ticking = false;

@@ -1,7 +1,14 @@
 import type { RivetSynchronousSqliteExecutor } from "../../internal/rivetkit.js";
 
 /** Values that Orange keeps for an object in the object's own SQLite, beside user data. */
-export type DurableObjectMetadataKey = "clone" | "cloudflareImport" | "facet" | "hibernation" | "name";
+// `clone` names the row copy that filled a facet, and `fork` the fork that made it.
+export type DurableObjectMetadataKey =
+	| "clone"
+	| "cloudflareImport"
+	| "facet"
+	| "fork"
+	| "hibernation"
+	| "name";
 
 export const durableObjectMetadataTable = "_rivet_openorange_metadata";
 

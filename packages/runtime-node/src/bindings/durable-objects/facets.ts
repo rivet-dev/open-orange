@@ -433,7 +433,7 @@ function facetClonesFork(): boolean {
 /**
  * Copies the facet actor at `srcKey`, with its children, to a new actor at `dstKey`. It forks the
  * source actor when the engine can, and copies rows otherwise. A missing source leaves `dstKey`
- * without an actor, so the destination starts empty. Running it again after a crash finishes the
+ * empty. Running it again after a crash finishes the
  * same copy, because both paths recognize their own `cloneId`.
  */
 export async function cloneDurableObjectFacetActor(
@@ -446,8 +446,10 @@ export async function cloneDurableObjectFacetActor(
 	},
 ): Promise<void> {
 	const client = host.client();
-	if (!(await client.exists(host.actorName, clone.srcKey))) return;
-	if (facetClonesFork()) {
+	if (!(await client.exists(host.actorName, clone.srcKey))) {
+		// A record from a release before forks names dst's existing key. The row copy empties it.
+		if (!(await client.exists(host.actorName, clone.dstKey))) return;
+	} else if (facetClonesFork()) {
 		const request: DurableObjectFacetForkRequest = { cloneId: clone.cloneId, key: [...clone.dstKey] };
 		const outcome = await client
 			.get(host.actorName, clone.srcKey)
@@ -640,8 +642,7 @@ class FacetManager {
 		if (this.#recovered) return;
 		this.#recovered = true;
 		// A clone whose record an earlier object of this parent discarded, for example with
-		// ctx.abort(), still runs in this process. This object stores the record and runs the clone
-		// again after it, which finds the copy done.
+		// ctx.abort(), runs in this process once this object stores the record again.
 		for (const clone of this.#incarnations.unstoredClones()) {
 			this.#registered.add(clone.dst);
 			this.#enqueueClone(clone, this.#incarnations.recordClone(clone));
@@ -784,15 +785,16 @@ class FacetManager {
 			// the parent's turn either, so ctx.abort() after clone() keeps it.
 			() => runOutsideOutputGate(async () => {
 				// A crash after this point finds the record and runs the clone again. A parent that
-				// discarded the record still copies, and its next object stores the record again.
-				const durable = await recorded;
+				// discarded the record copies nothing yet: its next object stores the record again and
+				// copies then, before any facet call. So no actor ever exists at an incarnation that
+				// the parent's SQLite does not hold, and a crash first loses the clone whole.
+				if (!(await recorded)) return false;
 				await cloneDurableObjectFacetActor(this.#host, {
 					cloneId: clone.id,
 					depth: this.#parent.depth + 1,
 					dstKey: clone.dstKey,
 					srcKey: clone.srcKey,
 				});
-				if (!durable) return false;
 				try {
 					this.#parent.database.writeAtCommitBoundary(() => {
 						this.#parent.database.executeSync(deleteCloneSql, [clone.id]);

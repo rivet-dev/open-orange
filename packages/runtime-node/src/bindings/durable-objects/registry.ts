@@ -25,7 +25,7 @@ import {
 	exportDurableObjectFacet,
 	forkDurableObjectFacet,
 	importDurableObjectFacet,
-	readDurableObjectFacetCloneId,
+	readDurableObjectFacetForkState,
 	readDurableObjectFacetExportChunk,
 	releaseDurableObjectFacetExport,
 	storeForkedDurableObjectFacet,
@@ -899,10 +899,12 @@ function durableObjectFacetShape(
 					},
 				);
 			},
-			[durableObjectFacetActions.clonedBy]: (context) =>
-				requireDurableObjectGenerationSlot(context.vars).readStorage(() =>
-					readDurableObjectFacetCloneId(requireActorDatabase(context)),
-				),
+			[durableObjectFacetActions.clonedBy]: (context) => {
+				const actor = facetCloneActor(context, facetHost);
+				return requireDurableObjectGenerationSlot(context.vars).readStorage(() =>
+					readDurableObjectFacetForkState(actor),
+				);
+			},
 			[durableObjectFacetActions.destroy]: (context) => {
 				if (context.destroy === undefined) {
 					throw new Error("The pinned RivetKit runtime did not provide destroy()");

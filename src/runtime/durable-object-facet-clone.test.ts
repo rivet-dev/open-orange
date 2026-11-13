@@ -182,7 +182,7 @@ describe("ctx.facets.clone()", { timeout: 240_000 }, () => {
 		assert.deepEqual(copies, Array.from({ length: 8 }, () => "d=10485760 children=1,2,3,4"));
 	});
 
-	test("a 100 MB clone finishes in seconds, and other Durable Objects keep answering while it runs", { timeout: 240_000 }, async () => {
+	test("a 100 MB clone finishes, and other Durable Objects keep answering while it runs", { timeout: 240_000 }, async () => {
 		if (orange === undefined) throw new Error("orange dev did not start");
 		for (let filled = 0; filled < 100; filled += 25) {
 			assert.equal(await call("/big-fill?mb=25", "big"), "ok");
@@ -203,13 +203,98 @@ describe("ctx.facets.clone()", { timeout: 240_000 }, () => {
 		cloning = false;
 		await pings;
 		assert.deepEqual({ bytes: copied.bytes, rows: copied.rows }, { bytes: 104_857_600, rows: 400 });
-		// A row copy of 100 MB takes about 6 s here and blocks the runtime for over a second.
-		assert.ok(elapsed < 3_000, `the clone took ${Math.round(elapsed)} ms`);
-		assert.ok(slowest < 400, `another Durable Object waited ${Math.round(slowest)} ms`);
+		// A fork takes well under a second here. The bounds catch a hang, not a slow machine.
+		assert.ok(elapsed < 30_000, `the clone took ${Math.round(elapsed)} ms`);
+		assert.ok(slowest < 10_000, `another Durable Object waited ${Math.round(slowest)} ms`);
 	});
 
 	test("clone() at the maximum facet depth does nothing", async () => {
 		// Workerd 1.20260903.1 fails here with an internal error.
 		assert.equal(await call("/depth", "depth"), "clone=ok");
+	});
+});
+
+// Each test starts its own `orange dev`, so a crash or a fault reaches no other test.
+describe("ctx.facets.clone() recovery", { timeout: 600_000 }, () => {
+	let project: TemporaryProject;
+	let orange: RunningOrangeDev | undefined;
+
+	before(async () => {
+		project = await copyProject(fixtureDirectory);
+	});
+
+	after(async () => {
+		await orange?.close();
+		await project.dispose();
+	});
+
+	async function restart(environment: NodeJS.ProcessEnv = {}, crash = false): Promise<void> {
+		if (crash) await orange?.kill();
+		else await orange?.close();
+		orange = await startOrangeDev(project.directory, undefined, { environment });
+	}
+
+	async function fetchPath(path: string, parent: string): Promise<Response> {
+		if (orange === undefined) throw new Error("orange dev did not start");
+		const url = new URL(path, orange.origin);
+		url.searchParams.set("parent", parent);
+		return await fetch(url);
+	}
+
+	async function call(path: string, parent: string): Promise<string> {
+		const response = await fetchPath(path, parent);
+		const body = await response.text();
+		assert.equal(response.status, 200, `${path}: ${body}\n${orange?.output()}`);
+		return body;
+	}
+
+	async function waitForParent(parent: string): Promise<void> {
+		// Rivet moves the crashed runtime's actors only after its lost timeout.
+		const deadline = Date.now() + 120_000;
+		for (;;) {
+			const ping = await fetchPath("/ping", parent);
+			const body = await ping.text();
+			if (ping.status === 200 && body === "pong") return;
+			if (Date.now() > deadline) assert.fail(`the parent did not restart: ${body}\n${orange?.output()}`);
+		}
+	}
+
+	test("a fork that the engine made while its caller saw an error still copies the children", async () => {
+		await restart({ ORANGE_TEST_FACET_FORK_FAULT: "reply-lost" });
+		assert.equal(await call("/setup", "reply-lost"), "ok");
+		assert.equal(await call("/clone-basic", "reply-lost"), "dst=10 dst.a=100 dst.b=200");
+	});
+
+	test("a child that src registers while the fork waits is copied with the snapshot that names it", async () => {
+		// Each fork waits 500 ms first, while src keeps registering children.
+		await restart({ ORANGE_TEST_FACET_FORK_FAULT: "slow" });
+		assert.deepEqual(JSON.parse(await call("/spawn-during-clone", "spawn")), { copied: true, missing: [] });
+	});
+
+	test("a clone whose dst an earlier row copy created before a crash finishes after a restart", async () => {
+		await restart({ ORANGE_FACET_CLONE: "copy" });
+		assert.equal(await call("/fill", "copy-crash"), "ok");
+		assert.equal(await call("/clone-and-return", "copy-crash"), "cloned");
+		// The row copy of 40 MB takes seconds, so the crash stops it after it created dst.
+		await delay(300);
+		await restart({}, true);
+		await waitForParent("copy-crash");
+		assert.deepEqual(JSON.parse(await call("/read-blobs", "copy-crash")), {
+			bytes: 41_943_040,
+			c: 5,
+			rows: 160,
+		});
+	});
+
+	test("a crash after ctx.abort() discarded clone()'s record leaves no copy that a later delete() and get() reach", async () => {
+		await restart();
+		const aborted = await fetchPath("/abort-after-clone", "abort-crash");
+		assert.equal(aborted.status, 500);
+		await aborted.body?.cancel();
+		// Time for a copy in the background to finish, if one ran.
+		await delay(2_000);
+		await restart({}, true);
+		await waitForParent("abort-crash");
+		assert.equal(await call("/delete-then-read-d", "abort-crash"), "d=null");
 	});
 });

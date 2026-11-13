@@ -77,9 +77,9 @@ export const WORKERD_MATRIX: MatrixRow[] = [
 		openorange: { mark: 'yes', text: 'Rivet places them across your machines.' },
 	},
 	{
-		label: 'Fork an Actor or Durable Object with its state',
+		label: 'Fork an Actor with its state',
 		workerd: { mark: 'no', text: 'No.' },
-		openorange: { mark: 'yes', text: 'Yes, with Rivet Actors beside your Workers.' },
+		openorange: { mark: 'yes', text: 'Yes, with Rivet Actors beside your Workers. A Durable Object facet `clone()` is a fork.' },
 	},
 	{
 		label: 'Storage',

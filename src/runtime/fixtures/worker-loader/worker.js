@@ -21,6 +21,41 @@ const filesystemCode = {
 	},
 };
 
+// Reports what a dynamic Worker can see of any other dynamic Worker: a file,
+// a global, process.env, and the VM's Worker roots. Then it leaves its own,
+// and tries to change Orange's runtime, which every VM reads from the host.
+const poolProbeCode = (id, globalOutbound) => ({
+	compatibilityDate: "2026-09-03",
+	mainModule: "main.js",
+	env: { ["POOL_SECRET_" + id]: id },
+	globalOutbound,
+	modules: {
+		"main.js": `
+			import { createRequire } from "node:module";
+			const fs = createRequire(import.meta.url)("fs");
+			const seenGlobal = globalThis.poolProbe ?? null;
+			globalThis.poolProbe = ${JSON.stringify(id)};
+			export default {
+				probe() {
+					let file;
+					try { file = fs.readFileSync("/tmp/pool-probe.txt", "utf8"); } catch (error) { file = error.code; }
+					fs.writeFileSync("/tmp/pool-probe.txt", ${JSON.stringify(id)});
+					let runtime;
+					try { fs.writeFileSync("/open-orange/runtime/manifest.json", "{}"); runtime = "written"; } catch (error) { runtime = error.code; }
+					return {
+						env: Object.keys(process.env).filter((key) => key.startsWith("POOL_SECRET_")),
+						file,
+						global: seenGlobal,
+						id: ${JSON.stringify(id)},
+						runtime,
+						workerRoots: fs.readdirSync("/open-orange/workers").length,
+					};
+				},
+			};
+		`,
+	},
+});
+
 const loopbackCode = (globalOutbound) => ({
 	compatibilityDate: "2026-09-03",
 	mainModule: "main.js",
@@ -95,6 +130,85 @@ function describeValues(v) {
 		]),
 		sharedBytes: v.sameBytes === v.bytes,
 	};
+}
+
+// Receives a stream that a dynamic Worker sends, and hands its text to the route that waits.
+const uploads = new Map();
+export class Sink extends WorkerEntrypoint {
+	async consume(stream) {
+		let received;
+		try {
+			received = await new Response(stream).text();
+		} catch (error) {
+			received = `stream failed: ${error.message}`;
+		}
+		uploads.get(this.ctx.props.id)?.(received);
+	}
+}
+
+// Answers at once and streams 10 lines into env.sink from ctx.waitUntil(), one every 300 ms.
+const uploadCode = (sink) => ({
+	compatibilityDate: "2026-09-03",
+	mainModule: "main.js",
+	env: { sink },
+	modules: {
+		"main.js": `
+			export default {
+				fetch(request, env, ctx) {
+					let i = 0;
+					const body = new ReadableStream({
+						async pull(controller) {
+							await new Promise((r) => setTimeout(r, 300));
+							controller.enqueue(new TextEncoder().encode("line " + i + "\\n"));
+							if (++i === 10) controller.close();
+						},
+					});
+					ctx.waitUntil(env.sink.consume(body));
+					return new Response("started");
+				},
+			};
+		`,
+	},
+});
+
+// Streams 10 lines, one every 300 ms, so the body outlasts a 1 s idle timeout.
+const streamCode = {
+	compatibilityDate: "2026-09-03",
+	mainModule: "main.js",
+	modules: {
+		"main.js": `
+			export default {
+				fetch() {
+					let i = 0;
+					const body = new ReadableStream({
+						async pull(controller) {
+							await new Promise((r) => setTimeout(r, 300));
+							controller.enqueue(new TextEncoder().encode("line " + i + "\\n"));
+							if (++i === 10) controller.close();
+						},
+					});
+					return new Response(body);
+				},
+			};
+		`,
+	},
+};
+
+// Returns a dynamic Worker's streamed response. With `drop`, the parent keeps no stub and
+// collects garbage while the body streams, so the Worker is released mid-body.
+async function streamThroughDynamicWorker(env, ctx, drop) {
+	const response = await env.LOADER.load(streamCode).getEntrypoint().fetch("http://dynamic/stream");
+	if (drop) {
+		ctx.waitUntil(
+			(async () => {
+				for (let i = 0; i < 20; i++) {
+					globalThis.gc();
+					await new Promise((r) => setTimeout(r, 200));
+				}
+			})(),
+		);
+	}
+	return response;
 }
 
 async function settle(promise) {
@@ -270,6 +384,17 @@ const routes = {
 		const written = await writer.write(path);
 		return { reader: await reader.read(path), writer: written };
 	},
+	// Loads `n` dynamic Workers at once, alternating the VM network mode.
+	async pool(env, _ctx, request) {
+		const n = Number(new URL(request.url).searchParams.get("n"));
+		const tag = crypto.randomUUID().slice(0, 8);
+		return Promise.all(
+			Array.from({ length: n }, (_, i) => {
+				const code = poolProbeCode(`${tag}_${i}`, i % 2 === 0 ? null : undefined);
+				return settle(env.LOADER.load(code).getEntrypoint().probe(null));
+			}),
+		);
+	},
 	async loopback(env, _ctx, request) {
 		const url = new URL(request.url);
 		const ports = [Number(url.port), Number(url.searchParams.get("engine"))];
@@ -313,6 +438,83 @@ const routes = {
 		counts.push(await env.LOADER.get("cache-b", getCode).getEntrypoint().increment());
 		counts.push(await env.LOADER.get(null, getCode).getEntrypoint().increment());
 		return { counts, loads };
+	},
+	// The parent keeps no stub and collects garbage while the dynamic Worker streams to it.
+	async upload(env, ctx) {
+		const id = crypto.randomUUID();
+		const received = new Promise((resolve) => uploads.set(id, resolve));
+		const response = await env.LOADER.load(uploadCode(ctx.exports.Sink({ props: { id } })))
+			.getEntrypoint()
+			.fetch("http://dynamic/upload");
+		const started = await response.text();
+		for (let i = 0; i < 50; i++) {
+			const done = await Promise.race([received, new Promise((r) => setTimeout(() => r(undefined), 200))]);
+			if (done !== undefined) return { received: done, started };
+			globalThis.gc();
+		}
+		return { received: "timed out", started };
+	},
+	// Runs with ORANGE_WORKER_LOADER_MAX_WORKERS=2: more failed loads than the limit, then a load.
+	async failedStarts(env) {
+		const errors = [];
+		for (let i = 0; i < 3; i++) {
+			const getCode = () => {
+				throw new Error(`no code for broken-${i}`);
+			};
+			errors.push(await settle(Promise.resolve().then(() => env.LOADER.get(`broken-${i}`, getCode).getEntrypoint().increment())));
+		}
+		const loaded = await settle(Promise.resolve().then(() => env.LOADER.load(counterCode).getEntrypoint().increment()));
+		return { errors, loaded };
+	},
+	// Runs with ORANGE_WORKER_LOADER_MAX_WORKERS=2 and ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS=1500.
+	async eviction(env) {
+		const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+		let loads = 0;
+		const getCode = () => {
+			loads += 1;
+			return counterCode;
+		};
+		const named = [];
+		named.push(await env.LOADER.get("idle", getCode).getEntrypoint().increment());
+		named.push(await env.LOADER.get("idle", getCode).getEntrypoint().increment());
+		const held = env.LOADER.load(counterCode).getEntrypoint();
+		const heldCounts = [await held.increment()];
+		await pause(2_500);
+		named.push(await env.LOADER.get("idle", getCode).getEntrypoint().increment());
+		heldCounts.push(await held.increment());
+
+		const slowCode = {
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `export default { async sleep(ms) { await new Promise((r) => setTimeout(r, ms)); return ms; } };`,
+			},
+		};
+		const slow = [
+			env.LOADER.load(slowCode).getEntrypoint().sleep(3_000),
+			env.LOADER.load(slowCode).getEntrypoint().sleep(3_000),
+		];
+		const full = await settle(Promise.resolve().then(() => env.LOADER.load(counterCode)));
+		const slept = await Promise.all(slow.map(settle));
+
+		const sequential = [];
+		for (let i = 0; i < 6; i++) {
+			sequential.push(await env.LOADER.load(counterCode).getEntrypoint().increment());
+		}
+		// A call made in the same tick as a load() keeps its Worker from being stopped.
+		const a = env.LOADER.load(counterCode).getEntrypoint();
+		const b = env.LOADER.load(counterCode).getEntrypoint();
+		await Promise.all([a.increment(), b.increment()]);
+		const calls = [a.increment(), b.increment()];
+		let sameTick;
+		try {
+			env.LOADER.load(counterCode);
+			sameTick = "loaded";
+		} catch (error) {
+			sameTick = error.name;
+		}
+		const sameTickCalls = await Promise.all(calls.map(settle));
+		return { full, heldCounts, loads, named, sameTick, sameTickCalls, sequential, slept };
 	},
 	async syntax(env) {
 		const worker = env.LOADER.get("syntax", () => ({
@@ -446,7 +648,11 @@ const routes = {
 
 export default {
 	async fetch(request, env, ctx) {
-		const route = routes[new URL(request.url).pathname.slice(1)];
+		const url = new URL(request.url);
+		if (url.pathname === "/stream") {
+			return streamThroughDynamicWorker(env, ctx, url.searchParams.get("drop") === "1");
+		}
+		const route = routes[url.pathname.slice(1)];
 		if (route === undefined) return new Response("not found", { status: 404 });
 		return Response.json(await route(env, ctx, request));
 	},

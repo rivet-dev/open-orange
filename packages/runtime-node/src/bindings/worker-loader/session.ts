@@ -13,7 +13,7 @@ import { currentExecutionContext } from "../../context.js";
 import {
 	isCapnWebRpcStub,
 	isCapnWebRpcTarget,
-	openCapnWebRpcSession,
+	openCapnWebRpcSessionWithStats,
 	type CapnWebRpcTransport,
 	type CapnWebStub,
 } from "../durable-objects/rpc/capnweb.js";
@@ -106,8 +106,8 @@ export class FramedRpcTransport implements CapnWebRpcTransport {
 export function openLoaderSession(
 	transport: FramedRpcTransport,
 	localMain?: object,
-): CapnWebStub {
-	return openCapnWebRpcSession(transport, localMain);
+): { main: CapnWebStub; stats(): { exports: number; imports: number } } {
+	return openCapnWebRpcSessionWithStats(transport, localMain);
 }
 
 function isCapability(value: object): boolean {

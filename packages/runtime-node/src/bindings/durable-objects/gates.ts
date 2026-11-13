@@ -56,6 +56,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	#explicitTransaction: RivetSynchronousSqliteTransaction | undefined;
 	readonly #commitBoundaryWrites = new Set<() => void>();
 	#commitBoundaryConfirmed = false;
+	#commitBoundaryWaiters: PromiseWithResolvers<boolean>[] = [];
 
 	constructor(database: RivetSqliteDatabase, onBroken: (error: Error) => void) {
 		this.#database = database;
@@ -89,6 +90,24 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 			this.#currentTurn();
 			if (options.confirmed === true) this.#turnConfirmed = true;
 		}
+	}
+
+	/**
+	 * Resolves true once the commit-boundary writes added so far commit locally, and false when the
+	 * object breaks or retires before that, which discards them.
+	 */
+	whenCommitBoundaryWritesCommit(): Promise<boolean> {
+		if (this.#broken !== undefined) return Promise.resolve(false);
+		const waiter = Promise.withResolvers<boolean>();
+		this.#commitBoundaryWaiters.push(waiter);
+		return waiter.promise;
+	}
+
+	#settleCommitBoundaryWaiters(
+		waiters: readonly PromiseWithResolvers<boolean>[],
+		committed: boolean,
+	): void {
+		for (const waiter of waiters) waiter.resolve(committed);
 	}
 
 	get broken(): Error | undefined {
@@ -225,9 +244,13 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	commitTurn(): void {
 		this.#assertNotBroken();
 		if (this.#turn === undefined) return;
+		// Waiters added so far wait for writes that this commit runs.
+		const waiters = this.#commitBoundaryWaiters;
+		this.#commitBoundaryWaiters = [];
 		try {
 			this.#runCommitBoundaryWrites();
 		} catch (error: unknown) {
+			this.#settleCommitBoundaryWaiters(waiters, false);
 			throw this.breakObject(error);
 		}
 		const turn = this.#turn;
@@ -239,10 +262,12 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		try {
 			turn.commitSync();
 		} catch (error: unknown) {
+			this.#settleCommitBoundaryWaiters(waiters, false);
 			const broken = this.breakObject(error);
 			committed?.reject(broken);
 			throw broken;
 		}
+		this.#settleCommitBoundaryWaiters(waiters, true);
 		if (confirmed) this.#holdOutputUntilDurable(this.#turnStartTicket);
 		committed?.resolve(this.#outputTicket);
 	}
@@ -354,6 +379,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		if (this.#broken !== undefined) return this.#broken;
 		this.#broken = broken;
 		this.rollbackTurn();
+		this.#settleCommitBoundaryWaiters(this.#commitBoundaryWaiters.splice(0), false);
 		try {
 			this.#onBroken(this.#broken);
 		} catch (resetError: unknown) {
@@ -370,6 +396,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		if (this.#broken !== undefined) return;
 		this.#broken = error;
 		this.rollbackTurn();
+		this.#settleCommitBoundaryWaiters(this.#commitBoundaryWaiters.splice(0), false);
 		// Workerd discards an aborted object's open transaction too. The next object in this
 		// actor needs the connection, and the old object's later commit fails as broken.
 		const explicit = this.#explicitTransaction;

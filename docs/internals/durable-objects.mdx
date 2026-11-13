@@ -557,9 +557,32 @@ Each facet is a child Rivet Actor:
   workerd's 256-character cap on a name. A long name is hashed to fit Rivet's
   1,024-byte actor key. `setAlarm()` in a facet fails with
   `Facets currently cannot set alarms.`
+- `clone(src, dst)` moves `dst` to a new incarnation, so the copy never reuses
+  the key of a destroyed actor. The parent stores the new incarnation and a
+  row in `_rivet_openorange_facet_clones` in one commit-boundary write. Once it
+  is durable, the parent calls a private action on `src`. `src` commits its
+  open turn, holds its own calls to its children, waits for durability, and
+  forks its actor with `client.fork()` to the new key. Then it clones each
+  child the same way under the new actor ID, with the same incarnation. The
+  parent deletes the row and destroys the old `dst` actor.
+- The fork input is the clone ID and the facet depth. The forked actor's
+  `onFork` replaces the facet record with one that has no class, deletes the
+  rows that Orange keeps beside the object and the source's clone rows, and
+  stores the clone ID. A clone that runs again gets `actor.duplicate_key`, and
+  continues only when the actor at the key holds its own clone ID.
+- When the parent's `ctx.abort()` discards the clone's write, the fork still
+  runs. The parent's next object in the same process reads the new incarnation
+  from memory, stores it again, and runs the clone again, which finds the fork
+  done.
+  A crash of that process before then loses the clone, and `dst` keeps its old
+  storage.
+- The Engine refuses a fork with `depot.overloaded` while a volume changes.
+  Orange retries the fork up to 8 times, from 100 ms and doubling.
+  `actor.fork_too_deep`, `actor.fork_unavailable`, and `actor.fork_failed` make
+  the clone copy rows instead.
 
-The block comes from the one synchronous read that makes the copy a snapshot of
-one moment. Orange's SQLite gives each actor one connection, so it cannot read
+In the row copy, the block comes from the one synchronous read that makes the
+copy a snapshot of one moment. Orange's SQLite gives each actor one connection, so it cannot read
 a snapshot while `src` keeps running.
 
 ## WebSockets

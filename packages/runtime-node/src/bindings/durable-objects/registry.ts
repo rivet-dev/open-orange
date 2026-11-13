@@ -4,6 +4,7 @@ import { holdOutgoingFrames } from "../../internal/output-gate.js";
 import {
 	createRivetActorDefinition,
 	type RivetActorAction,
+	type RivetActorFork,
 	type RivetActorRequestContext,
 	type RivetScheduledFireInfo,
 	type RivetSqliteDatabase,
@@ -22,9 +23,12 @@ import type { ConfiguredDurableObjectClass } from "./classes.js";
 import {
 	type DurableObjectFacetCloneActor,
 	exportDurableObjectFacet,
+	forkDurableObjectFacet,
 	importDurableObjectFacet,
+	readDurableObjectFacetCloneId,
 	readDurableObjectFacetExportChunk,
 	releaseDurableObjectFacetExport,
+	storeForkedDurableObjectFacet,
 } from "./facet-clone.js";
 import {
 	createDurableObjectFacets,
@@ -296,6 +300,8 @@ interface DurableObjectActorShape {
 	readonly displayName: string;
 	/** Stores the create input in the actor's SQLite. Runs once, before the first object. */
 	onCreate(database: RivetSqliteDatabase, input: unknown): void;
+	/** Runs instead of `onCreate` in an actor that is a fork of another one. */
+	onFork?(database: RivetSqliteDatabase, fork: RivetActorFork): void;
 	/**
 	 * Whether the actor holds its object in a slot: built at the first call, replaced in place by
 	 * facet resets, and empty while a clone destination has no class.
@@ -524,6 +530,15 @@ function createActorDefinition(
 			shape.onCreate(db, input);
 			await db.whenDurable(db.commitTicket());
 		},
+		...(shape.onFork === undefined
+			? {}
+			: {
+					onFork: async (context: RivetActorRequestContext, fork: RivetActorFork) => {
+						const db = requireActorDatabase(context);
+						shape.onFork?.(db, fork);
+						await db.whenDurable(db.commitTicket());
+					},
+				}),
 	});
 }
 
@@ -884,6 +899,10 @@ function durableObjectFacetShape(
 					},
 				);
 			},
+			[durableObjectFacetActions.clonedBy]: (context) =>
+				requireDurableObjectGenerationSlot(context.vars).readStorage(() =>
+					readDurableObjectFacetCloneId(requireActorDatabase(context)),
+				),
 			[durableObjectFacetActions.destroy]: (context) => {
 				if (context.destroy === undefined) {
 					throw new Error("The pinned RivetKit runtime did not provide destroy()");
@@ -900,6 +919,12 @@ function durableObjectFacetShape(
 				readDurableObjectFacetExportChunk(snapshotId, index, confirmed),
 			[durableObjectFacetActions.exportRelease]: (_context, snapshotId) => {
 				releaseDurableObjectFacetExport(snapshotId);
+			},
+			[durableObjectFacetActions.fork]: (context, request) => {
+				const slot = requireDurableObjectGenerationSlot(context.vars);
+				return forkDurableObjectFacet(facetCloneActor(context, facetHost), request, (read) =>
+					slot.readStorage(read),
+				);
 			},
 			[durableObjectFacetActions.import]: (context, request) => {
 				const slot = requireDurableObjectGenerationSlot(context.vars);
@@ -919,6 +944,7 @@ function durableObjectFacetShape(
 		alarms: "facet",
 		displayName: "Durable Object facets (Orange)",
 		onCreate: storeDurableObjectFacet,
+		onFork: storeForkedDurableObjectFacet,
 		resetsInProcess: true,
 		resolveObject: (context) => {
 			const facet = readDurableObjectFacet(context?.db);

@@ -8,7 +8,7 @@ description: Load and run dynamic Workers at runtime with the worker_loaders bin
 <BindingStatus
   binding="worker-loader"
   works="`get()`, `load()`, `fetch()`, and RPC, with `env` and `props` capabilities and `globalOutbound`"
-  differs="Each dynamic Worker runs in its own agentOS VM, so its first call waits about 1 second for the VM to boot. Compatibility settings and `limits` are ignored."
+  differs="Each dynamic Worker runs in its own agentOS VM. A load usually takes a prewarmed VM; when none is ready, it waits about 0.3 seconds for one to boot. Compatibility settings and `limits` are ignored."
   missing="`getDurableObjectClass()`, `connect()` to a dynamic Worker, Python modules, and tail events from dynamic Workers"
 />
 
@@ -89,7 +89,10 @@ Hello from a dynamic Worker
 
 - Dynamic Worker code is untrusted, so each dynamic Worker gets its own VM,
   as it gets its own isolate on Cloudflare. It never runs on the host.
-- The VM boots when the dynamic Worker first loads.
+- Orange keeps a few VMs booted ahead of use, so a new dynamic Worker only
+  writes its own modules. Each VM runs one dynamic Worker and is never reused.
+- A dynamic Worker stops when it is idle or nothing references it. Its VM is
+  disposed, never returned to the pool.
 - Your Worker and the dynamic Worker talk Workers RPC, so stubs and bindings
   you pass in `env` or `props` work across the boundary.
 
@@ -120,8 +123,15 @@ agentOS's limits apply:
 | What | Limit | What happens over it |
 | --- | --- | --- |
 | One module file | 16 MiB | The load fails with a `RangeError` that names the limit. Split the module. |
-| All files in the VM | 64 MiB by default, including Orange's runtime files | agentOS's limit. Orange adds no check. |
+| All files in the VM | 64 MiB by default | agentOS's limit. Orange adds no check. |
 | `env` | No set limit. In a test with agentOS 0.4.1, 5 MiB worked. | At 10 MiB, the dynamic Worker exited with code 1. |
+| Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, `get()` or `load()` throws a `WorkerLoaderLimitError` that names the limit. At 80% of the limit, `orange dev` logs a warning. |
+| Idle time before a dynamic Worker stops | 30 seconds. Set `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` to change it, from 1 to 2147483647. | The dynamic Worker stops and frees its VM. The next call loads it again. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
+| Prewarmed VMs | 2 for each network mode by default, from 0 to 16 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
+
+Each running dynamic Worker uses about 54 MiB. Prewarmed VMs that no Worker
+has claimed do not count toward `ORANGE_WORKER_LOADER_MAX_WORKERS`, and the
+limit never stops them.
 
 #### Isolation
 
@@ -135,12 +145,40 @@ agentOS's limits apply:
 
 #### Lifecycle
 
+- Orange prewarms VMs for each network mode after that mode's first dynamic
+  Worker loads, so an app without dynamic Workers boots none. A prewarmed VM
+  has its Node.js process started with Orange's runtime imported. It has seen
+  no Worker code or `env`.
+- A load takes a prewarmed VM, writes its modules, and starts the Worker. If
+  the pool is empty, it waits for the VM that is booting, or boots its own.
+  The pool refills one VM at a time, shortly after the load finishes.
+- A VM that fails to prewarm is reported as a background error, and the next
+  load boots its own VM. Set `ORANGE_WORKER_LOADER_POOL_SIZE` to `0` to boot
+  every VM on demand.
 - If the VM cannot boot, `get()` and `load()` calls fail with the boot error.
   Orange never falls back to the host.
-- Idle dynamic Workers are not unloaded. Each `load()` keeps its process until
-  `orange dev` stops.
+- A dynamic Worker is idle when no call to it is in flight, your Worker holds
+  no stub or stream that it returned, no body or stream flows between the two
+  in either direction, and no call from the dynamic Worker to your Worker or
+  its `env` is in flight. A streamed response body keeps it busy until the
+  body ends. Orange never stops a dynamic Worker that is not idle.
+- Work that the dynamic Worker does on its own, such as `ctx.waitUntil()` code
+  that runs while no call or stream is open, does not keep it busy. It can stop
+  when it is idle.
+- An idle dynamic Worker stops after the idle timeout, or sooner when the
+  limit of running dynamic Workers needs its slot. Its process exits and its
+  VM is disposed.
+- A `load()` or unnamed `get()` Worker also stops when it is idle and the
+  garbage collector has collected its stub and every entrypoint.
+- After a dynamic Worker stops, `get()` with its name calls `getCode` again,
+  as Cloudflare can. A stub or entrypoint that you still hold loads the
+  Worker again on its next call, with fresh module state.
 - If a dynamic Worker's process exits, its pending calls reject, and the next
   `get()` with that name loads it again.
+- A dynamic Worker that fails to start, for example because `getCode` throws,
+  frees its slot at once. Its calls reject with the startup error.
+- A process that does not exit 5 seconds after Orange stops it is logged, and
+  Orange disposes its VM.
 
 #### Transport
 
@@ -173,8 +211,10 @@ agentOS's limits apply:
 - `globalOutbound: null` blocks the global `fetch()` and `cloudflare:sockets`
   `connect()`. The VM with no network also blocks `node:net` and `node:http`
   connections.
-- The VM is disposed when the dynamic Worker process exits or `orange dev`
-  stops. Stopping `orange dev` stops every dynamic Worker process.
+- The VM is disposed when the dynamic Worker process exits or stops, or
+  `orange dev` stops. Stopping `orange dev` stops every dynamic Worker process.
+- Each VM mounts the VM bundle read-only at `/open-orange/runtime`. A write
+  there fails with `EROFS`.
 - `pnpm build` emits the VM bundle to `dist/runtime/worker-loader-vm/`.
   Without it, the first dynamic Worker fails with
   ``OpenOrange cannot find the agentOS Worker Loader bundle. Run `pnpm build`.``
@@ -187,6 +227,7 @@ agentOS's limits apply:
 | `connect()` on an entrypoint | `NotSupportedError`: `OpenOrange does not support connect() on a dynamic Worker entrypoint. Use fetch() or RPC methods instead.` |
 | `connect()` through a Fetcher `globalOutbound` | `OpenOrange does not support connect() through a dynamic Worker's globalOutbound fetcher. Use fetch() instead.` |
 | A VM that cannot boot | `OpenOrange cannot boot the agentOS VM for a dynamic Worker: <message>. Dynamic Workers never run on the host.` |
+| A new dynamic Worker when the limit is reached and none is idle | `WorkerLoaderLimitError`: `OpenOrange cannot start another dynamic Worker: <n> are running, none is idle, and the limit is <limit>. Raise ORANGE_WORKER_LOADER_MAX_WORKERS or let calls finish first.` |
 | A module file over 16 MiB | `RangeError`: `Dynamic Worker file <name> is <n> bytes. agentOS writes one file into its VM as one message of at most 16777216 bytes (16 MiB). Split the module.` |
 
 #### Deviations
@@ -197,6 +238,9 @@ These add to the [Compatibility](#compatibility) table, the
 
 - A Worker that fails to load is forgotten, so the next `get()` with that name
   calls `getCode` again. Workerd keeps the failed Worker.
+- Workerd keeps a `load()` Worker while any stub references it. Orange stops
+  an idle one after the idle timeout even then, and the held stub loads it
+  again with fresh module state.
 - Orange allows dynamic entrypoint stubs and uncalled `ctx.exports` stubs in
   `props`, where workerd throws `DataCloneError`.
 - The `connect()` errors are `NotSupportedError`-style errors.
@@ -205,8 +249,14 @@ These add to the [Compatibility](#compatibility) table, the
 
 `src/runtime/worker-loader.test.ts` drives a real `orange dev` over HTTP:
 fetch and RPC, env and props capabilities, isolation, `globalOutbound: null`,
-name caching, syntax errors, process crashes, module types, and a `node:http`
-server and an Express app in a dynamic Worker.
+name caching, syntax errors, process crashes, module types, a `node:http`
+server and an Express app in a dynamic Worker, and two bursts of loads larger
+than the VM pool, the second after the first burst's Workers stop idle, with
+each Worker isolated from the others and from the read-only runtime mount. A
+second `orange dev` with a limit of 2 and a 1.5-second idle timeout checks that
+idle Workers stop and load again, that calls longer than the timeout finish,
+that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more
+`load()` calls than the limit succeed.
 
 ##### Recorded results
 

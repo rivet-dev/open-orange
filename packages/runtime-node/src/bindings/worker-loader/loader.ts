@@ -21,7 +21,7 @@ import {
 	RemoteCapability,
 } from "./session.js";
 import type { CapnWebStub } from "../durable-objects/rpc/capnweb.js";
-import { isRecord } from "../unknown-values.js";
+import { errorMessage, isRecord } from "../unknown-values.js";
 
 export interface WorkerFile {
 	content: string | Uint8Array;
@@ -45,6 +45,8 @@ export interface WorkerHost {
 	readonly moduleRewrites: Readonly<Record<string, string>>;
 	writeFiles(files: readonly WorkerFile[]): Promise<void>;
 	spawn(): Promise<WorkerChild>;
+	// Runs once the dynamic Worker has loaded or failed to load.
+	loaded(): void;
 	// Disposes the VM. Runs when the process exits or fails to start.
 	remove(): Promise<void>;
 }
@@ -57,6 +59,7 @@ export interface WorkerLoaderBackend {
 
 export interface WorkerLoaderOptions {
 	backend: WorkerLoaderBackend;
+	pool: DynamicWorkerPool;
 	onDiagnostic(message: string): void;
 }
 
@@ -204,23 +207,137 @@ function prepareCode(code: unknown): PreparedCode {
 	return { env, mainModule: code.mainModule, modules, outbound };
 }
 
-interface RunningWorker {
-	child: WorkerChild;
+interface LoaderSession {
 	main: CapnWebStub;
+	stats(): { exports: number; imports: number };
+}
+
+export const maxWorkersSetting = "ORANGE_WORKER_LOADER_MAX_WORKERS";
+export const idleTimeoutSetting = "ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS";
+const defaultMaxWorkers = 32;
+const defaultIdleTimeoutMs = 30_000;
+const warnRatio = 0.8;
+
+// A new dynamic Worker needs a slot, and every running one holds a slot until it stops.
+export class WorkerLoaderLimitError extends RangeError {
+	constructor(message: string) {
+		super(message);
+		this.name = "WorkerLoaderLimitError";
+	}
+}
+
+// Node.js runs a setTimeout() delay above this after 1 ms.
+const maxTimerDelayMs = 2_147_483_647;
+
+function positiveIntegerSetting(
+	settings: Readonly<Record<string, string | undefined>>,
+	name: string,
+	fallback: number,
+	max: number,
+): number {
+	const raw = settings[name];
+	if (raw === undefined || raw.trim() === "") return fallback;
+	const value = Number(raw);
+	if (!Number.isSafeInteger(value) || value < 1 || value > max) {
+		throw new RangeError(`${name} must be an integer from 1 to ${max}. Got: ${JSON.stringify(raw)}`);
+	}
+	return value;
+}
+
+// Bounds the dynamic Workers that run at once across every Worker Loader binding of the runtime.
+// Each one is an agentOS VM and a Node.js process, about 54 MiB. At the limit, a new Worker stops
+// the least recently used idle one. A Worker with a call in flight is never stopped.
+export class DynamicWorkerPool {
+	readonly idleTimeoutMs: number;
+	readonly maxWorkers: number;
+	// Least recently used first.
+	readonly #live = new Set<DynamicWorker>();
+	readonly #warn: (message: string) => void;
+	#warned = false;
+
+	constructor(limits: { idleTimeoutMs: number; maxWorkers: number }, warn: (message: string) => void) {
+		this.idleTimeoutMs = limits.idleTimeoutMs;
+		this.maxWorkers = limits.maxWorkers;
+		this.#warn = warn;
+	}
+
+	static fromSettings(
+		settings: Readonly<Record<string, string | undefined>>,
+		warn: (message: string) => void,
+	): DynamicWorkerPool {
+		return new DynamicWorkerPool(
+			{
+				idleTimeoutMs: positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs),
+				maxWorkers: positiveIntegerSetting(settings, maxWorkersSetting, defaultMaxWorkers, Number.MAX_SAFE_INTEGER),
+			},
+			warn,
+		);
+	}
+
+	admit(worker: DynamicWorker): void {
+		if (this.#live.size >= this.maxWorkers) {
+			let evicted = false;
+			for (const candidate of this.#live) {
+				if (!candidate.idle) continue;
+				candidate.evict();
+				evicted = true;
+				break;
+			}
+			if (!evicted) {
+				throw new WorkerLoaderLimitError(
+					`OpenOrange cannot start another dynamic Worker: ${this.#live.size} are running, none is idle, and the limit is ${this.maxWorkers}. Raise ${maxWorkersSetting} or let calls finish first.`,
+				);
+			}
+		}
+		this.#live.add(worker);
+		if (!this.#warned && this.#live.size >= Math.ceil(this.maxWorkers * warnRatio)) {
+			this.#warned = true;
+			this.#warn(
+				`${this.#live.size} of ${this.maxWorkers} dynamic Workers are running. At the limit, a new one stops the least recently used idle one, or fails with WorkerLoaderLimitError if none is idle. Raise ${maxWorkersSetting} to allow more.`,
+			);
+		}
+	}
+
+	touch(worker: DynamicWorker): void {
+		if (this.#live.delete(worker)) this.#live.add(worker);
+	}
+
+	remove(worker: DynamicWorker): void {
+		this.#live.delete(worker);
+		if (this.#live.size < Math.ceil(this.maxWorkers * warnRatio)) this.#warned = false;
+	}
 }
 
 // One loaded dynamic Worker: workerd's WorkerStubImpl. The process starts as
 // soon as the Worker is requested, and calls wait for it.
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/server/server.c%2B%2B#L5225-L5276
+//
+// It stops when it has been idle for the pool's idle timeout, when the pool needs its slot, or,
+// for an unnamed Worker, when no stub references it. Idle means no call is in flight, the parent
+// holds no result stub or stream from it, no body or stream flows between the two in either
+// direction, and no call from the Worker to the parent is in flight. A stub that is still held
+// loads the Worker again on its next call.
 class DynamicWorker {
 	readonly #getCode: () => Promise<PreparedCode>;
 	readonly #label: string;
 	readonly #onExit: () => void;
 	readonly #options: WorkerLoaderOptions;
-	readonly #running: Promise<RunningWorker>;
+	#running: Promise<LoaderSession> | undefined;
 	#abortReason: string | undefined;
 	#child: WorkerChild | undefined;
+	// Imports the parent holds for live entrypoint stubs. Those do not keep the Worker busy.
+	#entrypointImports = 0;
+	// Exports the parent holds once the Worker has started: its main object and the env and
+	// outbound capabilities. Any more is a stream the Worker sends, such as a response body
+	// (Cap'n Web exports the pipe on the receiving side), or a call from the Worker to the parent.
+	#baseExports = 0;
+	#evicted = false;
 	#exited = false;
+	#idleTimer: NodeJS.Timeout | undefined;
+	#inFlight = 0;
+	#lastUsed = 0;
+	#orphaned = false;
+	#session: LoaderSession | undefined;
 	#terminated = false;
 
 	constructor(
@@ -233,16 +350,31 @@ class DynamicWorker {
 		this.#label = label;
 		this.#onExit = onExit;
 		this.#options = options;
+	}
+
+	start(): void {
 		this.#running = this.#start();
 		this.#running.catch(() => undefined);
 	}
 
 	// Settles when the process has loaded the Worker or failed to.
 	get ready(): Promise<unknown> {
-		return this.#running;
+		return this.#running ?? Promise.resolve();
 	}
 
-	async #start(): Promise<RunningWorker> {
+	// Stopped by the pool, so a held stub may load the Worker again.
+	get evicted(): boolean {
+		return this.#evicted;
+	}
+
+	get idle(): boolean {
+		if (this.#session === undefined || this.#exited || this.#inFlight > 0) return false;
+		const { exports, imports } = this.#session.stats();
+		// The session's main stub is one import.
+		return imports - 1 - this.#entrypointImports <= 0 && exports <= this.#baseExports;
+	}
+
+	async #start(): Promise<LoaderSession> {
 		let host: WorkerHost | undefined;
 		try {
 			const prepared = await this.#getCode();
@@ -285,21 +417,39 @@ class DynamicWorker {
 			const transport = new FramedRpcTransport(frames, (message) => {
 				child.write(`${JSON.stringify(message)}\n`);
 			});
-			const main = openLoaderSession(transport);
+			const session = openLoaderSession(transport);
 			const removeHost = host;
 			child.onExit((reason) => {
 				this.#exited = true;
+				clearTimeout(this.#idleTimer);
 				transport.fail(this.#exitError(reason));
+				this.#options.pool.remove(this);
 				this.#onExit();
 				void removeHost.remove();
 			});
-			const reply = await main.start(envelope);
+			const reply = await session.main.start(envelope);
 			if (reply !== undefined && reply !== null) decodeLoaderReply(reply);
-			return { child, main };
+			this.#baseExports = session.stats().exports;
+			this.#session = session;
+			this.#lastUsed = performance.now();
+			this.#armIdleTimer(this.#options.pool.idleTimeoutMs);
+			return session;
 		} catch (error: unknown) {
 			this.terminate();
-			if (this.#child === undefined && host !== undefined) await host.remove();
+			// A running child frees the slot when it exits. Without one, nothing else frees it.
+			if (this.#child === undefined) {
+				this.#exited = true;
+				this.#options.pool.remove(this);
+				this.#onExit();
+				await host?.remove().catch((removeError: unknown) => {
+					this.#options.onDiagnostic(
+						`Dynamic Worker ${this.#label} failed to start, and its VM failed to stop: ${errorMessage(removeError)}`,
+					);
+				});
+			}
 			throw error;
+		} finally {
+			host?.loaded();
 		}
 	}
 
@@ -316,18 +466,73 @@ class DynamicWorker {
 		return new Error(`internal error; reference = ${reference}`);
 	}
 
+	#armIdleTimer(delayMs: number): void {
+		clearTimeout(this.#idleTimer);
+		this.#idleTimer = setTimeout(() => {
+			const quietMs = performance.now() - this.#lastUsed;
+			const idleTimeoutMs = this.#options.pool.idleTimeoutMs;
+			if (quietMs < idleTimeoutMs) this.#armIdleTimer(idleTimeoutMs - quietMs);
+			else if (this.idle) this.evict();
+			// A held result stub or stream keeps the Worker; look again later.
+			else this.#armIdleTimer(idleTimeoutMs);
+		}, delayMs);
+		this.#idleTimer.unref();
+	}
+
+	// Counts `call` as in flight until it settles.
+	track<T>(call: Promise<T>): Promise<T> {
+		this.#inFlight += 1;
+		this.#options.pool.touch(this);
+		const settle = (): void => {
+			this.#inFlight -= 1;
+			this.#lastUsed = performance.now();
+			if (this.#orphaned && this.idle) this.evict();
+		};
+		void call.then(settle, settle);
+		return call;
+	}
+
+	// No stub references this unnamed Worker any more, so it stops once idle.
+	release(): void {
+		this.#orphaned = true;
+		if (this.idle) this.evict();
+	}
+
+	evict(): void {
+		if (this.#evicted || this.#exited) return;
+		this.#evicted = true;
+		clearTimeout(this.#idleTimer);
+		this.#options.pool.remove(this);
+		this.#onExit();
+		this.terminate();
+	}
+
 	// A capability for `getEntrypoint(name, { props })`.
-	entrypoint(name: string | undefined, props: unknown): Capability {
+	entrypoint(name: string | undefined, props: unknown): Promise<RemoteCapability> {
+		const running = this.#running ?? Promise.reject(new Error("Dynamic Worker is not started"));
 		const propsEnvelope = props === undefined ? undefined : encodeLoaderValue(props);
-		const remote = this.#running.then(async ({ main }) => {
+		const remote = running.then(async ({ main }) => {
 			const stub = await main.entrypoint(name, propsEnvelope);
 			if ((typeof stub !== "object" || stub === null) && typeof stub !== "function") {
 				throw new Error("Dynamic Worker returned an invalid entrypoint");
 			}
+			this.#entrypointImports += 1;
 			return new RemoteCapability(stub);
 		});
 		remote.catch(() => undefined);
-		return new LazyCapability(remote);
+		return remote;
+	}
+
+	// Releases an entrypoint stub that `entrypoint()` made.
+	dropEntrypoint(remote: Promise<RemoteCapability>): void {
+		remote.then(
+			(capability) => {
+				capability.dispose();
+				this.#entrypointImports -= 1;
+				if (this.#orphaned && this.idle) this.evict();
+			},
+			() => undefined,
+		);
 	}
 
 	terminate(): void {
@@ -336,18 +541,56 @@ class DynamicWorker {
 	}
 }
 
-// Forwards calls to a capability once it exists. Each call fails with the
+// Returns the live Worker for a stub, loading it again if the pool stopped it.
+type AcquireWorker = () => DynamicWorker;
+
+// Runs a callback after the object it was registered with is collected.
+const collected = new FinalizationRegistry<() => void>((onCollected) => onCollected());
+
+interface BoundEntrypoint {
+	remote: Promise<RemoteCapability>;
+	worker: DynamicWorker;
+}
+
+// Forwards calls to an entrypoint of the live Worker. Each call fails with the
 // startup error if the Worker cannot load.
 class LazyCapability implements Capability {
-	readonly #capability: Promise<Capability>;
+	readonly #acquire: AcquireWorker;
+	// Shared with the cleanup callback, which must not reference this object.
+	readonly #cell: { bound: BoundEntrypoint };
+	readonly #name: string | undefined;
+	readonly #props: unknown;
 
-	constructor(capability: Promise<Capability>) {
-		this.#capability = capability;
+	constructor(acquire: AcquireWorker, name: string | undefined, props: unknown) {
+		this.#acquire = acquire;
+		this.#name = name;
+		this.#props = props;
+		const worker = acquire();
+		const cell = { bound: { remote: worker.entrypoint(name, props), worker } };
+		this.#cell = cell;
+		collected.register(this, () => cell.bound.worker.dropEntrypoint(cell.bound.remote));
+	}
+
+	#current(): BoundEntrypoint {
+		const bound = this.#cell.bound;
+		if (!bound.worker.evicted) return bound;
+		bound.worker.dropEntrypoint(bound.remote);
+		const worker = this.#acquire();
+		this.#cell.bound = { remote: worker.entrypoint(this.#name, this.#props), worker };
+		return this.#cell.bound;
 	}
 
 	call(path: readonly string[], args: readonly unknown[] | undefined): CallOutcome {
-		const outcome = this.#capability.then((capability) => capability.call(path, args));
-		const value = outcome.then((result) => result.value);
+		let bound: BoundEntrypoint;
+		try {
+			bound = this.#current();
+		} catch (error: unknown) {
+			const failed = Promise.reject(error);
+			failed.catch(() => undefined);
+			return { pipeline: failed, value: failed };
+		}
+		const outcome = bound.remote.then((capability) => capability.call(path, args));
+		const value = bound.worker.track(outcome.then((result) => result.value));
 		const pipeline = outcome.then((result) => result.pipeline);
 		value.catch(() => undefined);
 		pipeline.catch(() => undefined);
@@ -395,22 +638,59 @@ function createEntrypointStub(capability: Capability): object {
 	});
 }
 
-export class WorkerStub {
-	readonly #worker: DynamicWorker;
+// How stubs reach one dynamic Worker. `hold` counts a stub that references it.
+interface WorkerHandle {
+	acquire: AcquireWorker;
+	hold(stub: object): void;
+}
 
-	constructor(worker: DynamicWorker) {
-		this.#worker = worker;
+export class WorkerStub {
+	readonly #handle: WorkerHandle;
+
+	constructor(handle: WorkerHandle) {
+		this.#handle = handle;
+		// The Worker starts loading at once, and a full pool throws here.
+		handle.acquire();
+		handle.hold(this);
 	}
 
 	getEntrypoint(name?: string | null, options?: { props?: unknown }): object {
 		const entrypoint = name === undefined || name === null || name === "default" ? undefined : name;
-		return createEntrypointStub(this.#worker.entrypoint(entrypoint, options?.props));
+		const capability = new LazyCapability(this.#handle.acquire, entrypoint, options?.props);
+		this.#handle.hold(capability);
+		return createEntrypointStub(capability);
 	}
 
 	getDurableObjectClass(): never {
 		throw notSupported(
 			"OpenOrange does not support getDurableObjectClass() on dynamic Workers yet. Keep Durable Object state in the parent Worker and call the dynamic Worker through getEntrypoint().",
 		);
+	}
+}
+
+// Like workerd, an unnamed Worker lives while a stub or entrypoint references it. Workerd
+// refcounts it; Orange counts the stubs that the garbage collector has not collected.
+// https://github.com/cloudflare/workerd/blob/80c80a712532b012cbeaef4d08ff6ab15407e960/src/workerd/server/server.c%2B%2B#L4840-L4877
+class UnnamedWorkerHandle implements WorkerHandle {
+	readonly #create: () => DynamicWorker;
+	#current: DynamicWorker | undefined;
+	#holders = 0;
+
+	constructor(create: () => DynamicWorker) {
+		this.#create = create;
+	}
+
+	acquire = (): DynamicWorker => {
+		if (this.#current === undefined || this.#current.evicted) this.#current = this.#create();
+		return this.#current;
+	};
+
+	hold(stub: object): void {
+		this.#holders += 1;
+		collected.register(stub, () => {
+			this.#holders -= 1;
+			if (this.#holders === 0) this.#current?.release();
+		});
 	}
 }
 
@@ -431,33 +711,38 @@ export class WorkerLoader {
 		if (typeof getCode !== "function") {
 			throw new TypeError("WorkerLoader.get() requires a code callback.");
 		}
-		if (name !== null && name !== undefined) {
-			const key = String(name);
-			let worker = this.#named.get(key);
-			if (worker === undefined) {
-				worker = this.#create(key, async () => prepareCode(await getCode()), () => {
-					if (this.#named.get(key) === worker) this.#named.delete(key);
-				});
-				this.#named.set(key, worker);
-				// Orange forgets a Worker that failed to load, so the next get()
-				// with this name calls its code callback again.
-				const loaded = worker;
-				loaded.ready.catch(() => {
-					if (this.#named.get(key) === loaded) this.#named.delete(key);
-				});
-			}
-			return new WorkerStub(worker);
+		const prepare = async (): Promise<PreparedCode> => prepareCode(await getCode());
+		if (name === null || name === undefined) {
+			return new WorkerStub(new UnnamedWorkerHandle(() => this.#create("(anonymous)", prepare, () => undefined)));
 		}
-		return new WorkerStub(
-			this.#create("(anonymous)", async () => prepareCode(await getCode()), () => undefined),
-		);
+		const key = String(name);
+		// A stub loads its name again with its own callback after the pool stopped the Worker, as
+		// Cloudflare may call `getCode` again for a name at any time.
+		return new WorkerStub({ acquire: () => this.#namedWorker(key, prepare), hold: () => undefined });
+	}
+
+	#namedWorker(key: string, prepare: () => Promise<PreparedCode>): DynamicWorker {
+		const existing = this.#named.get(key);
+		if (existing !== undefined && !existing.evicted) return existing;
+		const worker: DynamicWorker = this.#create(key, prepare, () => {
+			if (this.#named.get(key) === worker) this.#named.delete(key);
+		});
+		this.#named.set(key, worker);
+		// Orange forgets a Worker that failed to load, so the next get()
+		// with this name calls its code callback again.
+		worker.ready.catch(() => {
+			if (this.#named.get(key) === worker) this.#named.delete(key);
+		});
+		return worker;
 	}
 
 	// Like workerd, load() copies the code before it returns, so later changes
 	// to the caller's buffers do not reach the Worker, and invalid code throws here.
 	load(code: unknown): WorkerStub {
 		const prepared = prepareCode(code);
-		return new WorkerStub(this.#create("(anonymous)", async () => prepared, () => undefined));
+		return new WorkerStub(
+			new UnnamedWorkerHandle(() => this.#create("(anonymous)", async () => prepared, () => undefined)),
+		);
 	}
 
 	#create(
@@ -474,7 +759,9 @@ export class WorkerLoader {
 				onExit();
 			},
 		);
+		this.#options.pool.admit(worker);
 		this.#all.add(worker);
+		worker.start();
 		return worker;
 	}
 

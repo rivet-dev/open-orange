@@ -27,7 +27,7 @@
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "3.1153.0",
-		"@rivet-dev/agentos-core": "0.4.1",
+		"@rivet-dev/agentos-core": "0.4.8",
 		"@rivet-dev/durable-object-migrator": "1.0.2",
 		"@rivet-dev/sandbox-adapter": "0.5.3",
 		"capnweb": "0.12.0",

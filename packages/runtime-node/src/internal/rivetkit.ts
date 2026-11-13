@@ -181,6 +181,8 @@ export interface RivetActorDefinitionInput {
 	): void | Promise<void>;
 	// Runs once, when the actor is created with its input, before createVars.
 	onCreate?(context: RivetActorRequestContext, input: unknown): Promise<void>;
+	// Runs once instead of onCreate, when the actor is a fork of another actor, before createVars.
+	onFork?(context: RivetActorRequestContext, fork: RivetActorFork): Promise<void>;
 	options: {
 		actionTimeout?: number;
 		canHibernateWebSocket: boolean;
@@ -194,6 +196,14 @@ export interface RivetActorDefinitionInput {
 // fire without stopping the handler, and the actor can then sleep and close its database under
 // it. Orange sets no limit on these handlers, so this is the largest timeout a timer can hold.
 export const unlimitedActionTimeoutMs = 2 ** 31 - 1;
+
+/** The fork that a forked actor's `onFork` runs for. */
+export interface RivetActorFork {
+	/** The source actor's ID. */
+	readonly actorId: string;
+	/** The `input` passed to the fork. It comes from the caller, so validate it. */
+	readonly input: unknown;
+}
 
 export interface RivetActorDefinition {
 	readonly config: {
@@ -333,6 +343,19 @@ export interface RivetActorClient {
 	 * actor retries for seconds before it fails; this answers in one request.
 	 */
 	exists(actorName: string, key: readonly string[]): Promise<boolean>;
+	/**
+	 * Forks the actor `sourceActorId` to a new actor with `key`, and returns its ID. The new actor
+	 * starts on a copy of the source's storage as of its last durable commit and runs `onFork` with
+	 * `input`. A key that is in use fails with `actor.duplicate_key`.
+	 */
+	fork(
+		actorName: string,
+		sourceActorId: string,
+		key: readonly string[],
+		input: unknown,
+	): Promise<string>;
+	/** The ID of the actor with the key. Fails with `actor.not_found` when none has it. */
+	resolve(actorName: string, key: readonly string[]): Promise<string>;
 	// Looks up an existing actor. Calls through the handle fail when it does not exist.
 	get(actorName: string, key: readonly string[]): RivetActorHandle;
 	getOrCreate(
@@ -409,6 +432,11 @@ interface RivetKitClient {
 		options?: { input: unknown },
 	): Promise<RivetActorHandle>;
 	dispose(): Promise<void>;
+	fork(
+		actorName: string,
+		actorId: string,
+		options: { input: unknown; key: string[] },
+	): Promise<{ resolve(): Promise<string> }>;
 	get(actorName: string, key: string[]): RivetActorHandle & { resolve(): Promise<string> };
 	getOrCreate(
 		actorName: string,
@@ -774,7 +802,10 @@ export function createRivetActorClient(
 				throw error;
 			}
 		},
+		fork: async (actorName, sourceActorId, key, input) =>
+			await (await client.fork(actorName, sourceActorId, { input, key: [...key] })).resolve(),
 		get: (actorName, key) => client.get(actorName, [...key]),
+		resolve: async (actorName, key) => await client.get(actorName, [...key]).resolve(),
 		getOrCreate: (actorName, key, createWithInput) =>
 			client.getOrCreate(
 				actorName,
@@ -787,9 +818,21 @@ export function createRivetActorClient(
 // RivetKit's client rejects a call through `get()` with this error when no
 // actor has the key.
 export function isRivetActorNotFound(error: unknown): boolean {
+	return rivetActorErrorCode(error) === "not_found";
+}
+
+/** Whether the Engine's storage refused a request for now, such as during a volume transition. */
+export function isRivetStorageOverloaded(error: unknown): boolean {
 	return (
 		error instanceof Error &&
-		Reflect.get(error, "group") === "actor" &&
-		Reflect.get(error, "code") === "not_found"
+		Reflect.get(error, "group") === "depot" &&
+		Reflect.get(error, "code") === "overloaded"
 	);
+}
+
+/** The code of a RivetKit `actor.*` error, such as `duplicate_key` or `fork_too_deep`. */
+export function rivetActorErrorCode(error: unknown): string | undefined {
+	if (!(error instanceof Error) || Reflect.get(error, "group") !== "actor") return undefined;
+	const code: unknown = Reflect.get(error, "code");
+	return typeof code === "string" ? code : undefined;
 }

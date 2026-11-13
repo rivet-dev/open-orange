@@ -497,7 +497,7 @@ const rivet: Comparison = {
 			{
 				label: 'Actor forking',
 				them: { text: 'Fork an Actor and its SQLite database', mark: 'yes' },
-				us: { text: 'Not in the Cloudflare API', mark: 'no' },
+				us: { text: 'Only through a Durable Object facet `clone()`', mark: 'partial' },
 			},
 			{
 				label: 'Runs your Cloudflare code as is',

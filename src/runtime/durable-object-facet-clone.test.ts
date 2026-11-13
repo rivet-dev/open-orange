@@ -133,25 +133,79 @@ describe("ctx.facets.clone()", { timeout: 240_000 }, () => {
 		]);
 	});
 
-	test("a crash while the copy runs: after a restart, dst holds the whole copy", { timeout: 180_000 }, async () => {
-		assert.equal(await call("/fill", "crash"), "ok");
-		// clone() returns before the 40 MB copy ends, and the crash stops it.
-		assert.equal(await call("/clone-and-return", "crash"), "cloned");
-		await orange?.kill();
-		orange = await startOrangeDev(project.directory);
+	async function waitForParent(parent: string): Promise<void> {
+		if (orange === undefined) throw new Error("orange dev did not start");
 		// Rivet moves the crashed runtime's actors only after its lost timeout, and nothing signals
 		// that, so wait until the parent answers a call that touches no facet.
 		const deadline = Date.now() + 120_000;
 		for (;;) {
-			const ping = await fetch(new URL("/ping?parent=crash", orange.origin));
+			const ping = await fetch(new URL(`/ping?parent=${parent}`, orange.origin));
 			const body = await ping.text();
-			if (ping.status === 200 && body === "pong") break;
+			if (ping.status === 200 && body === "pong") return;
 			if (Date.now() > deadline) assert.fail(`the parent did not restart: ${body}\n${orange.output()}`);
 		}
+	}
+
+	test("a crash while the copy runs: after a restart, dst holds the whole copy once, and later writes to dst stay", { timeout: 240_000 }, async () => {
+		assert.equal(await call("/fill", "crash"), "ok");
+		// clone() returns before the copy ends, and the crash stops it.
+		assert.equal(await call("/clone-and-return", "crash"), "cloned");
+		await orange?.kill();
+		orange = await startOrangeDev(project.directory);
+		await waitForParent("crash");
 		assert.deepEqual(JSON.parse(await call("/read-blobs", "crash")), {
 			bytes: 41_943_040,
+			c: 5,
 			rows: 160,
 		});
+		// A clone that ran again after the restart never copies over writes made after it.
+		assert.equal(await call("/write-d?value=6", "crash"), "ok");
+		await orange?.close();
+		orange = await startOrangeDev(project.directory);
+		assert.deepEqual(JSON.parse(await call("/read-blobs", "crash")), {
+			bytes: 41_943_040,
+			c: 6,
+			rows: 160,
+		});
+	});
+
+	test("a clone of a copy that the engine forked too many times copies rows instead, and says so", async () => {
+		// Rivet refuses a fork of an actor that is already 16 forks deep.
+		assert.equal(await call("/chain?length=18", "chain"), "v=1 k=2");
+		assert.match(orange?.output() ?? "", /facet clone copies rows instead of forking: actor\.fork_too_deep/);
+	});
+
+	test("eight parents that clone trees at once all get whole copies", async () => {
+		const copies = await Promise.all(
+			Array.from({ length: 8 }, (_, index) => call("/wide", `wide-${index}`)),
+		);
+		assert.deepEqual(copies, Array.from({ length: 8 }, () => "d=10485760 children=1,2,3,4"));
+	});
+
+	test("a 100 MB clone finishes in seconds, and other Durable Objects keep answering while it runs", { timeout: 240_000 }, async () => {
+		if (orange === undefined) throw new Error("orange dev did not start");
+		for (let filled = 0; filled < 100; filled += 25) {
+			assert.equal(await call("/big-fill?mb=25", "big"), "ok");
+		}
+		let cloning = true;
+		let slowest = 0;
+		const pings = (async () => {
+			while (cloning) {
+				const started = performance.now();
+				assert.equal(await call("/ping", "bystander"), "pong");
+				slowest = Math.max(slowest, performance.now() - started);
+				await delay(10);
+			}
+		})();
+		const started = performance.now();
+		const copied = JSON.parse(await call("/big-clone", "big"));
+		const elapsed = performance.now() - started;
+		cloning = false;
+		await pings;
+		assert.deepEqual({ bytes: copied.bytes, rows: copied.rows }, { bytes: 104_857_600, rows: 400 });
+		// A row copy of 100 MB takes about 6 s here and blocks the runtime for over a second.
+		assert.ok(elapsed < 3_000, `the clone took ${Math.round(elapsed)} ms`);
+		assert.ok(slowest < 400, `another Durable Object waited ${Math.round(slowest)} ms`);
 	});
 
 	test("clone() at the maximum facet depth does nothing", async () => {

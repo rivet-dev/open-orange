@@ -4429,6 +4429,28 @@
 			]
 		},
 		{
+			"id": "api-time-zone-locale",
+			"category": "runtime-apis",
+			"name": "Time zone and default locale",
+			"status": "supported",
+			"cloudflare": "Worker code runs in UTC with the en-US locale, so local-time Date methods and toLocaleString() do not depend on the machine.",
+			"orange": "The runtime process starts with TZ=UTC and LC_ALL=en_US.UTF-8, whatever the host is set to.",
+			"notes": "The host's TZ, LANG, and LC_ALL do not reach Worker code. Measured on Cloudflare on 2026-11-13.",
+			"unverified": "Not checked for dynamic Workers from the Worker Loader, which run in their own VM.",
+			"evidence": [
+				{
+					"kind": "code",
+					"path": "src/runtime/spawn.ts",
+					"lines": "137-143"
+				},
+				{
+					"kind": "code",
+					"path": "src/runtime/spawn.test.ts",
+					"lines": "54-95"
+				}
+			]
+		},
+		{
 			"id": "api-performance-now",
 			"category": "runtime-apis",
 			"name": "performance.now()",

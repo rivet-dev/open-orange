@@ -92,6 +92,7 @@ $ curl -d hello localhost:8787
 | The other 68 globals, such as `fetch`, `Headers`, `Request`, `Response`, `URL`, `URLSearchParams`, `Blob`, `FormData`, `DOMException`, `Event`, the streams, `crypto`, `console`, `performance`, `structuredClone`, `WebAssembly`, `WebSocket`, `WebSocketPair`, `caches`, `HTMLRewriter`, `scheduler`, and the four timer functions | Partial | Each family has its own section below. |
 | `Body`, `ExtendableEvent`, `FetchEvent`, `origin`, `ScheduledEvent`, and `TailEvent` | Not supported | See [The global manifest](#the-global-manifest). |
 | `URL.createObjectURL()` | Not supported | See [Deviations](#deviations). |
+| Time zone and default locale | Supported | Worker code runs in UTC with the `en-US` locale, as on Cloudflare, whatever the host's `TZ` and `LANG` are. |
 | `compatibility_date` and `compatibility_flags` | Partial | One fixed profile. See [Compatibility date and flags](#compatibility-date-and-flags). |
 
 #### Limits

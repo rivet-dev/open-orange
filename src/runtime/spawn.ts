@@ -135,6 +135,12 @@ export async function spawnRuntime(
 			...(options.rivetLogLevel === undefined ? {} : { RIVET_LOG_LEVEL: options.rivetLogLevel }),
 			// One port can have one metrics server, so only one runtime of a deployment serves it.
 			...(options.serveMetrics === false ? { RIVETKIT_METRICS_PORT: undefined } : {}),
+			// A Worker on Cloudflare runs in UTC with the en-US locale, so
+			// getHours(), new Date(y, m, d), and toLocaleString() do not depend
+			// on the machine. Node.js takes both from the host's environment.
+			// Measured on Cloudflare, in a Pages Function, on 2026-11-13.
+			TZ: "UTC",
+			LC_ALL: "en_US.UTF-8",
 		},
 		// The built package runs plain JavaScript. Only a source checkout needs tsx,
 		// and it has tsx installed.

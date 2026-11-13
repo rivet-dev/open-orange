@@ -2964,7 +2964,7 @@
 			"status": "partial",
 			"cloudflare": "The caches global gives access to the Cache API for the zone.",
 			"orange": "A CacheStorage backed by one internal Rivet Actor per cache name (SQLite), with Miniflare's freshness rules. Entries survive orange dev restarts. ORANGE_CACHE=off restores the workers.dev no-op.",
-			"notes": "One local cache, not one per data center. Several ranges get the whole body with 200. Vary is ignored for matching. The per-request call limit is not enforced. Upstream cache-test matchOperations and deleteOperations depend on workerd's mock cache backend.",
+			"notes": "One local cache, not one per data center. Several ranges get the whole body with 200. Each key keeps one Vary variant. The per-request call limit is not enforced. Upstream cache-test matchOperations and deleteOperations depend on workerd's mock cache backend.",
 			"evidence": [
 				{
 					"kind": "code",

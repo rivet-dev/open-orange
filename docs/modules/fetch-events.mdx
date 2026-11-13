@@ -149,6 +149,10 @@ and a thrown error keeps its name, message, and own properties, such as `code`.
   `orange serve`.
 - Orange sets `CF-Connecting-IP` to the client's address, unless the request
   already has one, as Miniflare does.
+- `fetch()` does not send `CF-Connecting-IP` on to the origin, as in Miniflare.
+  An origin behind Cloudflare answers a request that carries it with 403, so
+  a Worker that proxies its incoming request would not get through. To give
+  the origin the client's address, copy it into a header of your own.
 
 #### `cloudflare:workers`
 

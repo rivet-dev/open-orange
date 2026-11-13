@@ -196,6 +196,14 @@ date or flag. `orange dev` warns about each flag that it does not apply:
 - A status-101 WebSocket response keeps its socket. It rejects cloning, a
   non-null body, a missing socket, and a status other than 101, as pinned
   workerd does.
+- `fetch()` with an `Upgrade: websocket` header opens a client WebSocket to an
+  `http:` or `https:` URL, as on Cloudflare. The 101 response has it in
+  `response.webSocket`. Call `accept()` to use it, or return the response to
+  proxy the connection to the Worker's own client. An origin that does not
+  upgrade answers with its own response, and a redirect is followed unless
+  the request has `redirect: "manual"`. The request's method and body are not
+  sent, and a `ws:` or `wss:` URL rejects with `Fetch API cannot load`. The
+  connection does not negotiate compression.
 - `serializeAttachment()` and `deserializeAttachment()` work on WebSocket
   endpoints.
 

@@ -256,6 +256,11 @@ export class NetworkWebSocketUpgrades {
 
 export interface NetworkWebSocketClientOptions {
 	headers: Record<string, string>;
+	/**
+	 * Runs when the socket opens, before any of its messages. A message can
+	 * arrive before the caller's `await` continues, so listeners go here.
+	 */
+	onOpen?: (webSocket: NetworkWebSocket) => void;
 	protocols: string[];
 }
 
@@ -285,6 +290,7 @@ export function connectNetworkWebSocket(
 			);
 		});
 		webSocket.once("open", () => {
+			options.onOpen?.(webSocket);
 			resolveConnection({
 				headers: responseHeaders,
 				kind: "open",

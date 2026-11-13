@@ -221,10 +221,46 @@ export class Parent extends DurableObject {
 				return new Response(`d=${await this.f("d").getValue()}`);
 			}
 			case "/fill": {
-				// About 40 MB, so the copy takes seconds.
+				// About 40 MB, so a row copy takes seconds. The child is copied too.
 				const src = this.f("s", "SqlFacet");
 				for (let index = 0; index < 5; index++) await src.fillBlobs(8);
+				await src.setChildValue("c", 5);
 				return new Response("ok");
+			}
+			case "/write-d": {
+				await this.f("d", "SqlFacet").setChildValue("c", Number(url.searchParams.get("value")));
+				return new Response("ok");
+			}
+			case "/chain": {
+				// Each clone copies the previous copy, so the copies form a chain of forks.
+				const length = Number(url.searchParams.get("length"));
+				await this.f("c0").setValue(1);
+				await this.f("c0").setChildValue("k", 2);
+				for (let index = 1; index <= length; index++) facets.clone(`c${index - 1}`, `c${index}`);
+				const last = this.f(`c${length}`);
+				return new Response(`v=${await last.getValue()} k=${await last.getChildValue("k")}`);
+			}
+			case "/wide": {
+				// src holds 10 MB and four children, so one clone forks five actors.
+				const src = this.f("s", "SqlFacet");
+				await src.fillBlobs(10);
+				for (let index = 1; index <= 4; index++) await src.setChildValue(`k${index}`, index);
+				facets.clone("s", "d");
+				const dst = this.f("d", "SqlFacet");
+				const children = [];
+				for (let index = 1; index <= 4; index++) children.push(await dst.getChildValue(`k${index}`));
+				return new Response(`d=${(await dst.blobs()).bytes} children=${children.join(",")}`);
+			}
+			case "/big-fill": {
+				const src = this.f("big", "SqlFacet");
+				await src.fillBlobs(Number(url.searchParams.get("mb")));
+				return new Response("ok");
+			}
+			case "/big-clone": {
+				const started = performance.now();
+				facets.clone("big", "big-copy");
+				const blobs = await this.f("big-copy", "SqlFacet").blobs();
+				return Response.json({ ...blobs, ms: performance.now() - started });
 			}
 			case "/clone-and-return": {
 				this.ctx.facets.clone("s", "d");
@@ -232,8 +268,10 @@ export class Parent extends DurableObject {
 			}
 			case "/ping":
 				return new Response("pong");
-			case "/read-blobs":
-				return Response.json(await this.f("d", "SqlFacet").blobs());
+			case "/read-blobs": {
+				const dst = this.f("d", "SqlFacet");
+				return Response.json({ ...(await dst.blobs()), c: await dst.getChildValue("c") });
+			}
 			case "/sql": {
 				const src = this.f("s", "SqlFacet");
 				await src.fill();
@@ -382,6 +420,12 @@ export class SqlFacet extends DurableObject {
 		sql.exec("INSERT INTO auto (v) VALUES ('d')");
 		sql.exec("CREATE TABLE types (v)");
 		sql.exec("INSERT INTO types VALUES (2.0), (9007199254740993), (x''), (x'00ff'), (''), (NULL)");
+	}
+	async setChildValue(name, value) {
+		await this.ctx.facets.get(name, () => ({ class: this.ctx.exports.LeafFacet })).setValue(value);
+	}
+	async getChildValue(name) {
+		return await this.ctx.facets.get(name, () => ({ class: this.ctx.exports.LeafFacet })).getValue();
 	}
 	fillBlobs(megabytes) {
 		this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS blobs (id INTEGER PRIMARY KEY, data BLOB)");

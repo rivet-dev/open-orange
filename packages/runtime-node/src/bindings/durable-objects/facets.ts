@@ -43,10 +43,12 @@ export const durableObjectFacetClassName = "#facet";
 
 export const durableObjectFacetActions = {
 	bind: "__openorange_facet_bind",
+	clonedBy: "__openorange_facet_cloned_by",
 	destroy: "__openorange_facet_destroy",
 	export: "__openorange_facet_export",
 	exportChunk: "__openorange_facet_export_chunk",
 	exportRelease: "__openorange_facet_export_release",
+	fork: "__openorange_facet_fork",
 	import: "__openorange_facet_import",
 	reset: "__openorange_facet_reset",
 } as const;
@@ -63,7 +65,8 @@ const incarnationTable = durableObjectFacetIncarnationTable;
 const incarnationTableExistsSql = `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${incarnationTable}'`;
 export const createDurableObjectFacetIncarnationTableSql = `CREATE TABLE IF NOT EXISTS ${incarnationTable} (name TEXT PRIMARY KEY, incarnation INTEGER NOT NULL) WITHOUT ROWID`;
 const selectIncarnationSql = `SELECT incarnation FROM ${incarnationTable} WHERE name = ?`;
-const bumpIncarnationSql = `INSERT INTO ${incarnationTable} (name, incarnation) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET incarnation = incarnation + 1`;
+// Incarnations only move forward, so a clone and a delete() in one turn both get new keys.
+const advanceIncarnationSql = `INSERT INTO ${incarnationTable} (name, incarnation) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET incarnation = max(incarnation, excluded.incarnation)`;
 const registerIncarnationSql = `INSERT INTO ${incarnationTable} (name, incarnation) VALUES (?, ?) ON CONFLICT(name) DO NOTHING`;
 
 /** Clones whose copy has not finished. A parent that restarts runs them again before facet calls. */
@@ -199,6 +202,29 @@ export interface DurableObjectFacetImportRequest {
 		readonly manifest?: DurableObjectFacetExportManifest;
 	};
 }
+
+/** What a clone asks its source facet to fork: a new actor at `key`, with the facet's children. */
+export interface DurableObjectFacetForkRequest {
+	readonly cloneId: string;
+	readonly key: string[];
+}
+
+/** The input of a facet actor fork. The new actor's `onFork` reads it. */
+export interface DurableObjectFacetForkInput {
+	readonly cloneId: string;
+	readonly depth: number;
+}
+
+/**
+ * What a source facet's fork did. The fork errors name an engine that cannot fork this source, so
+ * the clone copies rows instead.
+ */
+export type DurableObjectFacetForkOutcome =
+	| "forked"
+	| "fork_error"
+	| "fork_failed"
+	| "fork_too_deep"
+	| "fork_unavailable";
 
 /** A snapshot that a facet holds for a clone, and its children's snapshots. */
 export interface DurableObjectFacetExportManifest {
@@ -366,12 +392,12 @@ export function pendingDurableObjectFacetWork(
  * Runs `operation` after earlier work on every name in `names`. Calls to names in `failOn` reject
  * while the operation's failure is the latest work, and calls to the others continue either way.
  */
-export function enqueueDurableObjectFacetWork(
+export function enqueueDurableObjectFacetWork<Result>(
 	parentActorId: string,
 	names: readonly string[],
 	failOn: ReadonlySet<string>,
-	operation: () => Promise<void>,
-): Promise<void> {
+	operation: () => Promise<Result>,
+): Promise<Result> {
 	let work = facetWork.get(parentActorId);
 	if (work === undefined) {
 		work = new Map();
@@ -383,7 +409,7 @@ export function enqueueDurableObjectFacetWork(
 	);
 	const job = previous.then(operation);
 	for (const name of new Set(names)) {
-		const tail = failOn.has(name) ? job : job.then(settled, settled);
+		const tail = failOn.has(name) ? job.then(settled) : job.then(settled, settled);
 		parentWork.set(name, tail);
 		const forget = (): void => {
 			if (parentWork.get(name) !== tail) return;
@@ -398,16 +424,84 @@ export function enqueueDurableObjectFacetWork(
 	return job;
 }
 
-/** Per-name incarnations in the parent's SQLite. `delete()` bumps one so the next facet gets a new actor. */
+// An operator can set `ORANGE_FACET_CLONE=copy` to copy rows instead of forking, for example
+// to compare the two.
+function facetClonesFork(): boolean {
+	return process.env.ORANGE_FACET_CLONE !== "copy";
+}
+
+/**
+ * Copies the facet actor at `srcKey`, with its children, to a new actor at `dstKey`. It forks the
+ * source actor when the engine can, and copies rows otherwise. A missing source leaves `dstKey`
+ * without an actor, so the destination starts empty. Running it again after a crash finishes the
+ * same copy, because both paths recognize their own `cloneId`.
+ */
+export async function cloneDurableObjectFacetActor(
+	host: DurableObjectFacetHost,
+	clone: {
+		readonly cloneId: string;
+		readonly depth: number;
+		readonly dstKey: readonly string[];
+		readonly srcKey: readonly string[];
+	},
+): Promise<void> {
+	const client = host.client();
+	if (!(await client.exists(host.actorName, clone.srcKey))) return;
+	if (facetClonesFork()) {
+		const request: DurableObjectFacetForkRequest = { cloneId: clone.cloneId, key: [...clone.dstKey] };
+		const outcome = await client
+			.get(host.actorName, clone.srcKey)
+			.action({ args: [request], name: durableObjectFacetActions.fork });
+		if (outcome === "forked") return;
+		// A source that never started has no storage to fork; the row copy then finds it empty.
+		console.warn(
+			`[durable-object] facet clone copies rows instead of forking: actor.${String(outcome)} clone_id=${clone.cloneId}`,
+		);
+	}
+	const request: DurableObjectFacetImportRequest = { cloneId: clone.cloneId, source: { key: [...clone.srcKey] } };
+	await client
+		.getOrCreate(host.actorName, clone.dstKey, unboundDurableObjectFacetRecord(clone.depth))
+		.action({ args: [request], name: durableObjectFacetActions.import });
+}
+
+/** A clone() whose copy has not finished. It is also a row of the parent's clone table. */
+interface FacetCloneRecord {
+	readonly dst: string;
+	readonly dstKey: readonly string[];
+	readonly id: string;
+	readonly src: string;
+	readonly srcKey: readonly string[];
+}
+
+function cloneIncarnation(clone: FacetCloneRecord): number {
+	return Number(clone.dstKey.at(-1));
+}
+
+/**
+ * Clones whose record their parent has not stored durably yet, per parent actor and encoded dst
+ * name. The parent's later objects in this process read dst's incarnation from them, so a parent
+ * whose ctx.abort() discarded the record still reaches the copy, and stores the record again.
+ */
+const clonesInFlight = new Map<string, Map<string, FacetCloneRecord>>();
+
+/** Per-name incarnations in the parent's SQLite. `delete()` and clone() advance one so the next facet gets a new actor. */
 class FacetIncarnations {
 	readonly #database: DurableObjectTurnDatabase;
+	readonly #parentActorId: string;
 	#tableExists = false;
 
-	constructor(database: DurableObjectTurnDatabase) {
+	constructor(database: DurableObjectTurnDatabase, parentActorId: string) {
 		this.#database = database;
+		this.#parentActorId = parentActorId;
 	}
 
 	get(encodedName: string): number {
+		const clone = clonesInFlight.get(this.#parentActorId)?.get(encodedName);
+		return Math.max(this.stored(encodedName), clone === undefined ? 0 : cloneIncarnation(clone));
+	}
+
+	/** The incarnation in SQLite, without clones in flight. */
+	stored(encodedName: string): number {
 		if (!this.#tableExists) {
 			this.#tableExists =
 				this.#database.executeSync(incarnationTableExistsSql).rows.length > 0;
@@ -423,12 +517,71 @@ class FacetIncarnations {
 		return incarnation;
 	}
 
+	/** This parent's clones whose record an earlier object did not store. */
+	unstoredClones(): FacetCloneRecord[] {
+		return [...(clonesInFlight.get(this.#parentActorId)?.values() ?? [])].filter(
+			(clone) => this.stored(clone.dst) < cloneIncarnation(clone),
+		);
+	}
+
 	bump(encodedName: string): void {
+		const next = this.get(encodedName) + 1;
 		if (!this.#tableExists) {
 			this.#database.executeSync(createDurableObjectFacetIncarnationTableSql);
 			this.#tableExists = true;
 		}
-		this.#database.executeSync(bumpIncarnationSql, [encodedName]);
+		this.#database.executeSync(advanceIncarnationSql, [encodedName, next]);
+	}
+
+	/**
+	 * Stores the clone's record and moves dst to its incarnation in one commit-boundary write. Reads
+	 * see the incarnation at once. Resolves true when the write is durable, and false when the
+	 * parent discarded it.
+	 */
+	recordClone(clone: FacetCloneRecord): Promise<boolean> {
+		let clones = clonesInFlight.get(this.#parentActorId);
+		if (clones === undefined) {
+			clones = new Map();
+			clonesInFlight.set(this.#parentActorId, clones);
+		}
+		const earlier = clones.get(clone.dst);
+		if (earlier === undefined || cloneIncarnation(earlier) <= cloneIncarnation(clone)) {
+			clones.set(clone.dst, clone);
+		}
+		this.#database.writeAtCommitBoundary(
+			() => {
+				this.#database.executeSync(createDurableObjectFacetIncarnationTableSql);
+				this.#database.executeSync(advanceIncarnationSql, [clone.dst, cloneIncarnation(clone)]);
+				this.#database.executeSync(createCloneTableSql);
+				this.#database.executeSync(insertCloneSql, [
+					clone.id,
+					clone.src,
+					clone.dst,
+					JSON.stringify(clone.srcKey),
+					JSON.stringify(clone.dstKey),
+				]);
+			},
+			{ confirmed: true },
+		);
+		return this.#database.whenCommitBoundaryWritesCommit().then(
+			async (committed) => {
+				if (!committed) return false;
+				await this.#database.whenDurable(this.#database.commitTicket());
+				return true;
+			},
+		).catch((error: unknown) => {
+			// The clone stays in flight, so the parent's next object stores it again.
+			console.warn("[durable-object] facet clone record did not become durable", error);
+			return false;
+		});
+	}
+
+	/** Forgets a clone in flight once SQLite holds its record durably. */
+	settle(clone: FacetCloneRecord): void {
+		const clones = clonesInFlight.get(this.#parentActorId);
+		if (clones?.get(clone.dst) !== clone) return;
+		clones.delete(clone.dst);
+		if (clones.size === 0) clonesInFlight.delete(this.#parentActorId);
 	}
 
 	/**
@@ -477,15 +630,22 @@ class FacetManager {
 
 	constructor(host: DurableObjectFacetHost, parent: DurableObjectFacetParent) {
 		this.#host = host;
-		this.#incarnations = new FacetIncarnations(parent.database);
+		this.#incarnations = new FacetIncarnations(parent.database, parent.actorId);
 		this.#parent = parent;
 	}
 
 	// Runs the clones that a previous object of this parent left unfinished, before any facet
-	// call. A copy is idempotent, so running a finished one again changes nothing.
+	// call. A clone is idempotent, so running a finished one again changes nothing.
 	#recover(): void {
 		if (this.#recovered) return;
 		this.#recovered = true;
+		// A clone whose record an earlier object of this parent discarded, for example with
+		// ctx.abort(), still runs in this process. This object stores the record and runs the clone
+		// again after it, which finds the copy done.
+		for (const clone of this.#incarnations.unstoredClones()) {
+			this.#registered.add(clone.dst);
+			this.#enqueueClone(clone, this.#incarnations.recordClone(clone));
+		}
 		const database = this.#parent.database;
 		if (database.executeSync(cloneTableExistsSql).rows.length === 0) return;
 		for (const [id, src, dst, srcKey, dstKey] of database.executeSync(selectClonesSql).rows) {
@@ -498,7 +658,10 @@ class FacetManager {
 			) {
 				throw new Error("Durable Object facet clone record is invalid");
 			}
-			this.#enqueueClone(id, src, dst, parseFacetKey(srcKey), parseFacetKey(dstKey));
+			this.#enqueueClone(
+				{ dst, dstKey: parseFacetKey(dstKey), id, src, srcKey: parseFacetKey(srcKey) },
+				Promise.resolve(true),
+			);
 		}
 	}
 
@@ -577,9 +740,10 @@ class FacetManager {
 
 	/**
 	 * Replaces `dst`'s storage, and its children's, with a copy of `src`'s as of this call. Workerd
-	 * copies SQLite files synchronously. Orange returns at once and copies rows in the background.
-	 * Calls to `src` and `dst` that start after this call wait for the copy, so `dst` never misses
-	 * it and later writes to `src` never reach it.
+	 * copies SQLite files synchronously. Orange returns at once and forks `src`'s actor, with its
+	 * children, to a new incarnation of `dst` in the background; an engine that cannot fork it gets
+	 * a row copy instead. Calls to `src` and `dst` that start after this call wait for the copy, so
+	 * `dst` never misses it and later writes to `src` never reach it.
 	 * https://github.com/cloudflare/workerd/blob/7236b3650b6c0951484a4d170f17fb6f800b5662/src/workerd/server/server/actor.rs#L1029-L1044
 	 */
 	clone(srcValue: unknown, dstValue: unknown): void {
@@ -599,63 +763,64 @@ class FacetManager {
 		const encodedSrc = encodeFacetName(src);
 		const encodedDst = encodeFacetName(dst);
 		const srcKey = this.#key(encodedSrc, this.#incarnations.get(encodedSrc));
-		const dstIncarnation = this.#incarnations.get(encodedDst);
+		// The copy goes to a key that never had an actor. The old dst is destroyed afterwards, and
+		// its key is never used again.
+		const dstIncarnation = this.#incarnations.get(encodedDst) + 1;
 		const dstKey = this.#key(encodedDst, dstIncarnation);
-		const id = randomUUID();
-		// The record commits with the parent's turn, outside the caller's storage transactions, and
-		// before the parent's outputs, so a caller that sees clone() return sees the copy after a
-		// crash. ctx.abort() discards it, but the copy that this process runs still finishes.
-		this.#parent.database.writeAtCommitBoundary(
-			() => {
-				this.#parent.database.executeSync(createCloneTableSql);
-				this.#parent.database.executeSync(insertCloneSql, [
-					id,
-					encodedSrc,
-					encodedDst,
-					JSON.stringify(srcKey),
-					JSON.stringify(dstKey),
-				]);
-			},
-			{ confirmed: true },
-		);
-		this.#register(encodedDst, dstIncarnation);
-		this.#enqueueClone(id, encodedSrc, encodedDst, srcKey, dstKey);
+		const clone: FacetCloneRecord = { dst: encodedDst, dstKey, id: randomUUID(), src: encodedSrc, srcKey };
+		// The record and the new incarnation commit together with the parent's turn, outside the
+		// caller's storage transactions, and before the parent's outputs, so a caller that sees
+		// clone() return sees the copy after a crash. The copy starts once they are durable.
+		this.#registered.add(encodedDst);
+		this.#enqueueClone(clone, this.#incarnations.recordClone(clone));
 	}
 
-	#enqueueClone(
-		id: string,
-		encodedSrc: string,
-		encodedDst: string,
-		srcKey: readonly string[],
-		dstKey: readonly string[],
-	): void {
+	#enqueueClone(clone: FacetCloneRecord, recorded: Promise<boolean>): void {
 		const copy = enqueueDurableObjectFacetWork(
 			this.#parent.actorId,
-			[encodedSrc, encodedDst],
-			new Set([encodedDst]),
+			[clone.src, clone.dst],
+			new Set([clone.dst]),
 			// The copy does not wait for the parent's output gate. Workerd's copy does not depend on
 			// the parent's turn either, so ctx.abort() after clone() keeps it.
 			() => runOutsideOutputGate(async () => {
-				const destination = this.#host
-					.client()
-					.getOrCreate(
-						this.#host.actorName,
-						dstKey,
-						unboundDurableObjectFacetRecord(this.#parent.depth + 1),
-					);
-				const request: DurableObjectFacetImportRequest = { cloneId: id, source: { key: [...srcKey] } };
-				await destination.action({ args: [request], name: durableObjectFacetActions.import });
+				// A crash after this point finds the record and runs the clone again. A parent that
+				// discarded the record still copies, and its next object stores the record again.
+				const durable = await recorded;
+				await cloneDurableObjectFacetActor(this.#host, {
+					cloneId: clone.id,
+					depth: this.#parent.depth + 1,
+					dstKey: clone.dstKey,
+					srcKey: clone.srcKey,
+				});
+				if (!durable) return false;
 				try {
 					this.#parent.database.writeAtCommitBoundary(() => {
-						this.#parent.database.executeSync(deleteCloneSql, [id]);
+						this.#parent.database.executeSync(deleteCloneSql, [clone.id]);
 					});
 				} catch {
-					// A reset parent keeps the record. Its next object runs the finished copy again,
+					// A reset parent keeps the record. Its next object runs the finished clone again,
 					// which changes nothing.
 				}
+				return true;
 			}),
 		);
-		this.#keepParentAwake(copy.then(settled, settled));
+		// Once the parent holds the new incarnation durably, the actor that dst had before it is
+		// destroyed. Until then it stays, so a parent that lost the incarnation never reuses its key.
+		const oldKey = this.#key(clone.dst, cloneIncarnation(clone) - 1);
+		const destroy = copy.then(async (durable) => {
+			if (!durable) return;
+			this.#incarnations.settle(clone);
+			const client = this.#host.client();
+			if (!(await client.exists(this.#host.actorName, oldKey))) return;
+			await client
+				.get(this.#host.actorName, oldKey)
+				.action({ args: [], name: durableObjectFacetActions.destroy });
+		}).catch((error: unknown) => {
+			// A failed copy fails dst's calls, and the record runs it again. A failed destroy leaves
+			// an orphan actor and nothing else.
+			console.warn(`[durable-object] facet clone did not finish clone_id=${clone.id}`, error);
+		});
+		this.#keepParentAwake(destroy);
 	}
 
 	#register(encodedName: string, incarnation: number): void {

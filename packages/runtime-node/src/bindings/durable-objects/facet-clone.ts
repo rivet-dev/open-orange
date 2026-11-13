@@ -1,12 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { setImmediate as nextTurn } from "node:timers/promises";
+import { setImmediate as nextTurn, setTimeout as sleep } from "node:timers/promises";
 
-import type {
-	RivetSqliteDatabase,
-	RivetSynchronousSqliteExecutor,
+import {
+	isRivetStorageOverloaded,
+	type RivetActorFork,
+	rivetActorErrorCode,
+	type RivetSqliteDatabase,
+	type RivetSynchronousSqliteExecutor,
 } from "../../internal/rivetkit.js";
 import {
+	cloneDurableObjectFacetActor,
 	createDurableObjectFacetIncarnationTableSql,
+	durableObjectFacetCloneTable,
+	type DurableObjectFacetForkInput,
+	type DurableObjectFacetForkOutcome,
+	type DurableObjectFacetForkRequest,
 	type DurableObjectFacetExportManifest,
 	type DurableObjectFacetHost,
 	type DurableObjectFacetImportRequest,
@@ -119,6 +127,122 @@ export async function exportDurableObjectFacet(
 		children: exported.filter((child) => child !== undefined),
 		snapshotId,
 	};
+}
+
+/**
+ * Forks this facet's actor to a new actor at the request's key, then its children under the new
+ * actor. The fork copies the last durable commit, so the read commits the object's open turn first,
+ * and never sees a transaction in progress. Calls from this facet to its children wait until each
+ * child is copied, so none reaches the copy, and the copied tree is one consistent cut: nothing
+ * else can call a facet. A fork that the engine refuses for good is returned, so the clone copies
+ * rows instead.
+ */
+export async function forkDurableObjectFacet(
+	actor: DurableObjectFacetCloneActor,
+	requestValue: unknown,
+	readInObject: <Result>(read: () => Result) => Promise<Result>,
+): Promise<DurableObjectFacetForkOutcome> {
+	const request = requireForkRequest(requestValue);
+	const { children, depth } = await readInObject(() => {
+		const held = [...readIncarnations(actor.database)].map(([name, incarnation]) => {
+			const release = Promise.withResolvers<void>();
+			enqueueDurableObjectFacetWork(actor.actorId, [name], new Set(), () => release.promise);
+			return { incarnation, name, release: release.resolve };
+		});
+		return { children: held, depth: requireDurableObjectFacetDepth(actor.database) };
+	});
+	try {
+		await actor.database.whenDurable(actor.database.commitTicket());
+		const client = actor.host.client();
+		const input: DurableObjectFacetForkInput = { cloneId: request.cloneId, depth };
+		let forkedActorId: string;
+		try {
+			forkedActorId = await forkWhenStorageAccepts(() =>
+				client.fork(actor.host.actorName, actor.actorId, request.key, input),
+			);
+		} catch (error: unknown) {
+			const code = rivetActorErrorCode(error);
+			if (code === "fork_failed" || code === "fork_too_deep" || code === "fork_unavailable") {
+				return code;
+			}
+			// A clone that runs again after a crash finds its own fork. A fork still in progress
+			// answers once it starts. Any other failure, such as a token without the fork grant,
+			// falls back to the row copy, which only costs time.
+			if (code !== "duplicate_key" && code !== "fork_pending") {
+				console.warn(
+					`[durable-object] facet fork failed, copying rows instead: ${error instanceof Error ? error.message : String(error)} clone_id=${request.cloneId}`,
+				);
+				return "fork_error";
+			}
+			const clonedBy = await client
+				.get(actor.host.actorName, request.key)
+				.action({ args: [], name: durableObjectFacetActions.clonedBy });
+			if (clonedBy !== request.cloneId) {
+				throw new Error("Durable Object facet clone destination holds another clone", { cause: error });
+			}
+			forkedActorId = await client.resolve(actor.host.actorName, request.key);
+		}
+		const forked = { actorId: forkedActorId, className: "", depth: 1 };
+		await Promise.all(
+			children.map((child) =>
+				cloneDurableObjectFacetActor(actor.host, {
+					cloneId: request.cloneId,
+					depth: depth + 1,
+					dstKey: durableObjectFacetKey(actor.host, forked, child.name, child.incarnation),
+					srcKey: durableObjectFacetKey(actor.host, facetParent(actor), child.name, child.incarnation),
+				}),
+			),
+		);
+		return "forked";
+	} finally {
+		for (const child of children) child.release();
+	}
+}
+
+// The Engine's storage refuses a fork for now while a volume changes, for example when many forks
+// start at once. It asks for a retry after 100 ms.
+const forkAttempts = 8;
+
+async function forkWhenStorageAccepts(fork: () => Promise<string>): Promise<string> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await fork();
+		} catch (error: unknown) {
+			if (!isRivetStorageOverloaded(error) || attempt === forkAttempts) throw error;
+			await sleep(100 * 2 ** (attempt - 1));
+		}
+	}
+}
+
+/**
+ * The forked actor's `onFork`. The copy is storage only, as in workerd: it keeps the user's tables
+ * and the incarnations that name its children, and drops what Orange keeps beside the source's
+ * object. It has no class until its parent's next get() binds one.
+ */
+export function storeForkedDurableObjectFacet(
+	database: RivetSynchronousSqliteExecutor,
+	fork: RivetActorFork,
+): void {
+	const input = requireForkInput(fork.input);
+	const tables = new Set(
+		database
+			.executeSync("SELECT name FROM sqlite_master WHERE type = 'table'")
+			.rows.map(([name]) => name),
+	);
+	// The source's unfinished clones belong to the source.
+	if (tables.has(durableObjectFacetCloneTable)) {
+		database.executeSync(`DELETE FROM ${durableObjectFacetCloneTable}`);
+	}
+	if (tables.has(durableObjectMetadataTable)) {
+		database.executeSync(`DELETE FROM ${durableObjectMetadataTable}`);
+	}
+	writeDurableObjectMetadata(database, "facet", unboundDurableObjectFacetRecord(input.depth));
+	writeDurableObjectMetadata(database, "clone", input.cloneId);
+}
+
+/** The clone that filled this facet, or undefined. */
+export function readDurableObjectFacetCloneId(database: RivetSynchronousSqliteExecutor): unknown {
+	return readDurableObjectMetadata(database, "clone");
 }
 
 /** Returns chunk `index`, and drops the chunks below `confirmed`, which the importer already holds. */
@@ -329,6 +453,24 @@ function requireManifest(value: unknown): DurableObjectFacetExportManifest {
 		}),
 		snapshotId,
 	};
+}
+
+function requireForkRequest(value: unknown): DurableObjectFacetForkRequest {
+	const cloneId = field(value, "cloneId");
+	const key = field(value, "key");
+	if (typeof cloneId !== "string" || !isStringArray(key)) {
+		throw new TypeError("Durable Object facet fork request is invalid");
+	}
+	return { cloneId, key };
+}
+
+function requireForkInput(value: unknown): DurableObjectFacetForkInput {
+	const cloneId = field(value, "cloneId");
+	const depth = field(value, "depth");
+	if (typeof cloneId !== "string" || typeof depth !== "number") {
+		throw new TypeError("Durable Object facet fork input is invalid");
+	}
+	return { cloneId, depth };
 }
 
 function requireImportRequest(value: unknown): DurableObjectFacetImportRequest {

@@ -115,6 +115,8 @@ test("registers only configured Durable Object exports through the runner", asyn
 							create: async () => fakeRivetActorHandle(),
 							async dispose(): Promise<void> {},
 							exists: async () => true,
+							fork: async () => "forked",
+							resolve: async () => "actor",
 							get() {
 								clientResolutions += 1;
 								return fakeRivetActorHandle();
@@ -194,6 +196,8 @@ test("registers only configured Durable Object exports through the runner", asyn
 								create: async () => fakeRivetActorHandle(),
 								dispose: async () => undefined,
 								exists: async () => true,
+								fork: async () => "forked",
+								resolve: async () => "actor",
 								get: () => fakeRivetActorHandle(),
 								getOrCreate: () => fakeRivetActorHandle(),
 							},

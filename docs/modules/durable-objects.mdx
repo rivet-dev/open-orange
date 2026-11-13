@@ -487,7 +487,7 @@ supports the part that the agents SDK uses.
 | RPC and `fetch()` on the facet stub | Supported |
 | `abort(name, reason)` | Supported |
 | `delete(name)` | Supported |
-| `clone(src, dst)` | Supported. Copies rows in the background. See [Clone](#clone). |
+| `clone(src, dst)` | Supported. Forks the facet's Rivet Actor in the background. See [Clone](#clone). |
 
 - Each facet is a child Rivet Actor. Any exported class works. It needs no
   binding and no migration.
@@ -505,43 +505,71 @@ supports the part that the agents SDK uses.
 ##### Clone
 
 `clone(src, dst)` replaces the storage of `dst` and its children with a copy of
-`src`. Cloudflare copies the SQLite files in the call. Orange cannot reach
-another actor's files, so it copies rows:
+`src`. Cloudflare copies the SQLite files in the call. Orange forks the Rivet
+Actor of `src`, which copies its storage on write:
 
 1. `clone()` returns at once. Calls to `dst` fail with
    `Facet was cloned-over.`
-2. The parent stores a clone record before its next output.
-3. `src` reads all its rows in one synchronous call and sends them in chunks.
-4. `dst` applies the chunks in one transaction.
-5. Calls to `src` and `dst` wait until the copy ends.
+2. The parent stores a clone record and a new key for `dst` before its next
+   output. The fork starts once they are durable.
+3. `src` commits its open turn, and Rivet forks its actor to the new key. `src`
+   keeps running.
+4. Each child of `src` is forked the same way, under the new actor.
+5. Orange destroys the old actor of `dst`. Calls to `src` and `dst` wait until
+   the clone ends.
 
 What you can rely on:
 
 - `dst` holds the data of `src` as of the `clone()` call. Calls to `dst` always
   see the copy.
 - The copy is whole or absent. It survives a restart, a crash, and the
-  parent's `ctx.abort()`.
-- The copy is exact SQL: rowids, `AUTOINCREMENT` counters, generated columns,
-  triggers, views, FTS5 tables, and value types.
+  parent's `ctx.abort()`. A clone that runs again after a crash finds its own
+  fork and changes nothing.
+- The copied tree is consistent. Only a parent can call its facets, and calls
+  from `src` to its children wait until each child is forked.
+- The copy is the SQLite database itself: rowids, `AUTOINCREMENT` counters,
+  generated columns, triggers, views, FTS5 tables, and value types.
 - `clone(name, name)` aborts the facet and keeps its storage. A `src` that
   never ran empties `dst`. At the maximum depth, `clone()` does nothing.
+
+Forks need a Rivet Engine that speaks envoy protocol 9, such as Engine 3.1.
+The Engine of `orange dev` and new Rivet Cloud clusters can fork. When the
+Engine refuses a fork, Orange copies rows instead and logs
+`[durable-object] facet clone copies rows instead of forking: actor.<code>`:
+
+| Code | When |
+|---|---|
+| `fork_too_deep` | `src` is already 16 forks deep, for example after 16 clones of clones. The row copy starts a new chain. |
+| `fork_unavailable` | The Engine cannot fork. |
+| `fork_failed` | `src` never started, so it has nothing to fork. |
+
+The row copy reads every row of `src` in one synchronous call, which blocks the
+runtime process, and writes them to `dst` in one transaction. Set
+`ORANGE_FACET_CLONE=copy` to always copy rows.
 
 | Case | Cloudflare | Orange |
 |---|---|---|
 | `src` is inside `storage.transaction()` | Copies the state before the transaction | Waits for the transaction, then copies |
-| Copy cost | A file copy | `src` reads every row in one synchronous call, which blocks the runtime process |
+| Copy cost | A file copy | A fork of each actor in the tree |
 | Facets created before clone support | Copied | Their own rows are copied. Their children are not. |
-| Infrastructure failure during the copy | Not possible | Calls to `dst` fail until the parent restarts and runs the copy again |
+| Infrastructure failure during the copy | Not possible | Calls to `dst` fail until the parent restarts and runs the clone again |
 
-Measured cost of one `clone()` in `orange dev` on an Apple M-series Mac, for a
-facet of 256 KiB blobs. "Longest block" is the longest time the process
-answered no other request. With no clone, it is about 6 ms.
+Measured cost of one `clone()` of a facet of 256 KiB random blobs, as fork
+and as row copy on the same build. Local is `orange dev` on a 16-core Linux
+host. Cloud is a free Rivet Cloud cluster (Engine 3.1.1, one e2-small runner).
+"Longest stall" is the slowest call to another Durable Object during the clone.
 
-| Facet size | Clone time | Longest block | Extra process memory |
+| Case | Fork, local | Row copy, local | Fork, cloud |
 |---|---|---|---|
-| 1 MB | 143 ms | 39 ms | 121 MB |
-| 10 MB | 537 ms | 37 ms | 252 MB |
-| 100 MB | 5.9 s | 1.5 s | 703 MB |
+| 1 MB | 56 ms, 9 ms stall | 226 ms, 120 ms stall, +99 MiB | 173 ms, 15 ms stall |
+| 10 MB | 56 ms, 11 ms stall | 1.1 s, 127 ms stall, +190 MiB | 152 ms, 14 ms stall |
+| 100 MB | 74 ms, 20 ms stall | 10.8 s, 191 ms stall, +196 MiB | Not measured |
+| 100 MB, right after the write | 87 ms to 1.1 s | 11.0 s, 725 ms stall | Not measured |
+| 10 MB, `src` asleep | 71 ms | 1.4 s, +447 MiB | Not measured |
+| 1 MB with 8 children of 1 MB | 464 ms | 1.2 s, 356 ms stall | Not measured |
+| 8 clones of 10 MB at once | 465 ms, 25 ms stall | 6.7 s, 706 ms stall | Not measured |
+
+A fork adds no measurable memory.
 
 #### Who can call an object
 

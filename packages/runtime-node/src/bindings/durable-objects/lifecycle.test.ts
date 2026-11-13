@@ -28,6 +28,8 @@ test("waits for Rivet registry readiness and shuts down once", async () => {
 					clientDisposals += 1;
 				},
 				exists: async () => true,
+				fork: async () => "forked",
+				resolve: async () => "actor",
 				get: () => fakeRivetActorHandle(),
 				getOrCreate() {
 					return fakeRivetActorHandle();

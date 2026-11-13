@@ -1,7 +1,5 @@
 import CachePolicy from "http-cache-semantics";
 
-import { openOrangeInternalHeaderPrefix } from "../bindings/durable-objects/transport-head.js";
-import { isRecord } from "../bindings/unknown-values.js";
 import { bodyChunkBytes, Headers, Request, Response } from "./http.js";
 
 // The Cache API. By default Orange stores entries in one internal Rivet Actor
@@ -74,54 +72,6 @@ function cacheKey(request: Request): string {
 			? Reflect.get(request.cf, "cacheKey")
 			: undefined;
 	return key === undefined || key === null || key === "" ? request.url : String(key);
-}
-
-// A response with Vary answers only a request whose values of the named
-// headers equal those of the request that stored it, as HTTP caches require
-// and as http-cache-semantics checks in _varyMatches(). Each key keeps one
-// variant, so a put of another variant replaces it. A miss is always allowed:
-// workerd notes that the cache may evict any entry at any time.
-// https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1
-// https://github.com/kornelski/http-cache-semantics/blob/b1d4bd682fbab0252985de45219f4e7497c0067c/index.js#L483-L515
-// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/cache.c%2B%2B#L130-L134
-//
-// The storing request's values travel with the entry's headers under this
-// internal name, so the cache object's schema does not change.
-const varyRequestHeader = `${openOrangeInternalHeaderPrefix}cache-vary-request`;
-
-function varyNames(vary: string | null): string[] {
-	if (vary === null) return [];
-	return vary
-		.split(",")
-		.map((name) => name.trim().toLowerCase())
-		.filter((name) => name !== "");
-}
-
-/** The request's value of each header that the response varies on, or null when absent. */
-function varyRequestValues(
-	request: Request,
-	vary: string | null,
-): Record<string, string | null> | undefined {
-	const names = varyNames(vary);
-	if (names.length === 0) return undefined;
-	return Object.fromEntries(names.map((name) => [name, request.headers.get(name)]));
-}
-
-/** Whether a stored entry answers this request, given the entry's Vary header. */
-function varyMatches(request: Request, headers: Headers): boolean {
-	const names = varyNames(headers.get("vary"));
-	if (names.length === 0) return true;
-	const stored = headers.get(varyRequestHeader);
-	// An entry stored before Orange recorded these values cannot be checked.
-	if (stored === null) return false;
-	let values: unknown;
-	try {
-		values = JSON.parse(stored);
-	} catch {
-		return false;
-	}
-	if (!isRecord(values)) return false;
-	return names.every((name) => (values[name] ?? null) === request.headers.get(name));
 }
 
 function normaliseHeaders(headers: Headers): Record<string, string> {
@@ -264,13 +214,11 @@ function parseRanges(header: string, length: number): InclusiveRange[] | undefin
 }
 
 // Builds the match() response: 416, 304, 206, or the full entry, in
-// Miniflare's order. An entry whose Vary headers differ is a miss.
+// Miniflare's order.
 // https://github.com/cloudflare/workers-sdk/blob/be87ff0382c53a294e948e49419d25d653c50e86/packages/miniflare/src/workers/cache/cache.worker.ts#L130-L183
 // https://github.com/cloudflare/workers-sdk/blob/be87ff0382c53a294e948e49419d25d653c50e86/packages/miniflare/src/workers/cache/cache.worker.ts#L290-L326
-function matchResponse(request: Request, entry: CacheStoredEntry): Response | undefined {
+function matchResponse(request: Request, entry: CacheStoredEntry): Response {
 	const headers = new Headers(entry.headers);
-	if (!varyMatches(request, headers)) return undefined;
-	headers.delete(varyRequestHeader);
 	headers.set("cf-cache-status", "HIT");
 	const rangeHeader = request.headers.get("range");
 	const ranges = rangeHeader === null ? [] : parseRanges(rangeHeader, entry.size);
@@ -340,6 +288,11 @@ export class Cache {
 		if (options?.ignoreMethod !== true && request.method !== "GET") return undefined;
 		const backend = openBackend?.(this.#cacheName);
 		if (backend === undefined) return undefined;
+		// The key alone picks the entry. Like Cloudflare's cache and Miniflare,
+		// match() does not read Vary, so a response stored with
+		// `Vary: Accept-Language` answers a request with any Accept-Language.
+		// Measured on Cloudflare, in a Pages Function on pages.dev, and on
+		// wrangler dev 4.129.0, on 2026-11-13.
 		const entry = await backend.match(cacheKey(request));
 		return entry === undefined ? undefined : matchResponse(request, entry);
 	}
@@ -378,13 +331,9 @@ export class Cache {
 			await body.discard();
 			return;
 		}
-		// Only Orange writes the internal header, so a response cannot supply one.
-		const stored = headers.filter(([name]) => name !== varyRequestHeader);
-		const varied = varyRequestValues(request, response.headers.get("vary"));
-		if (varied !== undefined) stored.push([varyRequestHeader, JSON.stringify(varied)]);
 		const metadata: CacheEntryMetadata = {
 			expiresAt: Date.now() + ttl,
-			headers: stored,
+			headers,
 			status: response.status,
 		};
 		try {

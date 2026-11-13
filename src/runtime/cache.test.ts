@@ -247,41 +247,23 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 		assert.equal(await changed.text(), "validated");
 	});
 
-	it("when the response has Vary, match hits only a request with the same values of those headers", async () => {
+	it("when the response has Vary, match still answers a request with other values of those headers, as on Cloudflare", async () => {
 		const url = "https://example.com/vary";
-		const varied = { ...fresh, vary: "Accept-Language, X-Tenant" };
-		assert.equal((await put(url, "english", varied, {}, { "accept-language": "en" })).status, 204);
-		const same = await match(url, { "accept-language": "en" });
-		assert.equal(same.headers.get("cf-cache-status"), "HIT");
-		assert.equal(same.headers.get("vary"), "Accept-Language, X-Tenant");
-		// The stored request values stay inside Orange.
-		assert.deepEqual(
-			[...same.headers.keys()].filter((name) => name.startsWith("x-open-orange")),
-			[],
-		);
-		assert.equal(await same.text(), "english");
-		// A header that Vary does not name does not count.
-		const unrelated = await match(url, { accept: "text/html", "accept-language": "en" });
-		assert.equal(await unrelated.text(), "english");
-		const others: Record<string, string>[] = [
-			{ "accept-language": "fr" },
-			{},
-			{ "accept-language": "en", "x-tenant": "a" },
-		];
+		const varied = { ...fresh, vary: "Accept-Language" };
+		await put(url, "english", varied, {}, { "accept-language": "en" });
+		const others: Record<string, string>[] = [{ "accept-language": "en" }, { "accept-language": "fr" }, {}];
 		for (const headers of others) {
-			const other = await match(url, headers);
-			assert.equal(other.headers.get("x-match"), "miss", JSON.stringify(headers));
-			await other.body?.cancel();
+			const hit = await match(url, headers);
+			assert.equal(hit.headers.get("cf-cache-status"), "HIT", JSON.stringify(headers));
+			assert.equal(hit.headers.get("vary"), "Accept-Language");
+			assert.equal(await hit.text(), "english");
 		}
-		// One variant is kept for each key, so the next put replaces it.
+		// A key holds one entry, so a put for another value replaces it.
 		await put(url, "french", varied, {}, { "accept-language": "fr" });
-		const french = await match(url, { "accept-language": "fr" });
-		assert.equal(await french.text(), "french");
-		const english = await match(url, { "accept-language": "en" });
-		assert.equal(english.headers.get("x-match"), "miss");
-		await english.body?.cancel();
-		// Delete removes the entry whatever the request's headers are.
-		assert.equal(await remove(url), true);
+		for (const headers of others) {
+			const hit = await match(url, headers);
+			assert.equal(await hit.text(), "french", JSON.stringify(headers));
+		}
 	});
 
 	it("when the request has a Range, match returns 206 with exactly those bytes, and 416 past the end", async () => {

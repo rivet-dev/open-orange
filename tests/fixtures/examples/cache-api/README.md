@@ -97,8 +97,6 @@ curl -i localhost:8787/articles/a; curl -i localhost:8787/articles/a   # MISS, M
 
 ## Differences from Cloudflare
 
-- Each key keeps one `Vary` variant, so a `put()` of another variant replaces
-  it.
 - A request with several ranges gets the whole body with `200`.
 - `fetch()` with `cf.cacheTtl` or `cf.cacheEverything` does not use the cache,
   as in `wrangler dev`.

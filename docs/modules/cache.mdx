@@ -8,7 +8,7 @@ description: Use caches.default and caches.open() on OpenOrange, where each cach
 <BindingStatus
   binding="cache-api"
   works="`caches.default`, `caches.open()`, `put()`, `match()`, and `delete()`, with workerd's checks and Miniflare's freshness rules"
-  differs="One cache for each name, not one per data center, and entries stay until they expire. Each key keeps one `Vary` variant."
+  differs="One cache for each name, not one per data center, and entries stay until they expire."
   missing="`cache.add()`, `cache.addAll()`, and the edge cache that `fetch()` options such as `cf.cacheTtl` control"
 />
 
@@ -103,18 +103,14 @@ again.
 | `delete()` | Supported | Returns `true` only when it removed a live entry. |
 | `ignoreMethod` | Supported | |
 | `request.cf.cacheKey` in Cache API calls | Supported | Replaces the URL as the key. |
-| `Vary` | Partial | `match()` hits only a request with the same values of the headers that `Vary` names. Each key keeps one variant. `Vary: *` makes `put()` throw. |
+| `Vary` | Supported | Not read by `match()`, as on Cloudflare. `Vary: *` makes `put()` throw. |
 | A `Range` with several ranges | Partial | Gets the whole body with `200`. |
 | `cache.add()` and `cache.addAll()` | Not supported | Not defined. |
 | `ctx.cache` | Not supported | `undefined`, as in local workerd. |
 | `fetch()` with `cf.cacheTtl`, `cf.cacheEverything`, `cf.cacheKey`, or `cf.cacheTags` | Not supported | The subrequest goes to the origin. |
 
-Two differences reach most projects:
+One difference reaches most projects:
 
-- **Each key keeps one `Vary` variant.** A response with `Vary` answers only
-  a request with the same values of the headers it names, and a `put()` of
-  another variant replaces it. To keep several variants, put what varies into
-  the key, for example the URL or `request.cf.cacheKey`.
 - **`fetch()` cache options do nothing.** On Cloudflare, `cf.cacheTtl` and
   `cf.cacheEverything` control the zone's edge cache, which is separate from
   the Cache API. Orange has no edge cache, so the subrequest always goes to
@@ -183,14 +179,10 @@ throws a `TypeError`:
   any entry with an `ETag`. `If-Modified-Since` matches a stored
   `Last-Modified` at or before it.
 - A stored `204`, `205`, or `304` entry returns no body.
-- An entry with `Vary` is a hit only when each header that it names has the
-  same value on the request as on the request that stored it. A header that
-  both requests lack counts as the same. Values compare exactly, so
-  `gzip, br` and `br, gzip` differ.
-- An entry with `Vary` that an older Orange stored is a miss, because it has
-  no record of the request that stored it.
-- `delete()` does not read `Vary`. It removes the key's entry whatever the
-  request's headers are.
+- `match()` does not read `Vary`, as on Cloudflare and in `wrangler dev`. A
+  response stored with `Vary: Accept-Language` answers a request with any
+  `Accept-Language`, and a key holds one entry. To keep variants apart, put
+  what varies into the key, for example the URL or `request.cf.cacheKey`.
 - `match()` and `delete()` treat a request that is not `GET` as a miss, and
   return `undefined` or `false`, unless `ignoreMethod: true`. A Worker can
   answer `HEAD` from the `GET` entry with `ignoreMethod: true`.

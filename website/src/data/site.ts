@@ -677,7 +677,7 @@ export const WORKERD_SERVICES: WorkerdServiceRow[] = [
 	{
 		service: 'Cache API',
 		workerd: { status: 'none', detail: 'Throws "No Cache was configured" unless you supply an HTTP cache.', source: `${WORKERD.schema}#L915-L916` },
-		openorange: { status: 'partial', detail: 'One Rivet Actor per cache name. One Vary variant per key.' },
+		openorange: { status: 'partial', detail: 'One Rivet Actor per cache name.' },
 	},
 	{
 		service: 'Hyperdrive',

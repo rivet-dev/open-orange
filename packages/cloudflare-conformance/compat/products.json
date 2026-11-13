@@ -87,7 +87,7 @@
 			"product": "Cache API",
 			"orange": "Internal Rivet Actor per cache name, with Miniflare's freshness rules",
 			"status": "partial",
-			"note": "Entries persist locally. Each key keeps one Vary variant, and several ranges return the whole body. ORANGE_CACHE=off gives the workers.dev no-op.",
+			"note": "Entries persist locally. Several ranges return the whole body. ORANGE_CACHE=off gives the workers.dev no-op.",
 			"evidence": ["docs/modules/cache.mdx"],
 			"configure": [
 				{ "variable": "ORANGE_CACHE=off", "purpose": "Makes the Cache API the workers.dev no-op." }

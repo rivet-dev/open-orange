@@ -26,6 +26,9 @@ import type { VmGauges, WorkerLoaderMetrics } from "./metrics.js";
 
 // Where the child and runtime modules live inside each VM.
 const runtimeRoot = "/open-orange/runtime";
+// The thin process entry that `buildWorkerLoaderVmBundle` writes. It imports
+// worker-loader-child.mjs, which holds the child and the whole runtime.
+const childEntry = posix.join(runtimeRoot, "worker-loader-child-main.mjs");
 const workersRoot = "/open-orange/workers";
 const exitWaitMs = 5_000;
 // The most stdin bytes sent to a dynamic Worker process in one agentOS write.
@@ -612,12 +615,18 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 				return [specifier, posix.join(runtimeRoot, file)];
 			}),
 		);
-		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos-core");
+		const { AgentOs, agentOsOptionFieldSchemas, hostDirMount } = await import("@rivet-dev/agentos-core");
+		// agentOS boots each child from a snapshot of the runtime that the
+		// entry imports, built once per sidecar. agentOS 0.4.8 lacks the option
+		// and rejects options it does not know, so it is set only when present.
+		const snapshot =
+			"snapshotEntrypoints" in agentOsOptionFieldSchemas ? { snapshotEntrypoints: [childEntry] } : {};
 		// The guest reads Orange's runtime from the host, read-only, so a VM
 		// boots without a copy of it. The mount shows only the bundle directory.
 		const vm = await AgentOs.create({
 			mounts: [hostDirMount(runtimeRoot, bundlePath, { readOnly: true })],
 			permissions: { network: mode === "network" ? "allow" : "deny" },
+			...snapshot,
 		});
 		return { moduleRewrites, vm };
 	}
@@ -659,7 +668,7 @@ async function spawnVmChild(vm: AgentOs, root: string, options: VmChildOptions):
 	let exitReason: string | undefined;
 	let killing = false;
 	let forceExit: (reason: string) => void = () => undefined;
-	const descriptor = await vm.process.spawn("node", [posix.join(runtimeRoot, "worker-loader-child.mjs")], {
+	const descriptor = await vm.process.spawn("node", [childEntry], {
 		cwd: root,
 		env: { HOME: "/home/user", PATH: "/usr/local/bin:/usr/bin:/bin" },
 		onStderr: (chunk) => process.stderr.write(chunk),

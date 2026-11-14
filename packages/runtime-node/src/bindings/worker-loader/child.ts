@@ -3,7 +3,7 @@
 // env, modules, and outbound access that the parent passed.
 
 import { writeSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import { DurableObjectRpcTarget } from "../durable-objects/rpc/target.js";
 import type { Request, Response } from "../../globals/http.js";
@@ -196,7 +196,11 @@ function frameStdoutWrites(): FrameWriter {
 	};
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Runs the child. The thin entry `worker-loader-child-main.mjs` calls it, so
+// agentOS can boot the child from a snapshot that holds this module and the
+// whole runtime, evaluated once. Read per-process state such as `process.env`
+// in here or later, never at module top level.
+export function startChild(): void {
 	const frames = frameStdoutWrites();
 	const sendFrame = frames.send;
 	const report = (error: unknown): void => {

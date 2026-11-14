@@ -181,6 +181,11 @@ timeout passes. Prewarmed VMs do not count toward
   Worker loads, so an app without dynamic Workers boots none. A prewarmed VM
   has its Node.js process started with Orange's runtime imported. It has seen
   no Worker code or `env`.
+- With an agentOS client that supports `snapshotEntrypoints`, each Node.js
+  process boots from a V8 snapshot of Orange's runtime, built once per agentOS
+  sidecar, instead of importing it. Each process gets its own copy of the
+  runtime's state. agentOS 0.4.8 lacks the option, so there each process
+  imports the runtime.
 - A load takes a prewarmed VM, writes its modules, and starts the Worker. If
   the pool is empty, it takes a VM that is booting and that no other load
   waits for, or boots its own at once, beside the other loads.
@@ -301,8 +306,9 @@ server and an Express app in a dynamic Worker, and bursts of loads larger than
 the VM pool whose Workers each wait in a call for all the others. The VM pool
 grows to the last burst and shrinks to its idle size after the idle timeout,
 and each Worker gets a fresh VM, isolated from the others and from the
-read-only runtime mount. A second `orange dev` with a limit of 2 and a
-1.5-second idle timeout checks that
+read-only runtime mount, with its own runtime module state and randomness
+when its process boots from the agentOS snapshot. A second `orange dev` with
+a limit of 2 and a 1.5-second idle timeout checks that
 idle Workers stop and load again, that calls longer than the timeout finish,
 that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more
 `load()` calls than the limit succeed.

@@ -474,22 +474,34 @@ test("grows the VM pool to the last burst, shrinks it when idle, and boots each 
 			});
 			assert.ok(Array.isArray(results) && results.length === n, JSON.stringify(results));
 			let prewarmed = 0;
+			const randoms = new Set<unknown>();
+			const uuids = new Set<unknown>();
 			for (const result of results) {
 				assert.ok(isRecord(result) && isRecord(result.value), JSON.stringify(result));
-				const { prewarmed: wasPrewarmed, ...seen } = result.value;
+				const { prewarmed: wasPrewarmed, random, ...seen } = result.value;
 				const id = String(seen.id);
-				// None sees another's files, globals, or env, each VM holds only
-				// its own Worker, and none can change Orange's runtime.
+				// None sees another's files, globals, runtime module state, or env,
+				// each VM holds only its own Worker, and none can change Orange's
+				// runtime. This holds for children that boot from an agentOS
+				// snapshot of the runtime too.
 				assert.deepEqual(seen, {
 					env: [`POOL_SECRET_${id}`],
 					file: "ENOENT",
 					global: null,
 					id,
 					runtime: "EROFS",
+					runtimeState: null,
 					workerRoots: 1,
+					workersEnv: [`POOL_SECRET_${id}`],
 				});
+				assert.ok(Array.isArray(random), JSON.stringify(result));
+				randoms.add(random[0]);
+				uuids.add(random[1]);
 				if (wasPrewarmed === true) prewarmed += 1;
 			}
+			// No two Workers draw the same random values.
+			assert.equal(randoms.size, n);
+			assert.equal(uuids.size, n);
 			return prewarmed;
 		};
 		// Both network modes load beside each other.

@@ -37,7 +37,7 @@ import {
 import { Navigator, navigator } from "./navigator.js";
 import { nodeWebGlobals } from "./node-web.js";
 import { scheduler } from "./scheduler.js";
-import { WebAssembly } from "./webassembly.js";
+import { nativeWebAssembly } from "./webassembly.js";
 import {
 	WebSocket,
 	WebSocketPair,
@@ -96,7 +96,10 @@ const scopeGlobals = {
 	URL,
 	URLPattern,
 	URLSearchParams,
-	WebAssembly,
+	// A getter, so loading this module never reads WebAssembly. See nativeWebAssembly().
+	get WebAssembly() {
+		return nativeWebAssembly();
+	},
 	WebSocket,
 	WebSocketPair,
 	WebSocketRequestResponsePair,
@@ -142,10 +145,13 @@ type ScopeGlobals = typeof scopeGlobals;
 // assertion. The global-scope differential fixture reads these globals from self.
 const self = globalThis as unknown as GlobalScope;
 
-export const globalImplementations = {
-	...scopeGlobals,
-	self,
-};
+// Copies the descriptors, so the WebAssembly getter is not called here.
+// SAFETY: defineProperties adds every scopeGlobals property to the object,
+// but TypeScript types its result as the first argument.
+export const globalImplementations = Object.defineProperties(
+	{ self },
+	Object.getOwnPropertyDescriptors(scopeGlobals),
+) as ScopeGlobals & { self: GlobalScope };
 
 export const globalImplementationStatuses: Record<
 	keyof typeof globalImplementations,

@@ -22,8 +22,10 @@ const filesystemCode = {
 };
 
 // Reports what a dynamic Worker can see of any other dynamic Worker: a file,
-// a global, process.env, and the VM's Worker roots. Then it leaves its own,
-// and tries to change Orange's runtime, which every VM reads from the host.
+// a global, state in Orange's runtime modules, process.env, the env of
+// cloudflare:workers, and the VM's Worker roots. Then it leaves its own, and
+// tries to change Orange's runtime, which every VM reads from the host. A VM
+// boots its child from one agentOS snapshot of the runtime when it can.
 // It also reports whether its VM had its Worker root before the parent asked
 // for the Worker at `requestedAt`, as a prewarmed VM does, and waits at
 // `arrive` for the rest of its burst.
@@ -35,9 +37,13 @@ const poolProbeCode = (id, globalOutbound) => ({
 	modules: {
 		"main.js": `
 			import { createRequire } from "node:module";
+			import { env as workersEnv } from "cloudflare:workers";
 			const fs = createRequire(import.meta.url)("fs");
 			const seenGlobal = globalThis.poolProbe ?? null;
 			globalThis.poolProbe = ${JSON.stringify(id)};
+			// Response is a class of Orange's runtime, not of Node.js.
+			const seenRuntime = Response.prototype.poolProbe ?? null;
+			Response.prototype.poolProbe = ${JSON.stringify(id)};
 			export default {
 				async probe({ arrive, requestedAt }) {
 					const rootCreatedAt = fs.statSync(process.cwd()).birthtimeMs;
@@ -53,8 +59,11 @@ const poolProbeCode = (id, globalOutbound) => ({
 						global: seenGlobal,
 						id: ${JSON.stringify(id)},
 						prewarmed: rootCreatedAt < requestedAt,
+						random: [Math.random(), crypto.randomUUID()],
 						runtime,
+						runtimeState: seenRuntime,
 						workerRoots: fs.readdirSync("/open-orange/workers").length,
+						workersEnv: Object.keys(workersEnv),
 					};
 				},
 			};

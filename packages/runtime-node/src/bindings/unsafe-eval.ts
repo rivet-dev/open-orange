@@ -1,6 +1,6 @@
 import { compileFunction, runInThisContext } from "node:vm";
 
-import { WebAssembly } from "../globals/webassembly.js";
+import { nativeWebAssembly } from "../globals/webassembly.js";
 
 function bytesFrom(source: unknown): Uint8Array {
 	if (source instanceof ArrayBuffer) return new Uint8Array(source);
@@ -48,7 +48,7 @@ export class UnsafeEval {
 	}
 
 	newWasmModule(source: unknown): unknown {
-		return new WebAssembly.Module(bytesFrom(source));
+		return new (nativeWebAssembly().Module)(bytesFrom(source));
 	}
 }
 

@@ -74,6 +74,14 @@ export async function buildWorkerLoaderVmBundle(
 		join(outputDirectory, "manifest.json"),
 		`${JSON.stringify(manifest, null, "\t")}\n`,
 	);
+	// The process entry agentOS runs for each dynamic Worker (`childEntry` in
+	// worker-loader/agentos.ts). It stays this small so agentOS can boot it
+	// from a snapshot of everything it imports, and only these two lines run
+	// in each process.
+	await writeFile(
+		join(outputDirectory, "worker-loader-child-main.mjs"),
+		'import { startChild } from "./worker-loader-child.mjs";\nstartChild();\n',
+	);
 }
 
 export async function buildPackage(

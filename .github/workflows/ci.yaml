@@ -26,15 +26,31 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm validate:examples
+      - run: pnpm test:packages
+      - name: Check that every test file is in one test area
+        run: pnpm test:area --check
       - name: Check the published package contents
         run: npm pack --dry-run
 
   test:
-    name: Test
-    # The full suite starts many `orange dev` processes and engines; it needs more cores than
-    # GitHub's standard runner, where it exceeds an hour.
-    runs-on: depot-ubuntu-24.04-16
-    timeout-minutes: 45
+    name: e2e / ${{ matrix.area }}
+    # Each job runs the test files of one Cloudflare area (tests/test-areas.ts), so the failing
+    # check names the area. The files start many `orange dev` processes and engines, so the big
+    # areas get more cores.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { area: durable-objects, runner: depot-ubuntu-24.04-16 }
+          - { area: rpc-and-websockets, runner: depot-ubuntu-24.04-8 }
+          - { area: bindings, runner: depot-ubuntu-24.04-16 }
+          - { area: events, runner: depot-ubuntu-24.04-8 }
+          - { area: node-compat, runner: depot-ubuntu-24.04-8 }
+          - { area: cli, runner: depot-ubuntu-24.04-16 }
+          - { area: migrate, runner: depot-ubuntu-24.04-8 }
+          - { area: examples, runner: depot-ubuntu-24.04-8 }
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -43,4 +59,4 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+      - run: pnpm test:area ${{ matrix.area }}

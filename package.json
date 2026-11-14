@@ -18,7 +18,10 @@
     "orange": "tsx src/bin.ts",
     "prepack": "pnpm build",
     "release": "tsx scripts/release/main.ts",
-    "test": "tsx --import ./tests/isolated-env.ts --test 'src/**/*.test.ts' 'tests/**/*.test.ts' && pnpm -r --filter './packages/*' test",
+    "test": "pnpm test:root && pnpm test:packages",
+    "test:root": "tsx --import ./tests/isolated-env.ts --test 'src/**/*.test.ts' 'tests/**/*.test.ts'",
+    "test:packages": "pnpm -r --filter './packages/*' test",
+    "test:area": "tsx tests/test-areas.ts",
     "validate:examples": "tsx tests/validate-example-manifests.ts",
     "typecheck": "tsc --noEmit && pnpm --filter ./packages/runtime-node typecheck"
   },

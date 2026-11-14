@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import { startFakeD1ExportApi, type FakeD1ExportApi, type FakeD1ExportApiOptions } from "./fake-d1-export-api.js";
-import { migratorToken, startCloudflareSource, type CloudflareSource } from "./migrate-source.js";
+import { describeSource, migratorToken, startCloudflareSource, type CloudflareSource } from "./migrate-source.js";
 import { copyProject, repositoryRoot, runOrange, startOrangeDev, type RunningOrangeDev, type TemporaryProject, withDeadline } from "./orange-dev.js";
 
 // `orange migrate d1 --url` end to end: the real CLI, real `orange dev`, and the prepared Worker on
@@ -262,7 +262,11 @@ test("a D1 database moves through the export API: Orange equals Cloudflare value
 			}
 		})();
 		const moved = await setup.move();
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		// The app writes until one write lands on Orange. A fixed pause is too short on a loaded host.
+		const until = Date.now() + 30_000;
+		while (moved.code === 0 && Date.now() < until && !writes.some(({ result }) => result.status === 200)) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
 		running = false;
 		await appTraffic;
 		assert.equal(moved.code, 0, moved.output);
@@ -390,7 +394,7 @@ test("Orange restarts during the import, and the move goes on from what Orange m
 		setup.orange = await startOrangeDev(setup.destination.directory);
 		port = new URL(setup.orange.origin).port;
 		const moved = await moving;
-		assert.equal(moved.code, 0, moved.output);
+		assert.equal(moved.code, 0, `${moved.output}\n${describeSource(setup.source.origin)}`);
 		assert.match(moved.output, /An import step failed/);
 		assert.deepEqual(await dump(setup.orange.origin), before);
 	} finally {
@@ -523,7 +527,7 @@ test("the switch refuses when a write could have missed the copy, Orange serves 
 		orangePlan = (step) => (step === "finish" ? { answer: { body: { error: { code: "migrate_d1.unavailable", message: "The D1 database did not answer" } }, status: 503 } } : undefined);
 		const stopped = await move();
 		assert.equal(stopped.code, 1, stopped.output);
-		assert.match(stopped.output, /Switching Cloudflare to Orange failed/);
+		assert.match(stopped.output, /Switching Cloudflare to Orange failed/, describeSource(setup.source.origin));
 		assert.match(stopped.output, /Cloudflare sends every query for DB to Orange, but Orange's copy did not finish .* Run this command again to finish it\./);
 		assert.doesNotMatch(stopped.output, /Writes to DB on Cloudflare work again/);
 		assert.equal(await sourceState(setup.source), "moved");

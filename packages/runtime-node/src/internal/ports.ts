@@ -334,7 +334,9 @@ export async function resolveRivetEnginePort(
 	}
 	const seed = createHash("sha256").update(options.portSeed).digest().readUInt32BE(0);
 	for (let attempt = 0; attempt < 40; attempt += 1) {
-		const enginePort = 20_000 + ((seed + attempt * 7_919) % 40_000);
+		// The probe closes its sockets before the Engine binds them. Ports below Linux's ephemeral
+		// range (32768 and up; 49152 and up on macOS) cannot go to an outgoing connection meanwhile.
+		const enginePort = 20_000 + ((seed + attempt * 7_919) % 12_700);
 		const servers = [createServer(), createServer(), createServer()];
 		try {
 			await listen(servers[0], enginePort, options.host);
@@ -514,6 +516,7 @@ export async function ensureRivetEngine(options: StartRivetEngineOptions): Promi
 	);
 	const timestamp = new Date().toISOString().replaceAll(":", "-");
 	const stderrPath = join(logsDir, `engine-${timestamp}-stderr.log`);
+	const stdoutPath = join(logsDir, `engine-${timestamp}-stdout.log`);
 	const child = spawn(options.binaryPath, ["--config", configPath], {
 		// Its own process group, so it outlives this process and terminal signals do not reach it.
 		detached: true,
@@ -542,13 +545,18 @@ export async function ensureRivetEngine(options: StartRivetEngineOptions): Promi
 		},
 		stdio: [
 			"ignore",
-			openSync(join(logsDir, `engine-${timestamp}-stdout.log`), "a"),
+			openSync(stdoutPath, "a"),
 			openSync(stderrPath, "a"),
 		],
 	});
 	const pid = child.pid;
 	if (pid === undefined) throw new Error(`Could not start the Rivet Engine at ${options.binaryPath}`);
 	child.unref();
+	// The Engine logs through tracing to stdout, and a signal such as the OOM killer's leaves no log,
+	// so a startup error names how the Engine exited and shows both logs.
+	const exit = new Promise<string>((resolveExit) =>
+		child.once("exit", (code, signal) => resolveExit(signal === null ? `with code ${code}` : `on ${signal}`)),
+	);
 	writeFileSync(
 		engineStampPath(options.storagePath),
 		JSON.stringify({ bind_host: options.host, endpoint, pid, public_url: null }),
@@ -561,7 +569,7 @@ export async function ensureRivetEngine(options: StartRivetEngineOptions): Promi
 	for (;;) {
 		if (!processIsAlive(pid)) {
 			throw new Error(
-				`The Rivet Engine exited during startup. Its logs are in ${logsDir}.\n${logTail(stderrPath)}`,
+				`The Rivet Engine exited during startup ${await Promise.race([exit, delay(1_000).then(() => "for an unknown reason")])}. Its logs are in ${logsDir}.\n${logTail(stdoutPath)}\n${logTail(stderrPath)}`,
 			);
 		}
 		if (await engineStorageIsReady(endpoint, adminToken)) return;

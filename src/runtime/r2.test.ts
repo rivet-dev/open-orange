@@ -3,7 +3,6 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -12,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { minioBucketSettings, minioSkip, startMinio } from "../../tests/minio.js";
 import { isRecord } from "../../tests/orange-dev.js";
+import { freePort } from "../../tests/free-port.js";
 
 // Drives R2 bindings through a real `orange dev` process and real HTTP. The
 // same behavioral suite runs against both storage backends: the default
@@ -113,18 +113,6 @@ async function createProject(): Promise<string> {
 		}),
 	);
 	return projectRoot;
-}
-
-function freePort(): Promise<number> {
-	return new Promise((resolvePort, rejectPort) => {
-		const server = createServer();
-		server.once("error", rejectPort);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			const port = typeof address === "object" && address !== null ? address.port : 0;
-			server.close(() => resolvePort(port));
-		});
-	});
 }
 
 function md5(bytes: Uint8Array | string): string {

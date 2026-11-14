@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { cp, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { isRecord } from "../../tests/orange-dev.js";
+import { freePort } from "../../tests/free-port.js";
 
 // Drives `@cloudflare/sandbox` through a real `orange dev` process and real
 // HTTP, with a fixture Worker that uses the SDK as Cloudflare's docs show. The
@@ -101,18 +101,6 @@ async function createProject(): Promise<string> {
 		}),
 	);
 	return projectRoot;
-}
-
-function freePort(): Promise<number> {
-	return new Promise((resolvePort, rejectPort) => {
-		const server = createServer();
-		server.once("error", rejectPort);
-		server.listen(0, "127.0.0.1", () => {
-			const address = server.address();
-			const port = typeof address === "object" && address !== null ? address.port : 0;
-			server.close(() => resolvePort(port));
-		});
-	});
 }
 
 async function call(server: DevServer, path: string, init?: RequestInit): Promise<{ status: number; body: Record<string, unknown> }> {

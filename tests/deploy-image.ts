@@ -2,26 +2,17 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { withDeadline } from "./orange-dev.js";
+import { freePort } from "./free-port.js";
 
 // Builds a real `orange deploy` image and runs it the way a runner pool does.
 export const dockerSkip = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0 ? false : "Docker is not running, so no image can be built here";
 const requireFromRivetKit = createRequire(createRequire(import.meta.url).resolve("rivetkit"));
 const { getEnginePath } = requireFromRivetKit("@rivetkit/engine-cli") as { getEnginePath(): string };
-
-async function freePort(): Promise<number> {
-	const server = createServer();
-	await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
-	const address = server.address();
-	assert.ok(address !== null && typeof address !== "string");
-	await new Promise((closed) => server.close(closed));
-	return address.port;
-}
 
 export function dockerBuild(outdir: string, tag: string): void {
 	const build = spawnSync("docker", ["build", "--quiet", "--platform", "linux/amd64", "-f", join(outdir, "Dockerfile"), "-t", tag, join(outdir, "context")], { encoding: "utf8" });

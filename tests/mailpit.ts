@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+
+import { freePort } from "./free-port.js";
 
 // A real SMTP server: Mailpit in Docker. Tests read what it received through its HTTP API.
 // https://mailpit.axllent.org/docs/api-v1/
@@ -36,15 +37,6 @@ export interface Mailpit {
 	messages(): Promise<MailpitSummary[]>;
 	smtpUrl: string;
 	stop(): Promise<void>;
-}
-
-export async function freePort(): Promise<number> {
-	const server = createServer();
-	await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
-	const address = server.address();
-	assert.ok(address !== null && typeof address !== "string");
-	await new Promise((closed) => server.close(closed));
-	return address.port;
 }
 
 export async function startMailpit(): Promise<Mailpit> {

@@ -1,0 +1,28 @@
+{
+	"id": "cf-do-typegraph",
+	"repo": "nicia-ai/cf-do-typegraph",
+	"commit": "5cdf64295bab0c323cc65107a96ff98b409e8c2d",
+	"stars": 0,
+	"origin": "named",
+	"directory": ".",
+	"configs": [
+		"wrangler.jsonc"
+	],
+	"installDirectory": ".",
+	"install": "pnpm install --frozen-lockfile --ignore-scripts",
+	"durableObjects": {
+		"classes": [
+			"GraphDO"
+		],
+		"file": "src/do/graph-do.ts",
+		"uses": [
+			"storage.sql.exec",
+			"storage.transactionSync",
+			"storage.get",
+			"storage.put",
+			"acceptWebSocket",
+			"getWebSockets"
+		]
+	},
+	"changes": []
+}

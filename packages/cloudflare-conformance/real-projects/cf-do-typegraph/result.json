@@ -1,0 +1,87 @@
+{
+	"schemaVersion": 1,
+	"id": "cf-do-typegraph",
+	"repo": "nicia-ai/cf-do-typegraph",
+	"commit": "5cdf64295bab0c323cc65107a96ff98b409e8c2d",
+	"stars": 0,
+	"origin": "named",
+	"directory": ".",
+	"ranAt": "2026-11-13T18:14:31.771Z",
+	"orange": {
+		"sha": "29b30b4",
+		"dirty": false
+	},
+	"rivetkit": "3.1.2-rc.1",
+	"runtime": "orange",
+	"node": "v24.22.3",
+	"status": "works",
+	"install": {
+		"ok": true,
+		"seconds": 2,
+		"command": "pnpm install --frozen-lockfile --ignore-scripts"
+	},
+	"build": null,
+	"boot": {
+		"ok": true,
+		"seconds": 7
+	},
+	"steps": [
+		{
+			"name": "authz seeds a workspace, and a check finds the inherited grant by a recursive path query",
+			"kind": "do-state",
+			"status": "pass",
+			"seconds": 0.2
+		},
+		{
+			"name": "another workspace is another object, and has none of the first one's users",
+			"kind": "do-state",
+			"status": "pass",
+			"seconds": 0.1
+		},
+		{
+			"name": "notes seeds a garden, and FTS5 search ranks the matching note first",
+			"kind": "do-state",
+			"status": "pass",
+			"seconds": 0.2
+		},
+		{
+			"name": "a note written through one request reaches an open WebSocket and the next search",
+			"kind": "websocket",
+			"status": "pass",
+			"seconds": 0.3
+		},
+		{
+			"name": "agent-memory replays a conversation, and a recorded-time read returns the earlier graph",
+			"kind": "do-state",
+			"status": "pass",
+			"seconds": 0.7
+		},
+		{
+			"name": "every object sleeps, and each graph and its history are there when it wakes",
+			"kind": "sleep",
+			"status": "pass",
+			"seconds": 10.2
+		},
+		{
+			"name": "orange dev restarts, and each graph and its history are still there",
+			"kind": "restart",
+			"status": "pass",
+			"seconds": 6.9
+		}
+	],
+	"changes": [],
+	"durableObjects": {
+		"classes": [
+			"GraphDO"
+		],
+		"file": "src/do/graph-do.ts",
+		"uses": [
+			"storage.sql.exec",
+			"storage.transactionSync",
+			"storage.get",
+			"storage.put",
+			"acceptWebSocket",
+			"getWebSockets"
+		]
+	}
+}

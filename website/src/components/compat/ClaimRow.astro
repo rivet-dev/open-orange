@@ -1,7 +1,8 @@
 ---
-// One claim of the truth table. The row shows status, what Cloudflare does,
-// what OpenOrange does, and how many recorded results pass. Opening it shows
-// why, what to do, and every result with its error.
+// One claim of the truth table. The row shows status, how many recorded
+// results pass, and the start of what OpenOrange does. Opening it shows what
+// Cloudflare and OpenOrange each do, why, what to do, and every result with its
+// error.
 import Row from './Row.astro';
 import Chip from './Chip.astro';
 import ResultCount from './ResultCount.astro';
@@ -25,11 +26,18 @@ const s = CLAIM_LABEL[claim.status];
 	) : (
 		<span slot="name" class="row-name" set:html={inline(claim.title)} />
 	)}
-	<span slot="a" class="row-text-faint" set:html={claim.cloudflare ? inline(claim.cloudflare) : ''} />
-	<span slot="b" class="row-text" set:html={inline(claim.orange)} />
+	<span slot="a" class="row-preview" set:html={inline(claim.orange)} />
 	<ResultCount slot="end" evidence={claim.evidence} />
 
 	<dl>
+		{claim.cloudflare ? (
+			<>
+				<dt>On Cloudflare</dt>
+				<dd set:html={inline(claim.cloudflare)} />
+			</>
+		) : null}
+		<dt>On OpenOrange</dt>
+		<dd class="text-ink" set:html={inline(claim.orange)} />
 		{claim.why ? (
 			<>
 				<dt>Why</dt>

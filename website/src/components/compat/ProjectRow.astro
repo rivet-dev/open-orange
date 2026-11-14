@@ -13,6 +13,7 @@ const { project: p } = Astro.props;
 const s = PROJECT_LABEL[p.status];
 const t = TONE_CLASS[s.tone];
 const causes = [...new Set(p.failures.map((f) => f.ownerLabel))];
+const needsSecrets = p.status === 'needs-secrets' && p.secrets.length > 0;
 const stepsPercent = p.steps.total === 0 ? 0 : (p.steps.pass / p.steps.total) * 100;
 const classes = p.durableObjects.classes.length;
 ---
@@ -23,22 +24,24 @@ const classes = p.durableObjects.classes.length;
 	<span slot="a" class="row-text-faint">
 		{fmt(p.stars)} stars · {classes} {classes === 1 ? 'class' : 'classes'} · {p.changes.length === 0 ? 'unmodified' : `${p.changes.length} ${p.changes.length === 1 ? 'change' : 'changes'}`}
 	</span>
-	<span slot="b" class="flex flex-wrap gap-1.5">
-		{p.status === 'needs-secrets' && p.secrets.length ? <span class="text-[12.5px] text-ink-faint">Needs {p.secrets.join(', ')}</span> : null}
-		{causes.map((c) => (
-			<span class="tip" tabindex="0">
-				<span class="chip tone-fail">{c}</span>
-				<span class="tip-body" role="tooltip">
-					{p.failures.filter((f) => f.ownerLabel === c).map((f) => (
-						<span class="mb-2 block last:mb-0">
-							<span class="block text-white">{f.step}</span>
-							<span class="mono">{f.error}</span>
-						</span>
-					))}
+	{needsSecrets || causes.length ? (
+		<span slot="b" class="flex flex-wrap gap-1.5">
+			{needsSecrets ? <span class="text-[12.5px] text-ink-faint">Needs {p.secrets.join(', ')}</span> : null}
+			{causes.map((c) => (
+				<span class="tip" tabindex="0">
+					<span class="chip tone-fail">{c}</span>
+					<span class="tip-body" role="tooltip">
+						{p.failures.filter((f) => f.ownerLabel === c).map((f) => (
+							<span class="mb-2 block last:mb-0">
+								<span class="block text-white">{f.step}</span>
+								<span class="mono">{f.error}</span>
+							</span>
+						))}
+					</span>
 				</span>
-			</span>
-		))}
-	</span>
+			))}
+		</span>
+	) : null}
 	<span slot="end" class="flex items-center gap-2.5 md:justify-end">
 		<span class="h-1.5 w-16 overflow-hidden rounded-full bg-ink/10"><span class={`block h-full ${t.bar}`} style={`width:${stepsPercent}%`}></span></span>
 		<span class="row-num">{p.steps.pass}/{p.steps.total}</span>

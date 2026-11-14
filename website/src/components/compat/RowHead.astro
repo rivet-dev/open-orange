@@ -1,16 +1,23 @@
 ---
-// Column header for a stack of `Row`s, on the same grid.
+// Column header for a stack of `Row`s, which go in the default slot. It names
+// the name and end columns. `a` and `b` label those slots in every row; leave
+// them out when the rows put no label on them.
 interface Props {
-	status?: string;
 	name: string;
-	a: string;
-	b: string;
+	a?: string;
+	b?: string;
 	end: string;
 }
 
-const { status = 'Status', name, a, b, end } = Astro.props;
+const { name, a, b, end } = Astro.props;
+const labels = [a && `--row-a: ${JSON.stringify(a)}`, b && `--row-b: ${JSON.stringify(b)}`].filter(Boolean).join('; ');
 ---
 
-<div class="row-cols row-head" aria-hidden="true">
-	<span></span><span>{status}</span><span>{name}</span><span>{a}</span><span>{b}</span><span>{end}</span>
+<div class={labels ? 'row-labelled' : undefined} style={labels || undefined}>
+	<div class="row-head" aria-hidden="true">
+		<div class="row-cols">
+			<span></span><span></span><span>{name}</span><span></span><span></span><span>{end}</span>
+		</div>
+	</div>
+	<slot />
 </div>

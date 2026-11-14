@@ -20,7 +20,6 @@ import {
 	CLAIM_LABEL,
 	CONFORMANCE,
 	DO_FAILING,
-	GAINED,
 	HISTORY_RUNS,
 	MATRIX,
 	MATRIX_CATEGORIES,
@@ -46,7 +45,7 @@ import {
 	type ProjectStatus,
 	type TestRow,
 } from '@/data/conformance';
-import { BINDINGS, BINDING_SLUG_BY_CLAIM, BINDING_SLUG_BY_MATRIX } from '@/data/bindings';
+import { BINDINGS, BINDING_SLUG_BY_CLAIM, BINDING_SLUG_BY_MATRIX, bindingPage } from '@/data/bindings';
 import { DOCS_PAGES } from '@/data/docs-pages';
 
 const { totals } = SUMMARY;
@@ -60,7 +59,7 @@ const failing = totals.all.total - totals.all.pass;
 /** Notices are claims about features on the way; they lead the areas. */
 const areas: Area[] = [
 	...(TRUTH.notices.length
-		? [{ id: 'coming-soon', title: 'Coming soon', summary: 'On the roadmap. Each row says what happens today and what to do until it lands.', claims: TRUTH.notices }]
+		? [{ id: 'coming-soon', title: 'Coming soon', summary: 'On the roadmap. Open a row for what to do until it lands.', claims: TRUTH.notices }]
 		: []),
 	...TRUTH.areas,
 ];
@@ -82,8 +81,12 @@ const matrixStatuses = (Object.keys(MATRIX_LABEL) as MatrixStatus[]).map((id) =>
 
 const sortedProjects = [...TRUTH.projects].sort((a, b) => b.stars - a.stars);
 
-const bindingName = new Map(BINDINGS.map((b) => [b.slug, b.product.product]));
-const bindingLink = (slug: string | undefined) => (slug ? { href: `/docs/bindings/#${slug}`, name: bindingName.get(slug) ?? slug } : undefined);
+// A row's name links straight to its binding's own page, not via the overview.
+const bindingBySlug = new Map(BINDINGS.map((b) => [b.slug, b]));
+const bindingLink = (slug: string | undefined) => {
+	const b = slug ? bindingBySlug.get(slug) : undefined;
+	return b ? { href: bindingPage(b) ?? `/docs/bindings/#${b.slug}`, name: b.product.product } : undefined;
+};
 
 const emulated = TRUTH.emulatedHibernation;
 const cloud = TRUTH.cloud;
@@ -175,17 +178,16 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 		<div class="mt-16 space-y-16">
 			{areas.map((a) => (
 				<div id={`area-${a.id}`} class="scroll-mt-24">
-					<div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-10">
-						<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">{a.title}</h3>
-						<p class="text-[15px] leading-[1.6] text-ink-soft" set:html={inline(a.summary)} />
-					</div>
+					<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">{a.title}</h3>
+					<p class="mt-1 text-[14.5px] leading-[1.5] text-ink-faint" set:html={inline(a.summary)} />
 					<div class="mt-6">
-						<RowHead name={a.id === 'bindings' ? 'Binding' : 'Feature'} a="On Cloudflare" b="On OpenOrange" end="Results" />
-						<div class="rows">
-							{a.claims.map((c) => (
-								<ClaimRow claim={c} binding={bindingLink(BINDING_SLUG_BY_CLAIM[c.id])} />
-							))}
-						</div>
+						<RowHead name={a.id === 'bindings' ? 'Binding' : 'Feature'} end="Results">
+							<div class="rows">
+								{a.claims.map((c) => (
+									<ClaimRow claim={c} binding={bindingLink(BINDING_SLUG_BY_CLAIM[c.id])} />
+								))}
+							</div>
+						</RowHead>
 					</div>
 				</div>
 			))}
@@ -198,12 +200,13 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 			<p class="mt-3 max-w-2xl text-[16px] leading-[1.6] text-ink-soft">Where OpenOrange does more than the platform allows. Each row is a probe that ran.</p>
 		</div>
 		<div class="mt-12">
-			<RowHead name="Limit" a="On Cloudflare" b="On OpenOrange" end="Results" />
-			<div class="rows">
-				{TRUTH.beyond.map((c) => (
-					<ClaimRow claim={c} />
-				))}
-			</div>
+			<RowHead name="Limit" end="Results">
+				<div class="rows">
+					{TRUTH.beyond.map((c) => (
+						<ClaimRow claim={c} />
+					))}
+				</div>
+			</RowHead>
 		</div>
 	</section>
 
@@ -213,21 +216,22 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 			<p class="mt-3 max-w-2xl text-[16px] leading-[1.6] text-ink-soft">The unit that adds capacity, and what runs one of them.</p>
 		</div>
 		<div class="mt-12">
-			<RowHead name="Binding" a="Scales by" b="What runs one unit" end="Results" />
-			<div class="rows">
-				{TRUTH.scaling.map((r) => {
-					const s = CLAIM_LABEL[r.status];
-					return (
-						<Row>
-							<Chip slot="status" tone={s.tone} label={s.label} />
-							<span slot="name" class="row-name">{r.binding}</span>
-							<span slot="a" class="row-text text-ink">{r.scalesBy}</span>
-							<span slot="b" class="text-[13.5px] leading-snug text-ink-soft" set:html={inline(r.detail)} />
-							<ResultCount slot="end" evidence={r.evidence} />
-						</Row>
-					);
-				})}
-			</div>
+			<RowHead name="Binding" a="Scales by" b="What runs one unit" end="Results">
+				<div class="rows">
+					{TRUTH.scaling.map((r) => {
+						const s = CLAIM_LABEL[r.status];
+						return (
+							<Row>
+								<Chip slot="status" tone={s.tone} label={s.label} />
+								<span slot="name" class="row-name">{r.binding}</span>
+								<span slot="a" class="row-text text-ink">{r.scalesBy}</span>
+								<span slot="b" class="text-[13.5px] leading-snug text-ink-soft" set:html={inline(r.detail)} />
+								<ResultCount slot="end" evidence={r.evidence} />
+							</Row>
+						);
+					})}
+				</div>
+			</RowHead>
 		</div>
 	</section>
 
@@ -254,12 +258,13 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 		</div>
 
 		<div class="mt-6">
-			<RowHead name="Project" a="Size" b="Why a step failed" end="Steps passed" />
-			<div class="rows" data-project-list>
-				{sortedProjects.map((p) => (
-					<ProjectRow project={p} />
-				))}
-			</div>
+			<RowHead name="Project" a="Size" b="Why a step failed" end="Steps passed">
+				<div class="rows" data-project-list>
+					{sortedProjects.map((p) => (
+						<ProjectRow project={p} />
+					))}
+				</div>
+			</RowHead>
 		</div>
 
 		<details class="mt-8" id="emulated-hibernation">
@@ -295,65 +300,62 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 			<p class="mt-3 max-w-2xl text-[16px] leading-[1.6] text-ink-soft" set:html={inline(cloud.notes[0] ?? '')} />
 		</div>
 		<div class="mt-12">
-			<RowHead name="Project" a="Deployed with" b="What it is" end="Steps" />
-			<div class="rows">
-				{cloud.projects.map((p) => {
-					const ran = p.counts.pass + p.counts.fail;
-					const tone = p.counts.fail === 0 ? 'pass' : p.counts.pass === 0 ? 'fail' : 'warn';
-					const skipped = [p.counts.notApplicable ? `${p.counts.notApplicable} not applicable` : '', p.counts.needsSecrets ? `${p.counts.needsSecrets} needs secrets` : ''].filter(Boolean);
-					return (
-						<Row id={`cloud-${p.project}`}>
-							<Chip slot="status" tone={tone} label={tone === 'pass' ? 'Works' : tone === 'warn' ? 'Partial' : 'Fails'} />
-							<span slot="name" class="row-name">{p.project}<span class="row-meta font-normal">{p.repo}</span></span>
-							<span slot="a" class="row-text-faint"><code class="font-mono text-[12.5px]">{p.deployedWith}</code> · {p.plan} cluster · {dateOf(p.ranAt)}</span>
-							<span slot="b" class="row-text" set:html={inline(p.what)} />
-							<span slot="end" class="row-num md:text-right">
-								<span class={`block ${TONE_CLASS[tone].text}`}>{p.counts.pass}/{ran} pass</span>
-								{skipped.map((s) => <span class="block whitespace-nowrap text-ink-faint">{s}</span>)}
-							</span>
-							<dl>
-								<dt>What ran</dt>
-								<dd set:html={inline(p.ran)} />
-								{p.shortfalls.length ? (
-									<>
-										<dt>Where it falls short</dt>
-										<dd>
-											<ul class="list-disc space-y-1.5 pl-5">
-												{p.shortfalls.map((s) => <li set:html={inline(s)} />)}
-											</ul>
-										</dd>
-									</>
-								) : null}
-								<dt>Steps</dt>
-								<dd>
-									<ul class="results">
-										{p.steps.map((s) => {
-											const t = s.status === 'pass' ? 'pass' : s.status === 'fail' ? 'fail' : 'none';
-											const label = s.status === 'pass' ? 'Pass' : s.status === 'fail' ? 'Fail' : s.status === 'needs-secrets' ? 'Needs secrets' : 'Not applicable';
-											return (
-												<li>
-													<span class="flex min-w-0 items-start gap-2">
-														<span class={`${TONE_CLASS[t].dot} mt-1.5`} aria-hidden="true"></span>
-														<span class="min-w-0">
-															<span class="block text-ink" set:html={inline(s.name)} />
-															{s.note ? <span class="block text-ink-faint" set:html={inline(s.note)} /> : null}
-															{s.secrets?.length ? <span class="block text-ink-faint">Needs {s.secrets.join(', ')}</span> : null}
-															{s.error ? <span class="err">{s.error}</span> : null}
+			<RowHead name="Project" a="Deployed with" b="What it is" end="Steps">
+				<div class="rows">
+					{cloud.projects.map((p) => {
+						const ran = p.counts.pass + p.counts.fail;
+						const tone = p.counts.fail === 0 ? 'pass' : p.counts.pass === 0 ? 'fail' : 'warn';
+						return (
+							<Row id={`cloud-${p.project}`}>
+								<Chip slot="status" tone={tone} label={tone === 'pass' ? 'Works' : tone === 'warn' ? 'Partial' : 'Fails'} />
+								<span slot="name" class="row-name">{p.project}<span class="row-meta font-normal">{p.repo}</span></span>
+								<span slot="a" class="row-text-faint"><code class="font-mono text-[12.5px]">{p.deployedWith}</code> · {p.plan} cluster · {dateOf(p.ranAt)}</span>
+								<span slot="b" class="row-text" set:html={inline(p.what)} />
+								<span slot="end" class={`row-num whitespace-nowrap ${TONE_CLASS[tone].text}`}>{p.counts.pass}/{ran} pass</span>
+								<dl>
+									<dt>What ran</dt>
+									<dd set:html={inline(p.ran)} />
+									{p.shortfalls.length ? (
+										<>
+											<dt>Where it falls short</dt>
+											<dd>
+												<ul class="list-disc space-y-1.5 pl-5">
+													{p.shortfalls.map((s) => <li set:html={inline(s)} />)}
+												</ul>
+											</dd>
+										</>
+									) : null}
+									<dt>Steps</dt>
+									<dd>
+										<ul class="results">
+											{p.steps.map((s) => {
+												const t = s.status === 'pass' ? 'pass' : s.status === 'fail' ? 'fail' : 'none';
+												const label = s.status === 'pass' ? 'Pass' : s.status === 'fail' ? 'Fail' : s.status === 'needs-secrets' ? 'Needs secrets' : 'Not applicable';
+												return (
+													<li>
+														<span class="flex min-w-0 items-start gap-2">
+															<span class={`${TONE_CLASS[t].dot} mt-1.5`} aria-hidden="true"></span>
+															<span class="min-w-0">
+																<span class="block text-ink" set:html={inline(s.name)} />
+																{s.note ? <span class="block text-ink-faint" set:html={inline(s.note)} /> : null}
+																{s.secrets?.length ? <span class="block text-ink-faint">Needs {s.secrets.join(', ')}</span> : null}
+																{s.error ? <span class="err">{s.error}</span> : null}
+															</span>
 														</span>
-													</span>
-													<span class={`whitespace-nowrap font-mono text-[12px] sm:text-right ${TONE_CLASS[t].text}`}>{label}</span>
-												</li>
-											);
-										})}
-									</ul>
-								</dd>
-								<dt>Source</dt>
-								<dd><a href={`https://github.com/${p.repo}/tree/${p.commit}`} class="link" rel="noopener">{p.repo}</a> at <code>{p.commit.slice(0, 7)}</code>{p.directory !== '.' ? <>, in <code>{p.directory}</code></> : null}.</dd>
-							</dl>
-						</Row>
-					);
-				})}
-			</div>
+														<span class={`whitespace-nowrap font-mono text-[12px] sm:text-right ${TONE_CLASS[t].text}`}>{label}</span>
+													</li>
+												);
+											})}
+										</ul>
+									</dd>
+									<dt>Source</dt>
+									<dd><a href={`https://github.com/${p.repo}/tree/${p.commit}`} class="link" rel="noopener">{p.repo}</a> at <code>{p.commit.slice(0, 7)}</code>{p.directory !== '.' ? <>, in <code>{p.directory}</code></> : null}.</dd>
+								</dl>
+							</Row>
+						);
+					})}
+				</div>
+			</RowHead>
 		</div>
 		{cloud.notes.length > 1 ? (
 			<details class="mt-8">
@@ -396,34 +398,47 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 		</dl>
 
 		<div class="mt-8">
-			<RowHead status={TEMPLATE_MODES[0].label} name="Template" a={TEMPLATE_MODES[1].label} b={TEMPLATE_MODES[2].label} end="Modes that work" />
-			<div class="rows">
-				{TEMPLATES.projects.map((p) => {
-					const [unchanged, build, probe] = TEMPLATE_MODES.map((m) => ({
-						now: TEMPLATE_LABEL[p.after[m.id]],
-						was: p.before[m.id] !== p.after[m.id] ? TEMPLATE_LABEL[p.before[m.id]].label : null,
-					}));
-					const works = TEMPLATE_MODES.filter((m) => p.after[m.id] === 'works').length;
-					const tone = works === TEMPLATE_MODES.length ? 'pass' : works === 0 ? 'fail' : 'warn';
-					return (
-						<Row id={`template-${p.project}`}>
-							<span slot="status" class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="w-32 text-[12.5px] text-ink-faint md:hidden">{TEMPLATE_MODES[0].label}</span><Chip tone={unchanged.now.tone} label={unchanged.now.label} />{unchanged.was ? <span class="text-[12.5px] text-ink-faint">was {unchanged.was}</span> : null}</span>
-							<span slot="name" class="row-name">{p.project}</span>
-							<span slot="a" class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="w-32 text-[12.5px] text-ink-faint md:hidden">{TEMPLATE_MODES[1].label}</span><Chip tone={build.now.tone} label={build.now.label} />{build.was ? <span class="text-[12.5px] text-ink-faint">was {build.was}</span> : null}</span>
-							<span slot="b" class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="w-32 text-[12.5px] text-ink-faint md:hidden">{TEMPLATE_MODES[2].label}</span><Chip tone={probe.now.tone} label={probe.now.label} />{probe.was ? <span class="text-[12.5px] text-ink-faint">was {probe.was}</span> : null}</span>
-							<span slot="end" class={`row-num ${TONE_CLASS[tone].text}`}>{works}/{TEMPLATE_MODES.length}</span>
-							<dl>
-								<dt>Flows tested</dt>
-								<dd set:html={inline(p.flows)} />
-								<dt>What still blocks</dt>
-								<dd set:html={p.blocker ? inline(p.blocker) : 'Nothing. Every mode works.'} />
-								<dt>Source</dt>
-								<dd><a href={p.url} class="link" rel="noopener">cloudflare/templates</a></dd>
-							</dl>
-						</Row>
-					);
-				})}
-			</div>
+			<RowHead name="Template" end="Modes that work">
+				<div class="rows">
+					{TEMPLATES.projects.map((p) => {
+						const modes = TEMPLATE_MODES.map((m) => ({
+							label: m.label,
+							now: TEMPLATE_LABEL[p.after[m.id]],
+							was: p.before[m.id] !== p.after[m.id] ? TEMPLATE_LABEL[p.before[m.id]].label : null,
+						}));
+						const works = TEMPLATE_MODES.filter((m) => p.after[m.id] === 'works').length;
+						const tone = works === TEMPLATE_MODES.length ? 'pass' : works === 0 ? 'fail' : 'warn';
+						return (
+							<Row id={`template-${p.project}`}>
+								<span slot="name" class="row-name">{p.project}</span>
+								<span slot="a" class="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-ink-soft">
+									{modes.map((m) => (
+										<span class="inline-flex items-center gap-1.5" title={m.now.label}>
+											<span class={TONE_CLASS[m.now.tone].dot} aria-hidden="true"></span>
+											{m.label}<span class="sr-only">: {m.now.label}</span>
+										</span>
+									))}
+								</span>
+								<span slot="end" class={`row-num ${TONE_CLASS[tone].text}`}>{works}/{TEMPLATE_MODES.length}</span>
+								<dl>
+									{modes.map((m) => (
+										<>
+											<dt>{m.label}</dt>
+											<dd class="flex flex-wrap items-center gap-x-2 gap-y-1"><Chip tone={m.now.tone} label={m.now.label} />{m.was ? <span class="text-[13px] text-ink-faint">was {m.was}</span> : null}</dd>
+										</>
+									))}
+									<dt>Flows tested</dt>
+									<dd set:html={inline(p.flows)} />
+									<dt>What still blocks</dt>
+									<dd set:html={p.blocker ? inline(p.blocker) : 'Nothing. Every mode works.'} />
+									<dt>Source</dt>
+									<dd><a href={p.url} class="link" rel="noopener">cloudflare/templates</a></dd>
+								</dl>
+							</Row>
+						);
+					})}
+				</div>
+			</RowHead>
 		</div>
 	</section>
 
@@ -435,9 +450,9 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 			</p>
 		</div>
 
-		<div class="mt-14 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-10">
+		<div class="mt-14">
 			<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">OpenOrange's own tests</h3>
-			<ul class="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-ink-soft md:pt-1.5">
+			<ul class="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-ink-soft">
 				<li class="flex items-center gap-2"><span class="inline-block size-2.5 rounded-[3px] bg-pass"></span>Passes</li>
 				{SYNTHETIC_FILES.some((f) => f.fresh) ? <li class="flex items-center gap-2"><span class="inline-block size-2.5 rounded-[3px] bg-pass/50"></span>Newly passing</li> : null}
 				<li class="flex items-center gap-2"><span class="inline-block size-2.5 rounded-[3px] bg-warn"></span>Fails, a known gap in the matrix</li>
@@ -459,39 +474,38 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 			))}
 		</ul>
 
-		<div class="mt-16 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-10">
+		<div class="mt-16">
 			<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">Still failing</h3>
-			<p class="text-[15px] leading-[1.6] text-ink-soft">
-				{doFailingCount} of {DO_FAILING.total}, upstream and OpenOrange's own. A <span class="font-medium text-ink">Known gap</span> is a difference the feature matrix records; its row says why. Open a row for the error.
-			</p>
+			<p class="mt-1 text-[14.5px] leading-[1.5] text-ink-faint">{doFailingCount} of {DO_FAILING.total} tests. A <span class="font-medium text-ink-soft">Known gap</span> is a difference the feature matrix records.</p>
 		</div>
 		<div class="mt-6">
-			<RowHead name="Test" a="Cause" b="What OpenOrange does" end="Matrix row" />
-			<div class="rows">
-				{DO_FAILING.tests.map(({ test: t, entry }) => (
-					<Row id={`do-${t.file}-${t.test}`}>
-						<Chip slot="status" tone={entry ? 'warn' : 'fail'} label={entry ? 'Known gap' : 'Fails'} />
-						<span slot="name" class="row-name">{t.test}<span class="row-meta font-mono font-normal">{shortFile(t.file)}</span></span>
-						<span slot="a" class="row-text-faint">{t.cause ?? '—'}</span>
-						<span slot="b" class="row-text" set:html={entry ? inline(entry.orange) : ''} />
-						{entry ? (
-							<a slot="end" href={`#${entry.id}`} class="link text-[13px] no-underline hover:underline" set:html={inline(entry.name)} />
-						) : (
-							<span slot="end" class="row-num text-ink-faint">—</span>
-						)}
-						<dl>
-							<dt>Test</dt>
-							<dd><code>{t.file} › {t.test}</code></dd>
-							{t.error ? (
-								<>
-									<dt>Error</dt>
-									<dd><span class="err">{t.error}</span></dd>
-								</>
-							) : null}
-						</dl>
-					</Row>
-				))}
-			</div>
+			<RowHead name="Test" a="Cause" b="What OpenOrange does" end="Matrix row">
+				<div class="rows">
+					{DO_FAILING.tests.map(({ test: t, entry }) => (
+						<Row id={`do-${t.file}-${t.test}`}>
+							<Chip slot="status" tone={entry ? 'warn' : 'fail'} label={entry ? 'Known gap' : 'Fails'} />
+							<span slot="name" class="row-name">{t.test}<span class="row-meta font-mono font-normal">{shortFile(t.file)}</span></span>
+							<span slot="a" class="row-text-faint">{t.cause ?? '—'}</span>
+							<span slot="b" class="row-text" set:html={entry ? inline(entry.orange) : ''} />
+							{entry ? (
+								<a slot="end" href={`#${entry.id}`} class="link text-[13px] no-underline hover:underline" set:html={inline(entry.name)} />
+							) : (
+								<span slot="end" class="row-num text-ink-faint">—</span>
+							)}
+							<dl>
+								<dt>Test</dt>
+								<dd><code>{t.file} › {t.test}</code></dd>
+								{t.error ? (
+									<>
+										<dt>Error</dt>
+										<dd><span class="err">{t.error}</span></dd>
+									</>
+								) : null}
+							</dl>
+						</Row>
+					))}
+				</div>
+			</RowHead>
 		</div>
 	</section>
 
@@ -510,12 +524,12 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 
 		{CHANGES ? (
 			<div class="mt-16">
-				<div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-10">
+				<div>
 					<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">Since the previous run</h3>
-					<p class="text-[15px] leading-[1.6] text-ink-soft">
-						Compared test by test with {CHANGES.since.name} (<code class="code-chip">{CHANGES.since.sha}</code>, {CHANGES.since.date}): {fmt(CHANGES.score.before.pass)} of {fmt(CHANGES.score.before.total)} then, {fmt(CHANGES.score.now.pass)} of {fmt(CHANGES.score.now.total)} now.
+					<p class="mt-1 text-[14.5px] leading-[1.5] text-ink-faint">
+						{fmt(CHANGES.score.before.pass)} of {fmt(CHANGES.score.before.total)} on {CHANGES.since.date}, {fmt(CHANGES.score.now.pass)} of {fmt(CHANGES.score.now.total)} now.
 						{CHANGES.joinedScore ? ` ${CHANGES.joinedScore} tests joined the score.` : ''}
-						{CHANGES.removed ? ` ${CHANGES.removed} scored tests are no longer in the suite.` : ''}
+						{CHANGES.removed ? ` ${CHANGES.removed} scored tests left the suite.` : ''}
 					</p>
 				</div>
 				<div class="mt-8 grid gap-10 md:grid-cols-3 md:gap-14">
@@ -556,11 +570,9 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 		) : null}
 
 		<div class="mt-16">
-			<div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-10">
+			<div>
 				<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">By area, since the first run</h3>
-				<p class="text-[15px] leading-[1.6] text-ink-soft">
-					workerd's suite only.{GAINED ? ` ${fmt(totals.upstream.pass)} of ${fmt(totals.upstream.total)} pass, ${GAINED.count >= 0 ? '+' : ''}${fmt(GAINED.count)} since ${GAINED.since}, the first run that counted tests the way this one does.` : ''} Each area compares with its own first comparable run.
-				</p>
+				<p class="mt-1 text-[14.5px] leading-[1.5] text-ink-faint">workerd's suite only. Each area starts at its own first comparable run.</p>
 			</div>
 			<ul class="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-ink-soft">
 				<li class="flex items-center gap-2"><span class="inline-block size-2.5 rounded-[3px] bg-pass/40"></span>Passed on the first run</li>
@@ -588,51 +600,50 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 		</div>
 
 		<div class="mt-16">
-			<div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] md:gap-10">
+			<div>
 				<h3 class="text-[1.125rem] font-medium leading-snug tracking-[-0.015em]">Every run</h3>
-				<p class="text-[15px] leading-[1.6] text-ink-soft">
-					{RUN_LIST.length} runs of workerd's suite, newest first, including {RUN_LIST.filter((r) => r.manual).length} early ones recorded by hand. Open a run for its note.
-				</p>
+				<p class="mt-1 text-[14.5px] leading-[1.5] text-ink-faint">{RUN_LIST.length} runs of workerd's suite, newest first.</p>
 			</div>
 			<div class="mt-6">
-				<RowHead status="" name="Run" a="OpenOrange · date" b="RivetKit" end="workerd tests pass" />
-				{[RUN_LIST.slice(0, runsShown), RUN_LIST.slice(runsShown)].map((group, gi) => {
-					const rows = group.map((r) => (
-						<Row>
-							{r.latest ? <Chip slot="status" tone="pass" label="Latest" /> : r.manual ? <Chip slot="status" tone="none" label="By hand" /> : <span slot="status"></span>}
-							<span slot="name" class="row-name">{r.name}</span>
-							<span slot="a" class="row-text-faint">{r.sha ? <code class="font-mono text-[12.5px] text-ink-soft">{r.sha}</code> : 'no commit'} · {r.date}</span>
-							<span slot="b" class="row-text-faint font-mono text-[12px]">{r.rivetkit ?? '—'}</span>
-							<span slot="end" class="flex items-center gap-2.5 md:justify-end">
-								<span class="h-1.5 w-12 overflow-hidden rounded-full bg-ink/10"><span class="block h-full bg-pass" style={`width:${r.percent}%`}></span></span>
-								<span class="row-num whitespace-nowrap">{fmt(r.pass)} · {r.percent}%</span>
-							</span>
-							<dl>
-								{r.note ? (
-									<>
-										<dt>Note</dt>
-										<dd set:html={inline(r.note)} />
-									</>
-								) : null}
-								<dt>Counted</dt>
-								<dd>
-									{fmt(r.pass)} of {fmt(r.total)} workerd tests pass{r.manual ? ', as recorded by hand' : ''}.
-									{r.remapped.total ? ` ${r.remapped.total} of them ran with /tmp remapped and count as neither pass nor fail; ${r.remapped.pass} of those pass.` : ''}
-								</dd>
-							</dl>
-						</Row>
-					));
-					return gi === 0 ? (
-						<div class="rows">{rows}</div>
-					) : group.length ? (
-						<details class="group/runs">
-							<summary class="cursor-pointer border-b border-line px-2 py-3.5 text-[14px] font-medium text-ink-soft hover:text-ink">
-								<span class="group-open/runs:hidden">Show {group.length} earlier runs</span><span class="hidden group-open/runs:inline">Hide earlier runs</span>
-							</summary>
-							<div class="rows border-t-0">{rows}</div>
-						</details>
-					) : null;
-				})}
+				<RowHead name="Run" a="OpenOrange · date" b="RivetKit" end="workerd tests pass">
+					{[RUN_LIST.slice(0, runsShown), RUN_LIST.slice(runsShown)].map((group, gi) => {
+						const rows = group.map((r) => (
+							<Row>
+								{r.latest ? <Chip slot="status" tone="pass" label="Latest" /> : r.manual ? <Chip slot="status" tone="none" label="By hand" /> : <span slot="status"></span>}
+								<span slot="name" class="row-name">{r.name}</span>
+								<span slot="a" class="row-text-faint">{r.sha ? <code class="font-mono text-[12.5px] text-ink-soft">{r.sha}</code> : 'no commit'} · {r.date}</span>
+								<span slot="b" class="row-text-faint font-mono text-[12px]">{r.rivetkit ?? '—'}</span>
+								<span slot="end" class="flex items-center gap-2.5 md:justify-end">
+									<span class="h-1.5 w-12 overflow-hidden rounded-full bg-ink/10"><span class="block h-full bg-pass" style={`width:${r.percent}%`}></span></span>
+									<span class="row-num whitespace-nowrap">{fmt(r.pass)} · {r.percent}%</span>
+								</span>
+								<dl>
+									{r.note ? (
+										<>
+											<dt>Note</dt>
+											<dd set:html={inline(r.note)} />
+										</>
+									) : null}
+									<dt>Counted</dt>
+									<dd>
+										{fmt(r.pass)} of {fmt(r.total)} workerd tests pass{r.manual ? ', as recorded by hand' : ''}.
+										{r.remapped.total ? ` ${r.remapped.total} of them ran with /tmp remapped and count as neither pass nor fail; ${r.remapped.pass} of those pass.` : ''}
+									</dd>
+								</dl>
+							</Row>
+						));
+						return gi === 0 ? (
+							<div class="rows">{rows}</div>
+						) : group.length ? (
+							<details class="group/runs">
+								<summary class="cursor-pointer border-b border-line px-2 py-3.5 text-[14px] font-medium text-ink-soft hover:text-ink">
+									<span class="group-open/runs:hidden">Show {group.length} earlier runs</span><span class="hidden group-open/runs:inline">Hide earlier runs</span>
+								</summary>
+								<div class="rows border-t-0">{rows}</div>
+							</details>
+						) : null;
+					})}
+				</RowHead>
 			</div>
 		</div>
 	</section>
@@ -674,17 +685,18 @@ const heading = (slug: string) => toc.find((h) => h.slug === slug)?.text;
 		</dl>
 
 		<div class="mt-8">
-			<RowHead name="Feature" a="On Cloudflare" b="On OpenOrange" end="Evidence" />
-			<div class="rows" data-matrix-list>
-				{MATRIX_CATEGORIES.map((c) => (
-					<>
-						<p class="border-b border-line bg-paper-mid/60 px-2 py-2 text-[12.5px] font-semibold text-ink-soft" data-category-heading={c.id}>{c.label}</p>
-						{c.entries.map((e) => (
-							<MatrixRow entry={e} binding={bindingLink(BINDING_SLUG_BY_MATRIX.get(e.id))} />
-						))}
-					</>
-				))}
-			</div>
+			<RowHead name="Feature" end="Evidence">
+				<div class="rows" data-matrix-list>
+					{MATRIX_CATEGORIES.map((c) => (
+						<>
+							<p class="border-b border-line bg-paper-mid/60 px-2 py-2 text-[12.5px] font-semibold text-ink-soft" data-category-heading={c.id}>{c.label}</p>
+							{c.entries.map((e) => (
+								<MatrixRow entry={e} binding={bindingLink(BINDING_SLUG_BY_MATRIX.get(e.id))} />
+							))}
+						</>
+					))}
+				</div>
+			</RowHead>
 		</div>
 		<p class="caption mt-6 hidden" data-matrix-empty>No feature matches.</p>
 	</section>

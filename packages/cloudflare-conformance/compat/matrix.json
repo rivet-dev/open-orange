@@ -9459,17 +9459,23 @@
 			"id": "outbound-websocket-fetch",
 			"category": "fetch",
 			"name": "Outbound WebSocket through fetch()",
-			"status": "unsupported",
+			"status": "partial",
 			"cloudflare": "fetch() with Upgrade: websocket returns a 101 response whose webSocket property is the client end.",
-			"orange": "fetch() rejects with TypeError: fetch failed, caused by invalid upgrade header from undici.",
-			"notes": "The error does not say that Orange lacks the feature.",
-			"workaround": "Use new WebSocket(url).",
-			"unverified": "The undici error was reproduced with undici 8.10.2 directly, not through a running Worker.",
+			"orange": "fetch() opens the WebSocket, couples it to a WebSocketPair, and returns the other end in a 101 response. An origin that does not upgrade answers with its own response, and a redirect is followed unless the request has redirect: manual.",
+			"notes": "Compression is never negotiated, and the offered subprotocols are sent joined by a comma without spaces. webSocket.protocol and webSocket.extensions are null, as for every WebSocketPair endpoint in Orange, where Cloudflare has empty strings. Measured against Cloudflare on 2026-11-13.",
 			"evidence": [
 				{
 					"kind": "code",
 					"path": "packages/runtime-node/src/globals/http.ts",
-					"lines": "825-848"
+					"lines": "840-951"
+				},
+				{
+					"kind": "code",
+					"path": "packages/runtime-node/src/globals/fetch-websocket.test.ts"
+				},
+				{
+					"kind": "code",
+					"path": "src/runtime/fetch-websocket.test.ts"
 				}
 			]
 		},

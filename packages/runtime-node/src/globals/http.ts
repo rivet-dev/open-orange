@@ -16,10 +16,13 @@ import {
 	URLSearchParams as NodeURLSearchParams,
 } from "node:url";
 import { URL, URLSearchParams } from "./url.js";
-import { WebSocket } from "./websocket.js";
+import { coupleWebSocket, WebSocket, WebSocketPair } from "./websocket.js";
 import { waitForOutputGate } from "../internal/output-gate.js";
 import { isRequestSignalPassthrough } from "../internal/request-signal-passthrough.js";
 import { currentGlobalOutbound, globalOutboundBlockedError } from "../internal/global-outbound.js";
+import { connectNetworkWebSocket } from "../internal/network-websockets.js";
+import type { IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
 import type {
 	BodyInit as UndiciBodyInit,
 	RequestInit as UndiciRequestInit,
@@ -833,6 +836,120 @@ export function setResponseUrlList(response: Response, urls: readonly string[]):
 	);
 }
 
+// The WebSocket client writes these headers of the opening handshake itself.
+const webSocketHandshakeHeaders: ReadonlySet<string> = new Set([
+	"connection",
+	"content-length",
+	"host",
+	"keep-alive",
+	"sec-websocket-accept",
+	"sec-websocket-extensions",
+	"sec-websocket-key",
+	"sec-websocket-protocol",
+	"sec-websocket-version",
+	"transfer-encoding",
+	"upgrade",
+]);
+
+const redirectStatuses: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+// Undici's limit for an ordinary fetch().
+const maxWebSocketRedirects = 20;
+
+function isWebSocketUpgrade(request: Request): boolean {
+	return request.headers.get("upgrade")?.toLowerCase() === "websocket";
+}
+
+// The response of an origin that did not upgrade, which fetch() returns as it is.
+function refusedUpgradeResponse(refused: IncomingMessage): Response {
+	const status = refused.statusCode ?? 502;
+	const headers = new Headers();
+	for (let index = 0; index + 1 < refused.rawHeaders.length; index += 2) {
+		headers.append(refused.rawHeaders[index] ?? "", refused.rawHeaders[index + 1] ?? "");
+	}
+	const init = { headers, status, statusText: refused.statusMessage ?? "" };
+	if (nullBodyStatuses.has(status)) {
+		refused.resume();
+		return new Response(null, init);
+	}
+	const body: ReadableStream<Uint8Array> = Readable.toWeb(refused);
+	return new Response(body, init);
+}
+
+// fetch() with `Upgrade: websocket` opens a client WebSocket, as workerd does.
+// The 101 response carries it in `webSocket`, for the Worker to accept() or to
+// return to its own client. An origin that does not upgrade answers with its
+// own response, and a redirect is followed unless the request says otherwise.
+// The request's method and body are not sent, and a ws: or wss: URL is
+// refused. Measured on Cloudflare on 2026-11-13.
+// https://developers.cloudflare.com/workers/examples/websockets/#write-a-websocket-client
+// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/http.c%2B%2B#L1624-L1655
+// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/http.c%2B%2B#L1833-L1840
+async function fetchWebSocket(request: Request): Promise<Response> {
+	const { signal } = request;
+	if (signal.aborted) throw signal.reason;
+	const headers: Record<string, string> = {};
+	for (const [name, value] of request.headers) {
+		// A proxied request carries the CF-Connecting-IP that Orange set, and an
+		// origin behind Cloudflare answers a request that has it with 403.
+		if (!webSocketHandshakeHeaders.has(name) && name !== "cf-connecting-ip") headers[name] = value;
+	}
+	const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
+		.split(",")
+		.map((protocol) => protocol.trim())
+		.filter((protocol) => protocol !== "");
+	const urls = [request.url];
+	for (;;) {
+		const url = new URL(urls.at(-1) ?? request.url);
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			throw new TypeError(`Fetch API cannot load: ${url.href}`);
+		}
+		url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+		const pair = new WebSocketPair();
+		const connection = await connectNetworkWebSocket(url.href, {
+			headers,
+			// The origin can send at once, so the pair must take messages before this function continues.
+			onOpen(networkSocket) {
+				networkSocket.binaryType = "arraybuffer";
+				coupleWebSocket(pair[1], networkSocket);
+			},
+			protocols,
+		});
+		if (connection.kind === "rejected") {
+			const refused = connection.response;
+			const location = refused.headers.location;
+			const redirect = redirectStatuses.has(refused.statusCode ?? 0) && location !== undefined;
+			if (!redirect || request.redirect === "manual") return refusedUpgradeResponse(refused);
+			refused.resume();
+			if (request.redirect === "error" || urls.length > maxWebSocketRedirects) {
+				throw new TypeError("fetch failed");
+			}
+			urls.push(new URL(location, urls.at(-1)).href);
+			continue;
+		}
+		const networkSocket = connection.webSocket;
+		if (signal.aborted) {
+			networkSocket.terminate();
+			throw signal.reason;
+		}
+		// An abort after the response ends the connection, like workerd's AbortableWebSocket.
+		const abort = (): void => networkSocket.terminate();
+		signal.addEventListener("abort", abort, { once: true });
+		// Workerd does not hibernate an object while a WebSocket that it opened is open.
+		const ended = startOutboundWork("outbound-websocket");
+		networkSocket.addEventListener("close", () => {
+			signal.removeEventListener("abort", abort);
+			ended?.();
+		});
+		const response = new Response(null, {
+			headers: connection.headers,
+			status: 101,
+			webSocket: pair[0],
+		});
+		if (urls.length > 1) setResponseUrlList(response, urls);
+		return response;
+	}
+}
+
 export async function fetch<Cf = unknown>(
 	input: RequestInfo<unknown, Cf> | URL,
 	init?: RequestInit<Cf>,
@@ -849,6 +966,7 @@ export async function fetch<Cf = unknown>(
 		const outputLock = waitForOutputGate();
 		if (outputLock !== undefined) await outputLock;
 		if (outbound !== undefined) return await outbound.fetch(request);
+		if (isWebSocketUpgrade(request)) return await fetchWebSocket(request);
 		let outgoing = requestFor(request);
 		const body = outgoing.body;
 		// Undici sends only Uint8Array chunks, so a Worker stream body is read

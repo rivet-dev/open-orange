@@ -838,7 +838,7 @@ function dockerfile(options: DockerfileOptions): string {
 	];
 	return [
 		generatedDockerfileHeader,
-		"FROM --platform=linux/amd64 node:24-slim AS orange",
+		"FROM node:24-slim AS orange",
 		"WORKDIR /orange",
 		// The dependency layer stays cached until Orange's dependencies change.
 		`COPY ${orangeContext}/package.json ${orangeContext}/pnpm-lock.yaml ./`,
@@ -847,7 +847,7 @@ function dockerfile(options: DockerfileOptions): string {
 		"RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile --prod --ignore-scripts",
 		`COPY ${orangeContext}/dist ./dist`,
 		"",
-		"FROM --platform=linux/amd64 node:24-slim",
+		"FROM node:24-slim",
 		"COPY --from=orange /orange /orange",
 		"RUN ln -s /orange/dist/bin.js /usr/local/bin/orange",
 		"WORKDIR /app",

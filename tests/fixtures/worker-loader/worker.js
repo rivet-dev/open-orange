@@ -24,6 +24,9 @@ const filesystemCode = {
 // Reports what a dynamic Worker can see of any other dynamic Worker: a file,
 // a global, process.env, and the VM's Worker roots. Then it leaves its own,
 // and tries to change Orange's runtime, which every VM reads from the host.
+// It also reports whether its VM had its Worker root before the parent asked
+// for the Worker at `requestedAt`, as a prewarmed VM does, and waits at
+// `arrive` for the rest of its burst.
 const poolProbeCode = (id, globalOutbound) => ({
 	compatibilityDate: "2026-09-03",
 	mainModule: "main.js",
@@ -36,7 +39,9 @@ const poolProbeCode = (id, globalOutbound) => ({
 			const seenGlobal = globalThis.poolProbe ?? null;
 			globalThis.poolProbe = ${JSON.stringify(id)};
 			export default {
-				probe() {
+				async probe({ arrive, requestedAt }) {
+					const rootCreatedAt = fs.statSync(process.cwd()).birthtimeMs;
+					await arrive();
 					let file;
 					try { file = fs.readFileSync("/tmp/pool-probe.txt", "utf8"); } catch (error) { file = error.code; }
 					fs.writeFileSync("/tmp/pool-probe.txt", ${JSON.stringify(id)});
@@ -47,6 +52,7 @@ const poolProbeCode = (id, globalOutbound) => ({
 						file,
 						global: seenGlobal,
 						id: ${JSON.stringify(id)},
+						prewarmed: rootCreatedAt < requestedAt,
 						runtime,
 						workerRoots: fs.readdirSync("/open-orange/workers").length,
 					};
@@ -386,12 +392,28 @@ const routes = {
 	},
 	// Loads `n` dynamic Workers at once, alternating the VM network mode.
 	async pool(env, _ctx, request) {
-		const n = Number(new URL(request.url).searchParams.get("n"));
+		const url = new URL(request.url);
+		const n = Number(url.searchParams.get("n"));
+		// With `blocked`, every Worker gets a VM with no network, so the burst
+		// draws from one VM pool.
+		const blocked = url.searchParams.get("outbound") === "blocked";
 		const tag = crypto.randomUUID().slice(0, 8);
+		// Every Worker's call waits until all n are in their call, so the
+		// burst completes only if its Workers boot beside each other.
+		let arrived = 0;
+		let release;
+		const everyone = new Promise((resolve) => {
+			release = resolve;
+		});
+		const arrive = () => {
+			arrived += 1;
+			if (arrived === n) release();
+			return everyone;
+		};
 		return Promise.all(
 			Array.from({ length: n }, (_, i) => {
-				const code = poolProbeCode(`${tag}_${i}`, i % 2 === 0 ? null : undefined);
-				return settle(env.LOADER.load(code).getEntrypoint().probe(null));
+				const code = poolProbeCode(`${tag}_${i}`, blocked || i % 2 === 0 ? null : undefined);
+				return settle(env.LOADER.load(code).getEntrypoint().probe({ arrive, requestedAt: Date.now() }));
 			}),
 		);
 	},

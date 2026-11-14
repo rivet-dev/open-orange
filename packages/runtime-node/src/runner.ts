@@ -55,10 +55,11 @@ import {
 	type WorkflowEngineObject,
 	workflowEngineClassName,
 } from "./bindings/workflows/engine-object.js";
-import { AgentOsWorkerLoaderBackend, workerLoaderPoolSize } from "./bindings/worker-loader/agentos.js";
+import { AgentOsWorkerLoaderBackend, workerLoaderPoolLimits } from "./bindings/worker-loader/agentos.js";
 import {
 	DynamicWorkerPool,
 	WorkerLoader,
+	workerLoaderIdleTimeoutMs,
 	workerLoaderVmBundlePath,
 	type WorkerLoaderBackend,
 } from "./bindings/worker-loader/loader.js";
@@ -226,7 +227,8 @@ function workerLoaderBackend(): WorkerLoaderBackend {
 		onDiagnostic(message): void {
 			send({ message, type: "background-error" });
 		},
-		poolSize: workerLoaderPoolSize(runtimeSettings()),
+		// The pool keeps VMs above its idle size as long as a Worker stays idle before it stops.
+		pool: { ...workerLoaderPoolLimits(runtimeSettings()), idleMs: workerLoaderIdleTimeoutMs(runtimeSettings()) },
 	});
 	return sharedWorkerLoaderBackend;
 }

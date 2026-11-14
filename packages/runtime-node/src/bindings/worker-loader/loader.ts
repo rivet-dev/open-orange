@@ -47,6 +47,9 @@ export interface WorkerHost {
 	spawn(): Promise<WorkerChild>;
 	// Runs once the dynamic Worker has loaded or failed to load.
 	loaded(): void;
+	// Runs once the loaded dynamic Worker first has no call in flight, or when
+	// it fails to load.
+	settled(): void;
 	// Disposes the VM. Runs when the process exits or fails to start.
 	remove(): Promise<void>;
 }
@@ -244,6 +247,10 @@ function positiveIntegerSetting(
 	return value;
 }
 
+export function workerLoaderIdleTimeoutMs(settings: Readonly<Record<string, string | undefined>>): number {
+	return positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs);
+}
+
 // Bounds the dynamic Workers that run at once across every Worker Loader binding of the runtime.
 // Each one is an agentOS VM and a Node.js process, about 54 MiB. At the limit, a new Worker stops
 // the least recently used idle one. A Worker with a call in flight is never stopped.
@@ -267,7 +274,7 @@ export class DynamicWorkerPool {
 	): DynamicWorkerPool {
 		return new DynamicWorkerPool(
 			{
-				idleTimeoutMs: positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs),
+				idleTimeoutMs: workerLoaderIdleTimeoutMs(settings),
 				maxWorkers: positiveIntegerSetting(settings, maxWorkersSetting, defaultMaxWorkers, Number.MAX_SAFE_INTEGER),
 			},
 			warn,
@@ -335,6 +342,8 @@ class DynamicWorker {
 	#exited = false;
 	#idleTimer: NodeJS.Timeout | undefined;
 	#inFlight = 0;
+	// The host of a Worker that has loaded and whose first calls are in flight.
+	#settling: WorkerHost | undefined;
 	#lastUsed = 0;
 	#orphaned = false;
 	#session: LoaderSession | undefined;
@@ -433,8 +442,11 @@ class DynamicWorker {
 			this.#session = session;
 			this.#lastUsed = performance.now();
 			this.#armIdleTimer(this.#options.pool.idleTimeoutMs);
+			if (this.#inFlight === 0) host.settled();
+			else this.#settling = host;
 			return session;
 		} catch (error: unknown) {
+			host?.settled();
 			this.terminate();
 			// A running child frees the slot when it exits. Without one, nothing else frees it.
 			if (this.#child === undefined) {
@@ -486,6 +498,10 @@ class DynamicWorker {
 		const settle = (): void => {
 			this.#inFlight -= 1;
 			this.#lastUsed = performance.now();
+			if (this.#inFlight === 0) {
+				this.#settling?.settled();
+				this.#settling = undefined;
+			}
 			if (this.#orphaned && this.idle) this.evict();
 		};
 		void call.then(settle, settle);

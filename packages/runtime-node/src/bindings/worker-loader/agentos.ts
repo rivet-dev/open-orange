@@ -1,8 +1,9 @@
 // Runs each dynamic Worker as a Node.js process in its own agentOS VM, so two
-// dynamic Workers never share a filesystem, process table, or loopback. A small
-// pool keeps VMs booted ahead of use, each with its child process started and
-// Orange's runtime imported, so a new dynamic Worker only writes its own modules.
-// A pooled VM serves one dynamic Worker and is never reused.
+// dynamic Workers never share a filesystem, process table, or loopback. A pool
+// sized to recent demand keeps VMs booted ahead of use, each with its child
+// process started and Orange's runtime imported, so a new dynamic Worker only
+// writes its own modules. A pooled VM serves one dynamic Worker and is never
+// reused.
 //
 // agentOS sets a VM's network policy in `AgentOs.create()` and has no API to
 // change it after boot. A Worker with the default `globalOutbound` gets a VM
@@ -65,6 +66,8 @@ function assertFitsAgentOsFileMessage(path: string, content: string | Uint8Array
 
 type VmChild = WorkerChild & { exited: Promise<void> };
 
+type LoadHooks = Pick<WorkerHost, "loaded" | "settled">;
+
 // A VM with the runtime bundle mounted and the child process started. The
 // child has imported the runtime and waits for `start`. It has seen no user
 // code or env.
@@ -75,33 +78,69 @@ interface ReadyVm {
 	root: string;
 }
 
+// The ready VMs of one network mode. Its target size follows demand: the most
+// Workers claimed within one prewarm time, from `size` to `max`, so a burst
+// that drained the pool finds it full the next time. It falls back to `size`
+// once `idleMs` passes without such a peak.
 interface VmPool {
 	mode: NetworkMode;
 	ready: ReadyVm[];
-	// An open that waits for the prewarm in flight instead of booting its own VM.
-	waiting: ((ready: ReadyVm | undefined) => void) | undefined;
-	warming: boolean;
+	// Opens that wait for a prewarm in flight, at most one for each prewarm.
+	// Every other open boots its own VM at once.
+	waiting: ((ready: ReadyVm | undefined) => void)[];
+	warming: number;
+	// The latest claim times, oldest first, at most `max` of them.
+	claims: number[];
+	peak: number;
+	shrink: NodeJS.Timeout | undefined;
+	// Set when a prewarm fails. The pool refills again only after its next
+	// claim, so a VM that cannot boot never loops in the background.
+	failed: boolean;
 }
 
-// Ready VMs to keep per network mode. A mode's pool fills only after its first
-// dynamic Worker, so an app without dynamic Workers boots no VM.
+// A mode's pool fills only after its first dynamic Worker, so an app without
+// dynamic Workers boots no VM.
 export const workerLoaderPoolSizeSetting = "ORANGE_WORKER_LOADER_POOL_SIZE";
+export const workerLoaderPoolMaxSetting = "ORANGE_WORKER_LOADER_POOL_MAX";
 const defaultPoolSize = 2;
-const maxPoolSize = 16;
-// The pool refills a moment after a Worker loads, so the prewarm does not slow
-// the Worker's first calls.
-const refillDelayMs = 250;
+const defaultPoolMax = 16;
+const poolSettingLimit = 64;
+// Prewarms in flight across both modes. They share one agentOS sidecar with
+// the running Workers. A load that finds its pool empty never waits for this.
+const maxParallelPrewarms = 4;
+// The longest one Worker holds back the refill while it loads.
+const maxRefillHoldMs = 1_000;
+// The prewarm time before the first one is measured.
+const initialPrewarmMs = 250;
 
-export function workerLoaderPoolSize(settings: Readonly<Record<string, string | undefined>>): number {
-	const value = settings[workerLoaderPoolSizeSetting];
-	if (value === undefined || value === "") return defaultPoolSize;
-	const size = Number(value);
-	if (!Number.isInteger(size) || size < 0 || size > maxPoolSize) {
+export interface WorkerLoaderPoolLimits {
+	// Ready VMs kept per network mode when no burst is recent.
+	size: number;
+	// The most ready VMs per network mode. 0 boots every VM on demand.
+	max: number;
+}
+
+function poolSetting(settings: Readonly<Record<string, string | undefined>>, name: string, fallback: number): number {
+	const value = settings[name];
+	if (value === undefined || value === "") return fallback;
+	const count = Number(value);
+	if (!Number.isInteger(count) || count < 0 || count > poolSettingLimit) {
 		throw new RangeError(
-			`${workerLoaderPoolSizeSetting} must be an integer from 0 to ${maxPoolSize}, got ${JSON.stringify(value)}. Set it to 0 to boot every dynamic Worker's VM on demand.`,
+			`${name} must be an integer from 0 to ${poolSettingLimit}, got ${JSON.stringify(value)}. Set ${workerLoaderPoolMaxSetting} to 0 to boot every dynamic Worker's VM on demand.`,
 		);
 	}
-	return size;
+	return count;
+}
+
+export function workerLoaderPoolLimits(settings: Readonly<Record<string, string | undefined>>): WorkerLoaderPoolLimits {
+	const max = poolSetting(settings, workerLoaderPoolMaxSetting, defaultPoolMax);
+	const size = poolSetting(settings, workerLoaderPoolSizeSetting, Math.min(defaultPoolSize, max));
+	if (size > max) {
+		throw new RangeError(
+			`${workerLoaderPoolSizeSetting} (${size}) must not be larger than ${workerLoaderPoolMaxSetting} (${max}).`,
+		);
+	}
+	return { max, size };
 }
 
 export interface AgentOsWorkerLoaderBackendOptions {
@@ -110,7 +149,10 @@ export interface AgentOsWorkerLoaderBackendOptions {
 	bundlePath(): string;
 	// Reports a failure off the request path, such as a failed prewarm.
 	onDiagnostic(message: string): void;
-	poolSize: number;
+	pool: WorkerLoaderPoolLimits & {
+		// How long a pool keeps VMs above `size` after its last peak.
+		idleMs: number;
+	};
 }
 
 export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
@@ -118,9 +160,14 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	readonly #vms = new Set<OwnedVm>();
 	readonly #children = new Set<{ exited: Promise<void>; kill(): void }>();
 	readonly #pools = new Map<NetworkMode, VmPool>();
-	// The one prewarm in flight. Prewarms run one at a time, since every VM
-	// shares one agentOS sidecar with the dynamic Workers that are running.
-	#warming: Promise<void> | undefined;
+	readonly #warming = new Set<Promise<void>>();
+	// Dynamic Workers that hold back the refill, since a prewarm that runs
+	// beside them slows them about 3x. A Worker holds it while it loads. A
+	// Worker that loads beside another holds it until its first calls finish
+	// too, so a burst's first calls never share the sidecar with its refill.
+	readonly #holds = new Set<{ beside: boolean }>();
+	// A moving average of how long a prewarm takes.
+	#prewarmMs = initialPrewarmMs;
 	#closed = false;
 
 	constructor(options: AgentOsWorkerLoaderBackendOptions) {
@@ -135,24 +182,47 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		const mode: NetworkMode = network ? "network" : "deny";
 		let pool = this.#pools.get(mode);
 		if (pool === undefined) {
-			pool = { mode, ready: [], waiting: undefined, warming: false };
+			pool = { claims: [], failed: false, mode, peak: 0, ready: [], shrink: undefined, waiting: [], warming: 0 };
 			this.#pools.set(mode, pool);
 		}
+		const hold = { beside: this.#holds.size > 0 };
+		for (const other of this.#holds) other.beside = true;
+		this.#holds.add(hold);
+		const release = (): void => {
+			if (!this.#holds.delete(hold)) return;
+			clearTimeout(timer);
+			this.#refill();
+		};
+		// A Worker whose load hangs must not stop the refill for good.
+		const timer = setTimeout(release, maxRefillHoldMs);
+		timer.unref();
+		const hooks: LoadHooks = {
+			loaded: () => {
+				if (!hold.beside) release();
+			},
+			settled: release,
+		};
+		try {
+			return await this.#openVm(pool, hooks);
+		} catch (error: unknown) {
+			release();
+			throw error;
+		}
+	}
+
+	async #openVm(pool: VmPool, hooks: LoadHooks): Promise<WorkerHost> {
 		// A ready VM serves exactly one dynamic Worker and is disposed with it.
 		const ready = await this.#claim(pool);
 		if (this.#closed) {
 			if (ready !== undefined) await this.#discard(ready);
 			throw new Error("The Worker Loader has stopped.");
 		}
-		const loaded = (): void => {
-			setTimeout(() => this.#refill(), refillDelayMs).unref();
-		};
 		if (ready !== undefined) {
 			const child = Promise.resolve(ready.child);
 			// The child is running even if the Worker fails before it is used.
-			return this.#host(() => this.#discard(ready), ready.booted, ready.root, () => child, loaded);
+			return this.#host(() => this.#discard(ready), ready.booted, ready.root, () => child, hooks);
 		}
-		const owned = this.#boot(mode);
+		const owned = this.#boot(pool.mode);
 		let booted: BootedVm;
 		try {
 			booted = await owned.booted;
@@ -161,60 +231,106 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			throw bootError(error);
 		}
 		const root = posix.join(workersRoot, randomUUID());
-		return this.#host(() => owned.dispose(), booted, root, () => this.#spawn(booted.vm, root, owned), loaded);
+		return this.#host(() => owned.dispose(), booted, root, () => this.#spawn(booted.vm, root, owned), hooks);
 	}
 
-	// A ready VM, or the prewarm in flight if no other open waits for it, since
-	// it finishes sooner than a new boot. Otherwise the open boots its own VM.
+	// A ready VM, or a prewarm in flight that no other open waits for, since it
+	// finishes sooner than a new boot. Otherwise the open boots its own VM at
+	// once, beside any other boot.
 	#claim(pool: VmPool): ReadyVm | Promise<ReadyVm | undefined> | undefined {
+		this.#recordClaim(pool);
 		const ready = pool.ready.shift();
-		if (ready !== undefined || !pool.warming || pool.waiting !== undefined) return ready;
-		return new Promise((resolveReady) => {
-			pool.waiting = resolveReady;
-		});
+		if (ready !== undefined || pool.warming <= pool.waiting.length) return ready;
+		return new Promise((resolveReady) => pool.waiting.push(resolveReady));
 	}
 
-	// Prewarms one VM for the first pool below its size, then the next. A
-	// failed prewarm is reported and stops the refill until the next Worker
-	// loads, so a VM that cannot boot never loops in the background.
+	// Raises the pool's target to the claims seen within one prewarm time, so
+	// the refill keeps up with a steady stream of loads and the next burst of
+	// the same size finds its VMs ready.
+	#recordClaim(pool: VmPool): void {
+		const { idleMs, max } = this.#options.pool;
+		pool.failed = false;
+		if (max === 0) return;
+		const now = performance.now();
+		pool.claims.push(now);
+		if (pool.claims.length > max) pool.claims.shift();
+		const recent = pool.claims.filter((at) => now - at <= this.#prewarmMs).length;
+		if (recent < pool.peak) return;
+		pool.peak = recent;
+		clearTimeout(pool.shrink);
+		pool.shrink = setTimeout(() => {
+			pool.peak = 0;
+			pool.shrink = undefined;
+			const excess = pool.ready.splice(0, Math.max(0, pool.ready.length - this.#target(pool)));
+			for (const ready of excess) void this.#discard(ready);
+		}, idleMs).unref();
+	}
+
+	#target(pool: VmPool): number {
+		const { max, size } = this.#options.pool;
+		return Math.min(max, Math.max(size, pool.peak));
+	}
+
+	// Ready VMs, plus prewarms in flight that no open waits for.
+	#supply(pool: VmPool): number {
+		return pool.ready.length + pool.warming - pool.waiting.length;
+	}
+
+	// Starts prewarms for the pools furthest below their target, up to
+	// `maxParallelPrewarms` at once, while no dynamic Worker holds it back.
 	#refill(): void {
-		if (this.#closed || this.#warming !== undefined) return;
-		const pool = [...this.#pools.values()].find((entry) => entry.ready.length < this.#options.poolSize);
-		if (pool === undefined) return;
-		pool.warming = true;
-		this.#warming = this.#prewarm(pool.mode).then(
-			(ready) => {
-				this.#warming = undefined;
-				pool.warming = false;
-				this.#offer(pool, ready);
-				this.#refill();
-			},
-			(error: unknown) => {
-				this.#warming = undefined;
-				pool.warming = false;
-				this.#takeWaiting(pool)?.(undefined);
-				// Closing disposes a booting VM, which fails its prewarm on purpose.
-				if (this.#closed) return;
-				this.#options.onDiagnostic(
-					`OpenOrange cannot prewarm an agentOS VM for dynamic Workers (${pool.mode}): ${errorMessage(error)}. Dynamic Workers boot their VM on demand instead.`,
-				);
-			},
-		);
+		while (!this.#closed && this.#holds.size === 0 && this.#warming.size < maxParallelPrewarms) {
+			let neediest: VmPool | undefined;
+			let missing = 0;
+			for (const pool of this.#pools.values()) {
+				const gap = this.#target(pool) - this.#supply(pool);
+				if (!pool.failed && gap > missing) {
+					neediest = pool;
+					missing = gap;
+				}
+			}
+			if (neediest === undefined) return;
+			this.#startPrewarm(neediest);
+		}
 	}
 
-	#takeWaiting(pool: VmPool): ((ready: ReadyVm | undefined) => void) | undefined {
-		const waiting = pool.waiting;
-		pool.waiting = undefined;
-		return waiting;
+	#startPrewarm(pool: VmPool): void {
+		pool.warming += 1;
+		const started = performance.now();
+		const warming = this.#prewarm(pool.mode)
+			.then(
+				(ready) => {
+					pool.warming -= 1;
+					this.#prewarmMs += (performance.now() - started - this.#prewarmMs) / 4;
+					this.#offer(pool, ready);
+				},
+				(error: unknown) => {
+					pool.warming -= 1;
+					// An open that waited for this prewarm boots its own VM.
+					if (pool.waiting.length > pool.warming) pool.waiting.pop()?.(undefined);
+					// Closing disposes a booting VM, which fails its prewarm on purpose.
+					if (this.#closed || pool.failed) return;
+					pool.failed = true;
+					this.#options.onDiagnostic(
+						`OpenOrange cannot prewarm an agentOS VM for dynamic Workers (${pool.mode}): ${errorMessage(error)}. Dynamic Workers boot their VM on demand instead.`,
+					);
+				},
+			)
+			.finally(() => {
+				this.#warming.delete(warming);
+				this.#refill();
+			});
+		this.#warming.add(warming);
 	}
 
 	#offer(pool: VmPool, ready: ReadyVm): void {
-		const waiting = this.#takeWaiting(pool);
+		const waiting = pool.waiting.shift();
 		if (waiting !== undefined) {
 			waiting(ready);
 			return;
 		}
-		if (this.#closed) {
+		// The target may have shrunk while the VM booted.
+		if (this.#closed || pool.ready.length >= this.#target(pool)) {
 			void this.#discard(ready);
 			return;
 		}
@@ -238,11 +354,11 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		booted: BootedVm,
 		root: string,
 		spawn: () => Promise<VmChild>,
-		loaded: () => void,
+		hooks: LoadHooks,
 	): WorkerHost {
 		const { moduleRewrites, vm } = booted;
 		return {
-			loaded,
+			...hooks,
 			moduleRewrites,
 			remove,
 			root,
@@ -345,10 +461,13 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		// A prewarm that is booting finishes or fails first, so none starts a
 		// child after the children below are stopped.
 		await Promise.race([
-			this.#warming,
+			Promise.all(this.#warming),
 			new Promise((resolveWait) => setTimeout(resolveWait, exitWaitMs).unref()),
 		]);
-		for (const pool of this.#pools.values()) this.#takeWaiting(pool)?.(undefined);
+		for (const pool of this.#pools.values()) {
+			clearTimeout(pool.shrink);
+			for (const waiting of pool.waiting.splice(0)) waiting(undefined);
+		}
 		// Disposing a VM with a running process fails to observe its exit, so
 		// stop the children first.
 		const children = [...this.#children];

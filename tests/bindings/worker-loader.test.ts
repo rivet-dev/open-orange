@@ -326,33 +326,33 @@ test("refuses to start with an idle timeout that Node.js timers cannot hold", as
 	}
 });
 
-test("loads bursts of dynamic Workers larger than the VM pool, each in a fresh VM even after idle Workers stop", async () => {
+test("grows the VM pool to the last burst, shrinks it when idle, and boots each Worker in a fresh VM", async () => {
+	// The idle timeout leaves time to refill the pool between the first two
+	// bursts, and also sets how long the pool keeps VMs above its idle size.
+	const idleMs = 8_000;
 	const environment = {
-		ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: "1000",
-		ORANGE_WORKER_LOADER_POOL_SIZE: "2",
+		ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: String(idleMs),
+		ORANGE_WORKER_LOADER_POOL_MAX: "8",
+		ORANGE_WORKER_LOADER_POOL_SIZE: "1",
 	};
 	await withOrangeDev("worker-loader", async (dev) => {
-		const loadAtOnce = async (n: number): Promise<unknown[]> => {
-			const results = await dev.json(`/pool?n=${n}`);
+		const sleep = (ms: number): Promise<void> => new Promise((resolveWait) => setTimeout(resolveWait, ms));
+		// Loads n Workers at once. Each Worker's call waits for all n, so the
+		// burst completes only if no Worker's boot waits for another's call.
+		// Returns how many found their VM booted before the load.
+		const loadAtOnce = async (n: number, outbound = ""): Promise<number> => {
+			const results = await dev.json(`/pool?n=${n}&outbound=${outbound}`, {
+				signal: AbortSignal.timeout(30_000),
+			});
 			assert.ok(Array.isArray(results) && results.length === n, JSON.stringify(results));
-			return results;
-		};
-		// The first dynamic Worker of each network mode boots on demand and
-		// starts filling that mode's pool.
-		await loadAtOnce(2);
-		for (let round = 0; round < 2; round += 1) {
-			// Leaves time for the pool to fill and, after round 0, for every
-			// Worker to pass its idle timeout and stop. A stopped Worker's VM
-			// must be disposed, never handed to the next Worker.
-			await new Promise((resolveWait) => setTimeout(resolveWait, 5_000));
-			// A burst larger than the pool loads every Worker: some from the pool,
-			// the rest on demand. None sees another's files, globals, or env, each
-			// VM holds only its own Worker, and none can change Orange's runtime.
-			const results = await loadAtOnce(10);
+			let prewarmed = 0;
 			for (const result of results) {
 				assert.ok(isRecord(result) && isRecord(result.value), JSON.stringify(result));
-				const id = String(result.value.id);
-				assert.deepEqual(result.value, {
+				const { prewarmed: wasPrewarmed, ...seen } = result.value;
+				const id = String(seen.id);
+				// None sees another's files, globals, or env, each VM holds only
+				// its own Worker, and none can change Orange's runtime.
+				assert.deepEqual(seen, {
 					env: [`POOL_SECRET_${id}`],
 					file: "ENOENT",
 					global: null,
@@ -360,7 +360,22 @@ test("loads bursts of dynamic Workers larger than the VM pool, each in a fresh V
 					runtime: "EROFS",
 					workerRoots: 1,
 				});
+				if (wasPrewarmed === true) prewarmed += 1;
 			}
-		}
+			return prewarmed;
+		};
+		// Both network modes load beside each other.
+		await loadAtOnce(4);
+		// A burst larger than the idle pool loads every Worker, most on VMs
+		// that boot on demand.
+		await loadAtOnce(8, "blocked");
+		await sleep(idleMs / 2);
+		// The pool refilled to the size of the last burst.
+		assert.equal(await loadAtOnce(8, "blocked"), 8);
+		// After the idle timeout, the first burst's Workers have stopped, and
+		// the pool is back to its idle size. Stopped Workers' VMs are never
+		// handed to new Workers.
+		await sleep(idleMs + 2_000);
+		assert.equal(await loadAtOnce(8, "blocked"), 1);
 	}, { environment });
 });

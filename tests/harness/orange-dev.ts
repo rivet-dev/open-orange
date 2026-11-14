@@ -34,6 +34,11 @@ export interface RunningOrangeDev {
 	kill(): Promise<void>;
 	// Resolves with the exit code once orange dev exits on its own or after close().
 	exited: Promise<number | null>;
+	/**
+	 * Closes the terminal of orange dev, as closing its window does, and resolves after orange dev
+	 * exits. It needs `startOrangeDev(..., { terminal: true })`.
+	 */
+	hangUp(): Promise<void>;
 	/** Fetches `path` from orange dev, asserts a 200, and returns the parsed JSON body. A failure shows the body and the output. */
 	json(path: string, init?: RequestInit): Promise<unknown>;
 	origin: string;
@@ -155,16 +160,27 @@ export interface OrangeCli {
 	runtime: string;
 }
 
+// `script` runs the command on a new terminal, as a terminal window does.
+function inTerminal(command: string, args: readonly string[]): [string, string[]] {
+	if (process.platform === "darwin") return ["script", ["-q", "/dev/null", command, ...args]];
+	const line = [command, ...args].map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ");
+	return ["script", ["-qfec", `exec ${line}`, "/dev/null"]];
+}
+
 function spawnOrange(
 	args: readonly string[],
 	environment: NodeJS.ProcessEnv = {},
 	cli?: OrangeCli,
+	terminal = false,
 ): ChildProcess {
-	const [command, prefix] =
+	const [runtime, prefix] =
 		cli === undefined
 			? [process.execPath, ["--import", "tsx", cliEntrypoint]]
 			: [cli.runtime, [cli.entrypoint]];
-	return spawn(command, [...prefix, ...args], {
+	const [command, commandArgs] = terminal
+		? inTerminal(runtime, [...prefix, ...args])
+		: [runtime, [...prefix, ...args]];
+	return spawn(command, commandArgs, {
 		cwd: repositoryRoot,
 		env: { ...process.env, ...environment, CI: "1", NO_COLOR: "1" },
 		stdio: ["ignore", "pipe", "pipe"],
@@ -226,6 +242,8 @@ export interface StartOrangeDevOptions {
 	args?: readonly string[];
 	cli?: OrangeCli;
 	environment?: NodeJS.ProcessEnv;
+	// Runs orange dev on a terminal, so that hangUp() can close it.
+	terminal?: boolean;
 }
 
 // More than one config starts a multi-Worker session. The first Worker serves the port.
@@ -253,6 +271,7 @@ export async function startOrangeDev(
 			...(options.actorLifecycleLogs === true ? { RIVET_LOG_LEVEL: "info" } : {}),
 		},
 		options.cli,
+		options.terminal,
 	);
 	const exited = new Promise<number | null>((resolveExit) => {
 		child.once("exit", (code) => resolveExit(code));
@@ -329,6 +348,35 @@ export async function startOrangeDev(
 			}
 		},
 		exited,
+		async hangUp(): Promise<void> {
+			if (options.terminal !== true) throw new Error("hangUp() needs startOrangeDev(..., { terminal: true })");
+			closed = true;
+			// orange dev and its runtime, under `script`.
+			const pids = child.pid === undefined ? [] : descendantPids(child.pid);
+			// The terminal closes, so writes to it fail and orange dev gets SIGHUP. The shell of a
+			// terminal window also sends SIGHUP to the job, and the kernel sends one more when the
+			// shell exits. The Rivet Engine runs in its own process group, so it gets none.
+			child.kill("SIGKILL");
+			for (let signal = 0; signal < 2; signal += 1) {
+				// Two signals sent at once can merge into one.
+				await delay(200);
+				for (const pid of pids) {
+					try {
+						process.kill(pid, "SIGHUP");
+					} catch {
+						// It already exited.
+					}
+				}
+			}
+			const deadline = Date.now() + 30_000;
+			while (pids.some(processIsAlive)) {
+				if (Date.now() > deadline) {
+					for (const pid of pids.filter(processIsAlive)) process.kill(pid, "SIGKILL");
+					throw new Error(`orange dev did not exit after its terminal closed:\n${output()}`);
+				}
+				await delay(25);
+			}
+		},
 		async kill(): Promise<void> {
 			if (closed) return;
 			closed = true;

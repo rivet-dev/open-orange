@@ -46,3 +46,20 @@ test("the orange dev that started the shared Engine exits and the other keeps se
 		await project.dispose();
 	}
 });
+
+// Closing the terminal of orange dev stops it, but the Engine runs in its own process group and
+// gets no SIGHUP. A next orange dev would reuse an Engine left running.
+test("orange dev stops its Engine when its terminal closes", { timeout: 120_000 }, async () => {
+	const project = await copyProject(join(repositoryRoot, "examples", "hello-durable-object"));
+	try {
+		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", { terminal: true });
+		assert.deepEqual(await dev.json("/alice"), { greeting: "Hello, alice!", visits: 1 });
+		const pid = await enginePid(project.directory);
+
+		await dev.hangUp();
+		assert.equal(processIsAlive(pid), false, "orange dev exited and left the Engine running");
+	} finally {
+		await stopProjectEngines(project.directory);
+		await project.dispose();
+	}
+});

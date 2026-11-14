@@ -364,7 +364,7 @@ export interface RuntimeWarningMessage {
 }
 
 export interface RuntimeStoppedMessage {
-	reason: "parent" | "SIGINT" | "SIGTERM";
+	reason: "parent" | "SIGHUP" | "SIGINT" | "SIGTERM";
 	type: "stopped";
 }
 

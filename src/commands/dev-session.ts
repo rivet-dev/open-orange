@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 
 import { onOutputClosed } from "../cli/closed-output.js";
 
-export type StopReason = "SIGINT" | "SIGTERM" | "key";
+export type StopReason = "SIGHUP" | "SIGINT" | "SIGTERM" | "key";
 
 export interface StopRequests {
-	// Resolves on the first Ctrl-C, SIGTERM, or `x`.
+	// Resolves on the first Ctrl-C, SIGTERM, SIGHUP, or `x`.
 	readonly first: Promise<StopReason>;
 	// Resolves on the second, which forces the stop.
 	readonly second: Promise<StopReason>;
@@ -25,14 +25,23 @@ export function listenForStopRequests(): StopRequests {
 	};
 	const onSigint = (): void => request("SIGINT");
 	const onSigterm = (): void => request("SIGTERM");
+	// After the terminal closes or the reader of the output goes away, nobody is left to force the
+	// stop, and these events can come more than once. So they only start a stop.
+	const startStop = (reason: StopReason): void => {
+		if (count === 0) request(reason);
+	};
+	// A closed terminal sends SIGHUP. Node's default exits at once, which leaves the Engine running.
+	const onSighup = (): void => startStop("SIGHUP");
 	process.on("SIGINT", onSigint);
 	process.on("SIGTERM", onSigterm);
+	process.on("SIGHUP", onSighup);
 	// Nobody reads the output any more, as after `orange dev --json | head`.
-	const stopOnClosedOutput = onOutputClosed(() => request("SIGTERM"));
+	const stopOnClosedOutput = onOutputClosed(() => startStop("SIGTERM"));
 	return {
 		dispose(): void {
 			process.off("SIGINT", onSigint);
 			process.off("SIGTERM", onSigterm);
+			process.off("SIGHUP", onSighup);
 			stopOnClosedOutput();
 		},
 		first: first.promise,

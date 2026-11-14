@@ -1428,13 +1428,19 @@ export async function runRuntimeProcess(): Promise<void> {
 		send({ ...errorDetails(error), type: "background-error" });
 	});
 
-	async function stop(reason: RuntimeStoppedMessage["reason"]): Promise<void> {
-		if (runtime !== undefined) {
-			await runtime.close(reason);
-		}
-		// `orange dev` exits after this process, so the Engine must exit first.
-		await stopRivetEngineAfterLastDevSession();
-		resolveCompletion?.();
+	// A closed terminal sends SIGHUP here while `orange dev` also sends shutdown. A second stop
+	// must wait for the Engine too, or this process exits before it.
+	let stopping: Promise<void> | undefined;
+	function stop(reason: RuntimeStoppedMessage["reason"]): Promise<void> {
+		stopping ??= (async () => {
+			if (runtime !== undefined) {
+				await runtime.close(reason);
+			}
+			// `orange dev` exits after this process, so the Engine must exit first.
+			await stopRivetEngineAfterLastDevSession();
+			resolveCompletion?.();
+		})();
+		return stopping;
 	}
 
 	process.on("message", (rawMessage: unknown) => {
@@ -1465,6 +1471,9 @@ export async function runRuntimeProcess(): Promise<void> {
 	});
 	process.once("SIGINT", () => void stop("SIGINT"));
 	process.once("SIGTERM", () => void stop("SIGTERM"));
+	// A closed terminal sends SIGHUP to this process too, and can send it more than once. Node's
+	// default exits without stopping the Engine.
+	process.on("SIGHUP", () => void stop("SIGHUP"));
 	// The IPC channel closes when the parent dies, so the runtime stops with it.
 	process.once("disconnect", () => void stop("parent"));
 	// Runs on every exit, also one during startup before a registry exists.

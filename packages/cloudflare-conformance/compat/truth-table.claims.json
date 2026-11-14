@@ -122,7 +122,7 @@
 		{
 			"id": "sqlite",
 			"title": "SQLite",
-			"summary": "Durable Object SQL and D1 run on RivetKit's SQLite 3.46. It is a different build from workerd's, so most SQL runs the same and a known set does not. Each row says what to write instead.",
+			"summary": "Durable Object SQL and D1 run on RivetKit's SQLite 3.46. Most SQL runs the same.",
 			"claims": [
 				{
 					"id": "sqlite-features",
@@ -470,7 +470,7 @@
 		{
 			"id": "durable-objects",
 			"title": "Durable Objects",
-			"summary": "Each object is one Rivet Actor. Storage, alarms, RPC, and WebSockets follow workerd's behaviour, checked against workerd's own tests.",
+			"summary": "Each object is one Rivet Actor, checked against workerd's own tests.",
 			"claims": [
 				{
 					"id": "do-storage",
@@ -673,7 +673,7 @@
 		{
 			"id": "bindings",
 			"title": "Bindings",
-			"summary": "Each binding runs on Rivet Actors unless noted. The scaling table below says how each one grows.",
+			"summary": "Each binding runs on Rivet Actors unless noted.",
 			"claims": [
 				{
 					"id": "binding-kv",
@@ -1048,7 +1048,7 @@
 		{
 			"id": "runtime",
 			"title": "Runtime",
-			"summary": "Workers run on Node.js with workerd-shaped globals. These counts are workerd's own test suite, scored only where workerd itself passes.",
+			"summary": "Workers run on Node.js, scored against workerd's own tests.",
 			"claims": [
 				{
 					"id": "runtime-node",

@@ -53,12 +53,13 @@ const s = PRODUCT_LABEL[b.product.status];
 			<div class="mt-12">
 				<p class="label">Recorded results</p>
 				<div class="mt-4">
-					<RowHead name="Claim" a="On Cloudflare" b="On OpenOrange" end="Results" />
-					<div class="rows">
-						{b.claims.map((c) => (
-							<ClaimRow claim={c} />
-						))}
-					</div>
+					<RowHead name="Claim" end="Results">
+						<div class="rows">
+							{b.claims.map((c) => (
+								<ClaimRow claim={c} />
+							))}
+						</div>
+					</RowHead>
 				</div>
 			</div>
 		) : null}
@@ -67,54 +68,16 @@ const s = PRODUCT_LABEL[b.product.status];
 			<div class="mt-12">
 				<p class="label">In the feature matrix</p>
 				<div class="mt-4">
-					<RowHead name="Feature" a="On Cloudflare" b="On OpenOrange" end="Evidence" />
-					<div class="rows">
-						{b.matrix.map((e) => (
-							<MatrixRow entry={e} matrixHref={`/docs/compatibility/#${e.id}`} />
-						))}
-					</div>
+					<RowHead name="Feature" end="Evidence">
+						<div class="rows">
+							{b.matrix.map((e) => (
+								<MatrixRow entry={e} matrixHref={`/docs/compatibility/#${e.id}`} />
+							))}
+						</div>
+					</RowHead>
 				</div>
 			</div>
 		) : null}
 
 	</div>
 </section>
-
-<style>
-	/* The docs column is too narrow for the six-column row grid: put the
-	   Cloudflare and OpenOrange text on their own labelled lines under the name. */
-	@media (min-width: 768px) {
-		.binding-detail :global(.row-cols) {
-			grid-template-columns: 1.25rem 6.5rem minmax(0, 1fr) auto;
-			align-items: start;
-			row-gap: 0.375rem;
-		}
-		.binding-detail :global(.row-cols > :nth-child(3)) {
-			grid-column: 3;
-			grid-row: 1;
-		}
-		.binding-detail :global(.row-cols > :nth-child(6)) {
-			grid-column: 4;
-			grid-row: 1;
-		}
-		.binding-detail :global(.row-cols > :nth-child(4)),
-		.binding-detail :global(.row-cols > :nth-child(5)) {
-			grid-column: 3 / 5;
-		}
-		.binding-detail :global(.row-cols:not(.row-head) > :nth-child(4):not(:empty))::before {
-			content: 'Cloudflare: ';
-			font-size: 13.5px;
-			font-weight: 500;
-		}
-		.binding-detail :global(.row-cols:not(.row-head) > :nth-child(5):not(:empty))::before {
-			content: 'OpenOrange: ';
-			font-size: 13.5px;
-			font-weight: 500;
-			color: var(--color-ink);
-		}
-		.binding-detail :global(.row-head > :nth-child(4)),
-		.binding-detail :global(.row-head > :nth-child(5)) {
-			display: none;
-		}
-	}
-</style>

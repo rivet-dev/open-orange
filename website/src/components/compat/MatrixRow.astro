@@ -1,7 +1,8 @@
 ---
-// One feature of the matrix. The row shows the status, what Cloudflare does,
-// what OpenOrange does, and how many cited tests pass. Opening the row shows
-// notes, the workaround, and every test or source file behind it.
+// One feature of the matrix. The row shows the status, how many cited tests
+// pass, and the start of what OpenOrange does. Opening the row shows what
+// Cloudflare and OpenOrange each do, notes, the workaround, and every test or
+// source file behind it.
 import Row from './Row.astro';
 import Chip from './Chip.astro';
 import { CONFORMANCE, MATRIX_LABEL, TONE_CLASS, inline, lookupTest, type MatrixEntry } from '@/data/conformance';
@@ -36,8 +37,7 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 	) : (
 		<span slot="name" class="row-name" set:html={inline(e.name)} />
 	)}
-	<span slot="a" class="row-text-faint" set:html={inline(e.cloudflare)} />
-	<span slot="b" class="row-text" set:html={inline(e.orange)} />
+	<span slot="a" class="row-preview" set:html={inline(e.orange)} />
 	<span slot="end" class="row-num whitespace-nowrap">
 		{tests.length ? <span class={TONE_CLASS[testsPass === tests.length ? 'pass' : testsPass === 0 ? 'fail' : 'warn'].text}>{testsPass}/{tests.length} pass</span> : null}
 		{code.length ? <span class="text-ink-faint">{tests.length ? ' · ' : ''}{code.length} {code.length === 1 ? 'file' : 'files'}</span> : null}
@@ -45,6 +45,10 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 	</span>
 
 	<dl>
+		<dt>On Cloudflare</dt>
+		<dd set:html={inline(e.cloudflare)} />
+		<dt>On OpenOrange</dt>
+		<dd class="text-ink" set:html={inline(e.orange)} />
 		{e.notes ? (
 			<>
 				<dt>Notes</dt>
@@ -73,11 +77,11 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 								<span class="flex min-w-0 items-start gap-2">
 									<span class={`${TONE_CLASS[testTone(row?.status)].dot} mt-1.5`} aria-hidden="true"></span>
 									<span class="min-w-0">
-										<span class="block font-mono text-[12.5px] text-ink">{ref.file} › {ref.test}</span>
+										<span class="block font-mono text-[12.5px] text-ink [overflow-wrap:anywhere]">{ref.file} › {ref.test}</span>
 										{row?.error ? <span class="err">{row.error}</span> : null}
 									</span>
 								</span>
-								<span class={`whitespace-nowrap font-mono text-[12px] sm:text-right ${TONE_CLASS[testTone(row?.status)].text}`}>{testResult(row)}</span>
+								<span class={`font-mono text-[12px] sm:whitespace-nowrap sm:text-right ${TONE_CLASS[testTone(row?.status)].text}`}>{testResult(row)}</span>
 							</li>
 						))}
 					</ul>
@@ -89,7 +93,7 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 				<dt>Source</dt>
 				<dd class="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
 					{code.map((c) => (
-						<a href={CONFORMANCE.fileUrl(c.path, c.lines)} class="link font-mono text-[12.5px]" rel="noopener">{c.path}{c.lines ? `:${c.lines}` : ''}</a>
+						<a href={CONFORMANCE.fileUrl(c.path, c.lines)} class="link break-all font-mono text-[12.5px]" rel="noopener">{c.path}{c.lines ? `:${c.lines}` : ''}</a>
 					))}
 					{docs.map((d) => (
 						<a href={d.url} class="link" rel="noopener">Cloudflare docs</a>

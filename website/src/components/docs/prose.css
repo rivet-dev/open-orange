@@ -112,6 +112,21 @@
 .dark .docs-prose .docs-dark {
 	display: block;
 }
+/* The diagrams are drawn 608px wide. On a phone, shrinking one to fit leaves
+   its labels too small to read, so it keeps most of its size and scrolls. */
+@media (max-width: 639px) {
+	.docs-prose :is(.docs-light, .docs-dark):has(> img) {
+		@apply overflow-x-auto;
+	}
+	.docs-prose :is(.docs-light, .docs-dark) > img {
+		@apply max-w-none min-w-[34rem];
+	}
+	/* A table already scrolls sideways, so its code stays whole instead of
+	   breaking a letter or two per line in a squeezed column. */
+	.docs-prose td code:not(:where(.not-prose, .not-prose *)) {
+		@apply whitespace-nowrap;
+	}
+}
 .docs-prose figure:not(:where(.not-prose, .not-prose *)) {
 	@apply rounded-2xl border border-line bg-surface p-4 md:p-6;
 }

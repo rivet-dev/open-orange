@@ -122,6 +122,11 @@ body {
 @utility container-x {
 	@apply mx-auto w-full max-w-6xl px-6;
 }
+/* Docs pages hold a sidebar, the page and "On this page", so they get more of a
+   wide screen. The nav and footer follow them there. */
+@utility container-docs {
+	@apply mx-auto w-full max-w-[88rem] px-6 lg:px-8;
+}
 @utility section {
 	@apply py-20 md:py-32;
 }
@@ -311,24 +316,95 @@ body {
 	@apply block;
 }
 
-/* Every list on the compatibility and bindings pages is a stack of rows on one
-   grid: chevron, status, name, two text columns, and a right-aligned end
-   column. `.row-head` is the column header on the same grid. On narrow screens
-   the columns stack under the chevron. */
-.row-cols {
-	@apply grid grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1.5 px-2 md:grid-cols-[1.25rem_7rem_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1.3fr)_8rem] md:items-center md:gap-x-5;
-}
-.row-cols > :not(:first-child) {
-	@apply col-start-2 min-w-0 md:col-start-auto;
-}
-.row-cols > :last-child:not(:first-child) {
-	@apply md:justify-self-end;
-}
+/* Every list on the compatibility and bindings pages is a stack of rows, each
+   with a chevron, name, status, result (`end`), and two text slots (`a` and
+   `b`). The pages sit in the docs column, too narrow for a column per slot, so
+   the first line is the name with the status and result on the right, and `a`
+   and `b` follow on their own lines, each beside its label (`--row-a` and
+   `--row-b`, set by `RowHead`). In a narrow row the status and result take the
+   second line and labels go above their text. Lines are spaced with margins,
+   not a row gap, so an empty slot takes no space. */
+.row,
 .row-head {
-	@apply hidden border-b border-line pb-2.5 text-[12px] font-medium text-ink-faint md:grid;
+	container: row / inline-size;
 }
-.row-head > :last-child {
-	@apply md:text-right;
+.row-cols {
+	@apply grid items-start gap-x-3 px-2;
+	grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+	grid-template-areas: 'chev name name' '. status end' '. a a' '. b b';
+}
+.row-cols > * {
+	@apply min-w-0;
+}
+.row-cols > :nth-child(1) {
+	grid-area: chev;
+}
+.row-cols > :nth-child(2) {
+	@apply mt-2;
+	grid-area: status;
+}
+.row-cols > :nth-child(3) {
+	grid-area: name;
+}
+.row-cols > :nth-child(4) {
+	@apply mt-2;
+	grid-area: a;
+}
+.row-cols > :nth-child(5) {
+	@apply mt-2;
+	grid-area: b;
+}
+.row-cols > :nth-child(6) {
+	@apply mt-2 justify-self-end text-right;
+	grid-area: end;
+}
+.row-cols > :is(:nth-child(2), :nth-child(4), :nth-child(5)):is(:empty, :has(> :empty:only-child)) {
+	@apply hidden;
+}
+.row-cols > :is(:nth-child(4), :nth-child(5))::before {
+	@apply mb-0.5 block text-[12px] font-medium text-ink-faint;
+}
+.row-cols > :nth-child(4)::before {
+	content: var(--row-a);
+}
+.row-cols > :nth-child(5)::before {
+	content: var(--row-b);
+}
+/* The start of a long text slot whose whole text is in the detail. */
+.row-preview {
+	@apply line-clamp-2 text-balance text-[13.5px] leading-snug text-ink-faint;
+}
+.row[open] > summary > :has(> .row-preview) {
+	@apply hidden;
+}
+.row-head > .row-cols {
+	@apply hidden border-b border-line pb-2.5 text-[12px] font-medium text-ink-faint;
+}
+.row-head > .row-cols > :empty {
+	@apply hidden;
+}
+@container row (min-width: 32rem) {
+	.row-cols {
+		@apply gap-x-4;
+		grid-template-columns: 1.25rem minmax(0, 1fr) auto auto;
+		grid-template-areas: 'chev name status end' '. a a a' '. b b b';
+	}
+	.row-cols > :is(:nth-child(2), :nth-child(3), :nth-child(6)) {
+		@apply mt-0 self-baseline;
+	}
+	/* Labels sit in a column to the left of their text, as in `.row-detail`. */
+	.row-labelled .row-cols > :is(:nth-child(4), :nth-child(5)) {
+		@apply relative pl-32;
+	}
+	.row-cols > :is(:nth-child(4), :nth-child(5))::before {
+		@apply absolute left-0 top-0.5 mb-0 w-28;
+	}
+	.row-cols > :has(> .row-preview) {
+		@apply mt-1;
+	}
+	.row-head > .row-cols {
+		@apply grid;
+	}
 }
 /* The stack of rows. The header draws its top line when there is one. */
 .rows {
@@ -338,7 +414,7 @@ body {
 	@apply border-t-0;
 }
 .row-name {
-	@apply text-[14.5px] font-medium leading-snug text-ink;
+	@apply text-balance text-[14.5px] font-medium leading-snug text-ink;
 }
 .row-text {
 	@apply text-[13.5px] leading-snug text-ink-soft;
@@ -380,21 +456,32 @@ body {
 	@apply bg-paper-mid/60;
 }
 .row .chev {
-	@apply mt-0.5 size-4 shrink-0 text-ink-faint transition-transform duration-150 motion-reduce:transition-none md:mt-0;
+	@apply mt-0.5 size-4 shrink-0 text-ink-faint transition-transform duration-150 motion-reduce:transition-none;
 }
 .row[open] > summary .chev {
 	transform: rotate(90deg);
 }
-/* The detail sits on the same columns as the row: labels under Status, content
-   from the name column to the right edge. */
+/* The detail lines up with the row: labels under the name, content where the
+   row's labelled text starts. */
 .row-detail {
-	@apply border-t border-line bg-paper-mid/40 px-2 py-5 text-[14px] leading-[1.6] text-ink-soft md:pl-[3rem];
+	@apply border-t border-line bg-paper-mid/40 py-5 pl-10 pr-2 text-[14px] leading-[1.6] text-ink-soft;
 }
 .row-detail dl {
-	@apply grid gap-y-4 md:grid-cols-[7rem_minmax(0,1fr)] md:gap-x-5;
+	@apply grid gap-y-4;
 }
 .row-detail dt {
-	@apply label -mb-3 md:mb-0 md:pt-0.5;
+	@apply label -mb-3;
+}
+@container row (min-width: 32rem) {
+	.row-detail {
+		@apply pl-11;
+	}
+	.row-detail dl {
+		@apply grid-cols-[7rem_minmax(0,1fr)] gap-x-4;
+	}
+	.row-detail dt {
+		@apply mb-0 pt-0.5;
+	}
 }
 .row-detail dd {
 	@apply min-w-0;

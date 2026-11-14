@@ -6,6 +6,7 @@
 import agentos from '@/assets/services/agentos.svg?raw';
 import amazonS3 from '@/assets/services/amazon-s3.svg?raw';
 import amazonSes from '@/assets/services/amazon-ses.svg?raw';
+import browserbase from '@/assets/services/browserbase.svg?raw';
 import chrome from '@/assets/services/chrome.svg?raw';
 import daytona from '@/assets/services/daytona.svg?raw';
 import e2b from '@/assets/services/e2b.svg?raw';
@@ -30,6 +31,7 @@ export const SERVICE_ICONS = {
 	daytona: { name: 'Daytona', svg: daytona },
 	freestyle: { name: 'Freestyle', svg: freestyle },
 	agentos: { name: 'agentOS', svg: agentos },
+	browserbase: { name: 'Browserbase', svg: browserbase, color: '#FF4500' },
 	chrome: { name: 'Chrome', svg: chrome, color: '#4285F4' },
 	postgresql: { name: 'PostgreSQL', svg: postgresql, color: '#4169E1' },
 	mysql: { name: 'MySQL', svg: mysql, color: '#4479A1' },

@@ -28,4 +28,13 @@
 		padding: 0 0 0 2rem;
 		border-left: 1px solid var(--color-line);
 	}
+	/* On a phone the rail would take a seventh of the width from every code
+	   block, so each step's number sits beside its title instead (Step.astro). */
+	@media (max-width: 639px) {
+		.steps {
+			margin-left: 0;
+			padding-left: 0;
+			border-left: 0;
+		}
+	}
 </style>

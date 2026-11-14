@@ -3,10 +3,10 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { freePort } from "./free-port.js";
+import { waitFor } from "./orange-dev.js";
 
 // A real MinIO server, the S3-compatible store that R2's S3 backend talks to. It runs from
 // OPEN_ORANGE_TEST_MINIO_BINARY when set, otherwise as a Docker container. With neither, tests
@@ -91,15 +91,11 @@ export async function startMinio(): Promise<S3Store> {
 	}
 	const endpoint = `http://127.0.0.1:${port}`;
 	// MinIO has no readiness signal, so the test polls its health endpoint.
-	for (let attempt = 0; ; attempt += 1) {
-		try {
-			if ((await fetch(`${endpoint}/minio/health/live`)).ok) break;
-		} catch {}
-		if (attempt >= 300) {
-			await stop();
-			throw new Error("MinIO did not become ready");
-		}
-		await delay(100);
+	try {
+		await waitFor("MinIO to become ready", () => fetch(`${endpoint}/minio/health/live`).then((response) => response.ok, () => false));
+	} catch (error) {
+		await stop();
+		throw error;
 	}
 	return { accessKeyId, endpoint, secretAccessKey, stop };
 }

@@ -350,13 +350,9 @@ function isOrangeRuntime(pid: number): boolean {
 async function openInspector(pid: number, output: () => string): Promise<Inspector> {
 	const from = output().length;
 	process.kill(pid, "SIGUSR1");
-	let address: string | undefined;
-	const deadline = Date.now() + 10_000;
-	while (address === undefined) {
-		assert.ok(Date.now() < deadline, "the runtime did not open an inspector");
-		await delay(50);
-		address = /Debugger listening on (ws:\/\/\S+)/.exec(output().slice(from))?.[1];
-	}
+	const inspectorAddress = (): string | undefined => /Debugger listening on (ws:\/\/\S+)/.exec(output().slice(from))?.[1];
+	await waitFor("the runtime to open an inspector", () => inspectorAddress() !== undefined, 10_000);
+	const address = inspectorAddress()!;
 	const socket = new WebSocket(address);
 	await withDeadline(
 		new Promise((resolveOpen, rejectOpen) => {
@@ -447,6 +443,18 @@ export async function withDeadline<T>(
 		]);
 	} finally {
 		clearTimeout(timer);
+	}
+}
+
+/**
+ * Polls `done` until it is true, and fails with `what` after `milliseconds`. Use it to wait for an
+ * effect that has no event to await, in place of a fixed sleep that is too short on a loaded host.
+ */
+export async function waitFor(what: string, done: () => boolean | Promise<boolean>, milliseconds = 30_000): Promise<void> {
+	const deadline = Date.now() + milliseconds;
+	while (!(await done())) {
+		if (Date.now() > deadline) throw new Error(`Timed out after ${milliseconds}ms waiting for ${what}`);
+		await delay(50);
 	}
 }
 

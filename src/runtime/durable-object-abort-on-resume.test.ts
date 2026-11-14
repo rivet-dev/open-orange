@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { isRecord, stopProjectEngines } from "../../tests/orange-dev.js";
+import { isRecord, stopProjectEngines, waitFor } from "../../tests/orange-dev.js";
 
 const cliEntrypoint = fileURLToPath(new URL("../bin.ts", import.meta.url));
 const fixtureDirectory = fileURLToPath(
@@ -158,18 +158,25 @@ test("ctx.abort() keeps the writes of turns that finished before it and discards
 		await fetch(`${origin}/put?name=agent&key=a`);
 		await fetch(`${origin}/put?name=agent&key=b`);
 		await (await fetch(`${origin}/destroy?name=agent`)).arrayBuffer();
+		// The abort runs on a later timer and gives no signal; let it fire before reading.
 		await delay(500);
 		assert.deepEqual(await keys("agent"), [], orange.output());
 
 		// The same wipe from an alarm, with SQL tables as the Agents SDK keeps them.
-		const peer = createServer((_request, response) => response.end("ok"));
+		let alarmReachedPeer = false;
+		const peer = createServer((_request, response) => {
+			alarmReachedPeer = true;
+			response.end("ok");
+		});
 		await new Promise<void>((resolveListen) => peer.listen(0, "127.0.0.1", resolveListen));
 		const peerOrigin = `http://127.0.0.1:${listeningPort(peer)}`;
 		try {
 			await fetch(`${origin}/sql?name=alarmed`);
 			await fetch(`${origin}/put?name=alarmed&key=a`);
 			await fetch(`${origin}/arm?name=alarmed&delay=200&peer=${encodeURIComponent(peerOrigin)}`);
-			await delay(1_500);
+			await waitFor("the alarm to reach the peer", () => alarmReachedPeer);
+			// The alarm wipes storage after the peer answers, then aborts on a later timer.
+			await delay(500);
 			assert.deepEqual(await keys("alarmed"), [], orange.output());
 			const tables = await (await fetch(`${origin}/tables?name=alarmed`)).json();
 			assert.deepEqual(tables, [], orange.output());

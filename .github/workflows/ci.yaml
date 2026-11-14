@@ -44,7 +44,7 @@ jobs:
       matrix:
         include:
           - { area: durable-objects, runner: depot-ubuntu-24.04-16 }
-          - { area: rpc-and-websockets, runner: depot-ubuntu-24.04-8 }
+          - { area: rpc-and-websockets, runner: depot-ubuntu-24.04-16 }
           - { area: bindings, runner: depot-ubuntu-24.04-16 }
           - { area: events, runner: depot-ubuntu-24.04-8 }
           - { area: node-compat, runner: depot-ubuntu-24.04-8 }

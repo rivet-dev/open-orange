@@ -240,6 +240,7 @@ describe("Queues through orange dev", () => {
 		const [first, second] = later;
 		assert.ok(first !== undefined && second !== undefined);
 		assert.ok(second.at - first.at >= 3_000, `redelivered after ${second.at - first.at} ms`);
+		// Time for a wrong redelivery of "now" to arrive.
 		await delay(500);
 		assert.equal(
 			(await deliveries("delayed")).filter((delivery) => isRecord(delivery.body) && delivery.body.name === "now").length,

@@ -7,7 +7,7 @@ import test from "node:test";
 import { bundleWorker } from "../build/bundle-worker.js";
 import { runtimeModuleRewrites } from "../build/rewrite-module-imports.js";
 import { type RuntimeProcess, spawnRuntime } from "./spawn.js";
-import { isRecord, stopEngineFromRuntimeFile } from "../../tests/orange-dev.js";
+import { isRecord, stopEngineFromRuntimeFile, waitFor } from "../../tests/orange-dev.js";
 
 const workerEntrypoint = new URL(
 	"./fixtures/durable-object-rpc-fetch-worker.ts",
@@ -327,38 +327,33 @@ test("runs Durable Object RPC and fetch through the Worker binding and Rivet act
 			`${origin}/wait-until-start?name=state`,
 		);
 		assert.equal(await waitUntilStart.json(), initialGeneration);
-		let waitUntilGeneration: unknown = null;
-		for (let attempt = 0; attempt < 100; attempt += 1) {
+		await waitFor("waitUntil to finish", async () => {
 			const response = await fetch(
 				`${origin}/wait-until-status?name=state`,
 			);
-			waitUntilGeneration = await response.json();
-			if (waitUntilGeneration === initialGeneration) break;
-			await new Promise<void>((resolve) => setTimeout(resolve, 10));
-		}
-		assert.equal(waitUntilGeneration, initialGeneration);
+			return (await response.json()) === initialGeneration;
+		});
 
 		const aborted = await fetch(`${origin}/abort?name=state`);
 		assert.equal(aborted.status, 200, diagnostics.join("\n"));
 		assert.deepEqual(await aborted.json(), { message: "state fixture reset" });
 		let resetState: unknown;
-		for (let attempt = 0; attempt < 200; attempt += 1) {
+		await waitFor(`the reset actor generation\n${diagnostics.join("\n")}`, async () => {
 			try {
 				const response = await fetch(`${origin}/state?name=state`);
-				if (response.ok) {
-					const value: unknown = await response.json();
-					if (
-						isRecord(value) &&
-						typeof value.generation === "number" &&
-						value.generation !== initialGeneration
-					) {
-						resetState = value;
-						break;
-					}
+				if (!response.ok) return false;
+				const value: unknown = await response.json();
+				if (
+					isRecord(value) &&
+					typeof value.generation === "number" &&
+					value.generation !== initialGeneration
+				) {
+					resetState = value;
+					return true;
 				}
 			} catch {}
-			await new Promise<void>((resolve) => setTimeout(resolve, 25));
-		}
+			return false;
+		});
 		assert.ok(isRecord(resetState), diagnostics.join("\n"));
 		assert.equal(resetState.id, state.id);
 		assert.equal(resetState.startupReady, true);
@@ -399,23 +394,22 @@ test("runs Durable Object RPC and fetch through the Worker binding and Rivet act
 			message: "state fixture reset",
 		});
 		let recreatedLifecycle: StorageLifecycleSnapshot | undefined;
-		for (let attempt = 0; attempt < 200; attempt += 1) {
+		await waitFor(`the recreated lifecycle actor\n${diagnostics.join("\n")}`, async () => {
 			try {
 				const response = await fetch(
 					`${origin}/storage-lifecycle-read?name=lifecycle`,
 				);
-				if (response.ok) {
-					const snapshot = requireStorageLifecycleSnapshot(
-						await response.json(),
-					);
-					if (snapshot.generation !== writtenLifecycle.generation) {
-						recreatedLifecycle = snapshot;
-						break;
-					}
-				}
-			} catch {}
-			await new Promise<void>((resolve) => setTimeout(resolve, 25));
-		}
+				if (!response.ok) return false;
+				const snapshot = requireStorageLifecycleSnapshot(
+					await response.json(),
+				);
+				if (snapshot.generation === writtenLifecycle.generation) return false;
+				recreatedLifecycle = snapshot;
+				return true;
+			} catch {
+				return false;
+			}
+		});
 		assert.ok(recreatedLifecycle, diagnostics.join("\n"));
 		assert.equal(recreatedLifecycle.id, writtenLifecycle.id);
 		assertStoredLifecycle(
@@ -428,6 +422,7 @@ test("runs Durable Object RPC and fetch through the Worker binding and Rivet act
 		const blocking = fetch(
 			`${origin}/block-sql?name=blocking&milliseconds=500`,
 		);
+		// No signal marks the start of the synchronous SQL loop; give it a head start.
 		await new Promise<void>((resolve) => setTimeout(resolve, 100));
 		const quickStarted = performance.now();
 		const delayed = await fetch(`${origin}/rpc?name=blocking-peer&amount=0`);

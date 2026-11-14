@@ -9,7 +9,7 @@ import { gunzipSync } from "node:zlib";
 
 import { startFakeD1ExportApi, type FakeD1ExportApi, type FakeD1ExportApiOptions } from "./fake-d1-export-api.js";
 import { describeSource, migratorToken, startCloudflareSource, type CloudflareSource } from "./migrate-source.js";
-import { copyProject, repositoryRoot, runOrange, startOrangeDev, type RunningOrangeDev, type TemporaryProject, withDeadline } from "./orange-dev.js";
+import { copyProject, repositoryRoot, runOrange, startOrangeDev, type RunningOrangeDev, type TemporaryProject, waitFor, withDeadline } from "./orange-dev.js";
 
 // `orange migrate d1 --url` end to end: the real CLI, real `orange dev`, and the prepared Worker on
 // real workerd with a real local D1 that holds seed.sql. Cloudflare's export API is a local server
@@ -218,14 +218,6 @@ async function setUp(api: Partial<FakeD1ExportApiOptions> = {}): Promise<Move> {
 	return result;
 }
 
-async function waitFor(what: string, done: () => Promise<boolean> | boolean, ms = 60_000): Promise<void> {
-	const deadline = Date.now() + ms;
-	while (!(await done())) {
-		if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-		await new Promise((resolve) => setTimeout(resolve, 50));
-	}
-}
-
 // A move that failed before the switch: Cloudflare takes writes again, and Orange serves none of its copy.
 async function assertRefused(setup: Move, moved: { code: number | null; output: string }, message: RegExp): Promise<void> {
 	assert.equal(moved.code, 1, moved.output);
@@ -262,11 +254,8 @@ test("a D1 database moves through the export API: Orange equals Cloudflare value
 			}
 		})();
 		const moved = await setup.move();
-		// The app writes until one write lands on Orange. A fixed pause is too short on a loaded host.
-		const until = Date.now() + 30_000;
-		while (moved.code === 0 && Date.now() < until && !writes.some(({ result }) => result.status === 200)) {
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
+		// The app writes until one write lands on Orange.
+		if (moved.code === 0) await waitFor("a write to land on Orange", () => writes.some(({ result }) => result.status === 200));
 		running = false;
 		await appTraffic;
 		assert.equal(moved.code, 0, moved.output);
@@ -465,7 +454,7 @@ test("the switch refuses when a write could have missed the copy, Orange serves 
 			}
 			if (step === "extend") return { answer: { body: { error: { code: "gateway", message: "bad gateway" } }, status: 502 } };
 			if (step === "moved") {
-				await waitFor("the lease to run out", () => Date.now() - frozenAt > 3_000);
+				await waitFor("the lease to run out", () => Date.now() - frozenAt > 3_000, 60_000);
 				await sql("INSERT INTO tags(owner, label) VALUES (98, 'after the lease')");
 			}
 			return undefined;
@@ -556,8 +545,8 @@ test("a second run during a move is refused, Ctrl-C opens the freeze, and the ne
 	try {
 		const before = await dump(setup.source.origin);
 		const first = setup.start();
-		await waitFor("the freeze", async () => (await sourceState(setup.source)) === "frozen");
-		await waitFor("the import", () => first.output().includes("Exported DB"));
+		await waitFor("the freeze", async () => (await sourceState(setup.source)) === "frozen", 60_000);
+		await waitFor("the import", () => first.output().includes("Exported DB"), 60_000);
 
 		const second = await setup.move();
 		assert.equal(second.code, 1, second.output);

@@ -10,6 +10,7 @@ import {
 	openWebSocket,
 	repositoryRoot,
 	startOrangeDev,
+	waitFor,
 	withDeadline,
 	type ClientWebSocket,
 	type RunningOrangeDev,
@@ -17,6 +18,7 @@ import {
 } from "./orange-dev.js";
 
 const slept = "old=SleepFinalize new=Terminated";
+const hibernated = "event=hibernated";
 // Past Orange's 10 second sleep timeout, with a margin.
 const pastSleepTimeoutMs = 16_000;
 
@@ -52,11 +54,16 @@ function sleeps(dev: RunningOrangeDev): number {
 }
 
 async function waitForSleep(dev: RunningOrangeDev, before: number): Promise<void> {
-	const deadline = Date.now() + 60_000;
-	while (sleeps(dev) <= before) {
-		assert.ok(Date.now() < deadline, "the object did not sleep");
-		await delay(250);
-	}
+	await waitFor("the object to sleep", () => sleeps(dev) > before, 60_000);
+}
+
+// An idle object with accepted sockets hibernates and keeps its actor, so it logs this in place of a sleep.
+function hibernations(dev: RunningOrangeDev): number {
+	return dev.output().split(hibernated).length - 1;
+}
+
+async function waitForHibernations(dev: RunningOrangeDev, before: number, count = 1): Promise<void> {
+	await waitFor("the object to hibernate", () => hibernations(dev) >= before + count, 60_000);
 }
 
 function closeOf(socket: ClientWebSocket): Promise<{ code: number; reason: string }> {
@@ -95,7 +102,7 @@ test("an idle object hibernates under an open accepted WebSocket, and its next m
 			assert.equal(soon.boot, first.boot, "the object hibernated before its idle timeout");
 			assert.equal(soon.messages, 2);
 			const sleepsBefore = sleeps(dev);
-			await delay(pastSleepTimeoutMs);
+			await waitForHibernations(dev, hibernations(dev));
 			assert.equal(closed, false, dev.output());
 
 			const woken = await ask(socket, "three");
@@ -129,12 +136,13 @@ test("a pending timer keeps an idle object from hibernating until the timer runs
 			const socket = await openWebSocket(socketUrl(dev, "timer", "ann"));
 			// The object arms a 14 second timer, which writes the instance's boot ID to storage.
 			const armed = await ask(socket, "arm-timer");
+			// Past the 14 second timer, and so past the 10 second idle timeout.
 			await delay(17_000);
 			const afterTimer = await ask(socket, "check");
 			assert.equal(afterTimer.boot, armed.boot, "the object hibernated with a timer pending");
 			assert.equal(afterTimer.timerFiredBy, armed.boot, "the timer did not run in the live instance");
 
-			await delay(pastSleepTimeoutMs);
+			await waitForHibernations(dev, hibernations(dev));
 			const woken = await ask(socket, "after");
 			assert.notEqual(woken.boot, armed.boot, "the object did not hibernate after its timer ran");
 		} finally {
@@ -151,11 +159,14 @@ test("a pending timer of an object with no WebSocket runs in the instance that s
 		try {
 			const text = async (path: string): Promise<string> => await (await fetch(`${dev.origin}${path}?room=no-socket`)).text();
 			const armed = await text("/arm-timer");
+			// Past the 14 second timer, and so past the 10 second idle timeout.
 			await delay(17_000);
 			assert.equal(await text("/timer-fired-by"), armed, "the timer did not run in the instance that set it");
 			assert.equal(await text("/boot"), armed, "the object was replaced while its timer was pending");
+			const sleepsBefore = sleeps(dev);
 
-			await delay(pastSleepTimeoutMs);
+			// With no accepted socket, the idle object sleeps with its actor.
+			await waitForSleep(dev, sleepsBefore);
 			assert.notEqual(await text("/boot"), armed, "the object did not sleep after its timer ran");
 		} finally {
 			await dev.close();
@@ -174,6 +185,7 @@ test("a pending node:timers or node:timers/promises timer of an object with no W
 			const text = async (kind: string, path: string): Promise<string> =>
 				await (await fetch(`${dev.origin}${path}?room=node-${kind}&kind=${kind}`)).text();
 			const armed = await Promise.all(kinds.map((kind) => text(kind, "/arm-node-timer")));
+			// Past the 14 second timers, and so past the 10 second idle timeout.
 			await delay(17_000);
 			for (const [index, kind] of kinds.entries()) {
 				assert.equal(await text(kind, "/timer-fired-by"), armed[index], `the ${kind} timer did not run in the instance that set it`);
@@ -194,12 +206,12 @@ test("after ctx.abort() resets an object, the old instance's setInterval() stops
 			const socket = await openWebSocket(socketUrl(dev, "reset-interval", "ann"));
 			const armed = await ask(socket, "log-ticks");
 			const ticks = (): number => dev.output().split(`tick from ${armed.boot}`).length - 1;
-			await delay(1_000);
-			assert.ok(ticks() > 0, "the interval did not run");
+			await waitFor("the interval's first tick", () => ticks() > 0);
 			const closed = closeOf(socket);
 			socket.send("abort");
 			await withDeadline(closed, "the reset's close");
 			const afterReset = ticks();
+			// Ten periods of the 200 ms interval.
 			await delay(2_000);
 			assert.equal(ticks(), afterReset, "the reset object's interval still runs");
 		} finally {
@@ -216,12 +228,13 @@ test("an unref()'d timer of the Worker keeps an idle object from hibernating unt
 		try {
 			const socket = await openWebSocket(socketUrl(dev, "unref-timer", "ann"));
 			const armed = await ask(socket, "arm-unref-timer");
+			// Past the 14 second timer, and so past the 10 second idle timeout.
 			await delay(17_000);
 			const afterTimer = await ask(socket, "check");
 			assert.equal(afterTimer.boot, armed.boot, "the object hibernated with an unref()'d timer pending");
 			assert.equal(afterTimer.timerFiredBy, armed.boot, "the timer did not run in the live instance");
 
-			await delay(pastSleepTimeoutMs);
+			await waitForHibernations(dev, hibernations(dev));
 			const woken = await ask(socket, "after");
 			assert.notEqual(woken.boot, armed.boot, "the object did not hibernate after its timer ran");
 		} finally {
@@ -252,13 +265,15 @@ test("an open outbound WebSocket or a fetch() in flight keeps an idle object fro
 					ask(connected, `open-outbound ${dev.origin.replace("http", "ws")}/socket?room=outbound-peer&mode=standard`),
 					ask(requesting, `fetch-unawaited http://127.0.0.1:${address.port}/slow`),
 				]);
+				// Past the 10 second idle timeout, and before the peer's 14 second response.
 				await delay(12_500);
 				assert.equal((await ask(connected, "check")).boot, opened.boot, "the object hibernated with an outbound WebSocket open");
 				assert.equal((await ask(requesting, "check")).boot, requested.boot, "the object hibernated with a request in flight");
 
 				// The object closes its outbound WebSocket, and the response arrives.
+				const hibernationsBefore = hibernations(dev);
 				await ask(connected, "close-outbound");
-				await delay(pastSleepTimeoutMs);
+				await waitForHibernations(dev, hibernationsBefore, 2);
 				assert.notEqual((await ask(connected, "after")).boot, opened.boot, "the object did not hibernate after its outbound WebSocket closed");
 				const afterResponse = await ask(requesting, "after");
 				assert.notEqual(afterResponse.boot, requested.boot, "the object did not hibernate after the response");
@@ -284,13 +299,14 @@ test("when RivetKit cannot use `ws`, Orange warns once, and RivetKit's own socke
 		try {
 			const socket = await openWebSocket(socketUrl(dev, "stub-socket", "ann"));
 			await ask(socket, "open-stub-socket");
-			// Past the 10 second idle timeout.
-			await delay(12_500);
+			const heldLines = (): string[] =>
+				dev
+					.output()
+					.split("\n")
+					.filter((line) => line.includes("event=held") && line.includes("outbound-websocket"));
+			await waitFor("the held report", () => heldLines().length > 0);
 			const output = dev.output();
-			const held = output
-				.split("\n")
-				.filter((line) => line.includes("event=held") && line.includes("outbound-websocket"))
-				.map((line) => /idle_ms=\d+ (.*)$/.exec(line)?.[1]);
+			const held = heldLines().map((line) => /idle_ms=\d+ (.*)$/.exec(line)?.[1]);
 			assert.deepEqual(held, ["held_by=outbound-websocket:1"], output);
 			const warnings = output.split("RivetKit opens Durable Object WebSockets with the built-in WebSocket").length - 1;
 			assert.equal(warnings, 1, output);
@@ -317,8 +333,10 @@ test("with info logs, an object that stays awake past its idle timeout names wha
 				ask(accepted, "hello"),
 				ask(quiet, "hello"),
 			]);
-			// Past the 10 second idle timeout, and before the 14 second timer runs.
-			await delay(12_500);
+			// Each held object reports at the 10 second idle timeout, before the 14 second timer runs, and
+			// the quiet object hibernates.
+			const heldReports = (): number => dev.output().split("event=held").length - 1;
+			await waitFor("the held reports", () => heldReports() >= 3 && hibernations(dev) >= 1);
 			const held = dev
 				.output()
 				.split("\n")
@@ -393,6 +411,7 @@ test("auto-responses don't keep an object awake or wake a hibernated one", { tim
 				await delay(2_000);
 				lastPing = await ping();
 			}
+			// Time for a wake by the last ping to build an instance before the next message.
 			await delay(1_500);
 			const askedAt = Date.now();
 			const woken = await ask(socket, "two");
@@ -634,7 +653,7 @@ test("overlapping accepted WebSockets on one object see only their own attachmen
 			};
 			const before = await ask(sockets[0]!, "boot");
 			await check(4);
-			await delay(pastSleepTimeoutMs);
+			await waitForHibernations(dev, hibernations(dev));
 			// Four messages arrive at the hibernated object at once. One new instance serves them all.
 			const woken = await Promise.all(sockets.map((socket, index) => ask(socket, names[index]!)));
 			assert.equal(new Set(woken.map((reply) => reply.boot)).size, 1, "a wake built more than one instance");
@@ -644,11 +663,10 @@ test("overlapping accepted WebSockets on one object see only their own attachmen
 			const closed = closeOf(sockets[3]!);
 			sockets[3]!.close(1000, "done");
 			await closed;
-			await withDeadline(
-				(async () => {
-					while ((await ask(sockets[0]!, "count")).everyone !== 3) await delay(100);
-				})(),
+			await waitFor(
 				"the closed socket leaving getWebSockets()",
+				async () => (await ask(sockets[0]!, "count")).everyone === 3,
+				20_000,
 			);
 			await check(3);
 		} finally {
@@ -662,6 +680,7 @@ test("overlapping accepted WebSockets on one object see only their own attachmen
 test("each connected, hibernated room holds less than 65 KB of runtime heap", { timeout: 180_000 }, async () => {
 	await withProject(async (project) => {
 		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", {
+			...logs,
 			environment: { NODE_OPTIONS: "--inspect-port=0" },
 		});
 		const sockets: ClientWebSocket[] = [];
@@ -679,10 +698,10 @@ test("each connected, hibernated room holds less than 65 KB of runtime heap", { 
 		try {
 			// The first rooms pay for what the runtime loads once.
 			await openRooms(0, 50);
-			await delay(pastSleepTimeoutMs);
+			await waitForHibernations(dev, 0, 50);
 			const before = await dev.runtimeHeapUsed();
 			await openRooms(50, 300);
-			await delay(pastSleepTimeoutMs);
+			await waitForHibernations(dev, 50, 300);
 			const perRoom = ((await dev.runtimeHeapUsed()) - before) / 300;
 			assert.equal(sockets.filter((socket) => socket.readyState === 1).length, 350);
 			assert.ok(perRoom < 65 * 1024, `each room holds ${Math.round(perRoom / 1024)} KB of heap`);

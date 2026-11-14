@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { withDeadline } from "./orange-dev.js";
+import { waitFor, withDeadline } from "./orange-dev.js";
 import { freePort } from "./free-port.js";
 
 // Builds a real `orange deploy` image and runs it the way a runner pool does.
@@ -56,23 +56,23 @@ export async function withEngine<Value>(body: (endpoint: string) => Promise<Valu
 		stdio: "ignore",
 	});
 	try {
-		for (let i = 0; ; i += 1) {
-			const names = await fetch(`http://127.0.0.1:${guardPort}/actors/names?namespace=default`, {
-				headers: { authorization: "Bearer test-only-engine-token" },
-			}).catch(() => undefined);
-			if (names?.status === 200) {
-				// A cluster creates its pool. This Engine is empty, so the test does.
-				const pool = await fetch(`http://127.0.0.1:${guardPort}/pools/default?namespace=default`, {
-					body: "{}",
-					headers: { authorization: "Bearer test-only-engine-token", "content-type": "application/json" },
-					method: "PUT",
-				});
-				assert.ok(pool.ok, `${pool.status} ${await pool.text()}`);
-				break;
-			}
-			assert.ok(i < 300, "the Engine did not start");
-			await delay(200);
-		}
+		await waitFor(
+			"the Engine to start",
+			async () => {
+				const names = await fetch(`http://127.0.0.1:${guardPort}/actors/names?namespace=default`, {
+					headers: { authorization: "Bearer test-only-engine-token" },
+				}).catch(() => undefined);
+				return names?.status === 200;
+			},
+			60_000,
+		);
+		// A cluster creates its pool. This Engine is empty, so the test does.
+		const pool = await fetch(`http://127.0.0.1:${guardPort}/pools/default?namespace=default`, {
+			body: "{}",
+			headers: { authorization: "Bearer test-only-engine-token", "content-type": "application/json" },
+			method: "PUT",
+		});
+		assert.ok(pool.ok, `${pool.status} ${await pool.text()}`);
 		return await body(endpoint);
 	} finally {
 		const exit = new Promise((done) => engine.once("exit", done));

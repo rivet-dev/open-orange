@@ -122,8 +122,44 @@ test("an upload that storage times out fails with that reason, and its HTML erro
 	await withDeploy({ uploadRejection: { html, status: 408 } }, async (cloud, project, env) => {
 		const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url], env);
 		assert.equal(code, 1, output);
-		assert.match(output, /Failed to upload the image\. Storage stopped receiving it and timed the upload out \(HTTP 408\)\. Check the connection, then deploy again\./);
+		assert.match(output, /Failed to upload the image after 3 attempts\. Storage stopped receiving it and timed the upload out \(HTTP 408\)\. Check the connection, then deploy again\./);
 		assert.ok(!/DOCTYPE|Request\+?Timeout|%3Chtml/i.test(output), output);
+		assert.ok(!cloud.requests.some((request) => request.endsWith("/complete")), cloud.requests.join("\n"));
+		assert.equal(cloud.pools.size, 0);
+	});
+});
+
+test("an upload that loses its connection is sent again, and storage gets the whole image once", { skip: dockerSkip }, async () => {
+	await withDeploy({ dropConnections: { uploads: 1 } }, async (cloud, project, env, tag) => {
+		const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--tag", tag], env);
+		assert.equal(code, 0, output);
+		assert.match(output, /Upload attempt 1 failed\. The connection failed: .+ Retrying in 1 s…/);
+		assert.deepEqual(
+			cloud.uploads.map((upload) => ({ ...upload, bytes: undefined })),
+			[{ bytes: undefined, isImageTarball: true, matchesBuild: true }],
+			"storage received the whole image once",
+		);
+		assert.ok(cloud.pools.get("iad/default")?.build_id?.startsWith("bld_") === true, output);
+	});
+});
+
+test("a build registration whose answer is lost is not sent again, so Rivet Cloud holds one build", { skip: dockerSkip }, async () => {
+	await withDeploy({ dropConnections: { builds: 1 } }, async (cloud, project, env, tag) => {
+		const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--tag", tag], env);
+		assert.equal(code, 1, output);
+		assert.match(output, /Failed to register a build on cluster acme\. Couldn't reach Rivet Cloud at /);
+		assert.doesNotMatch(output, /Looks like a bug/);
+		assert.equal(cloud.requests.filter((request) => request.startsWith("POST ") && request.endsWith("/builds")).length, 1, cloud.requests.join("\n"));
+		assert.equal(cloud.pools.size, 0);
+	});
+});
+
+test("an upload that loses its connection on every attempt fails with what to do next, and no bug report link", { skip: dockerSkip }, async () => {
+	await withDeploy({ dropConnections: { uploads: 3 } }, async (cloud, project, env, tag) => {
+		const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--tag", tag], env);
+		assert.equal(code, 1, output);
+		assert.match(output, /Failed to upload the image after 3 attempts\. The connection failed: .+ Check the connection, then deploy again\./);
+		assert.doesNotMatch(output, /Looks like a bug/);
 		assert.ok(!cloud.requests.some((request) => request.endsWith("/complete")), cloud.requests.join("\n"));
 		assert.equal(cloud.pools.size, 0);
 	});

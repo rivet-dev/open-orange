@@ -400,7 +400,7 @@ async function buildAndUpload(
 		const md5 = await md5Base64(tarball);
 		const created = await cloud.createBuild({ content_length: size, content_md5: md5, image: reference });
 		io.log(`Uploading build ${created.build_id} (${formatBytes(size)})…`);
-		await uploadFile(created.upload_url, tarball, size, md5);
+		await uploadWithProgress(io, theme, created.upload_url, tarball, size, md5);
 		await cloud.completeBuild(created.build_id);
 		io.log(`Preparing build ${created.build_id}. This takes a few minutes…`);
 		await waitForBuild(cloud, theme, created.build_id);
@@ -408,6 +408,27 @@ async function buildAndUpload(
 		return created.build_id;
 	} finally {
 		await rm(temporary, { force: true, recursive: true });
+	}
+}
+
+async function uploadWithProgress(io: DeployCommandIo, theme: Theme, uploadUrl: string, tarball: string, size: number, md5: string): Promise<void> {
+	const spinner = startSpinner(process.stderr, theme, `Uploading ${formatBytes(0)} of ${formatBytes(size)}…`);
+	let drawnAt = 0;
+	try {
+		await uploadFile(uploadUrl, tarball, size, md5, {
+			progress(sent, elapsedMs) {
+				const now = Date.now();
+				if (now - drawnAt < 250 && sent < size) return;
+				drawnAt = now;
+				const rate = elapsedMs > 0 ? `, ${formatBytes((sent * 1000) / elapsedMs)}/s` : "";
+				spinner.update(`Uploading ${formatBytes(sent)} of ${formatBytes(size)}${rate}…`);
+			},
+			retry(reason, attempt, waitMs) {
+				spinner.interrupt(() => io.log(`Upload attempt ${attempt} failed. ${reason} Retrying in ${waitMs / 1000} s…`));
+			},
+		});
+	} finally {
+		spinner.stop();
 	}
 }
 

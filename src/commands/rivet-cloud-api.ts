@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 import { ExpectedFailure } from "../cli/issue-report.js";
@@ -82,6 +83,9 @@ const apiErrorSchema = z.object({
 });
 
 const requestTimeoutMs = 60_000;
+// A dropped connection or an overloaded server gets two more tries, as slow links drop large uploads.
+const retryDelaysMs = [1_000, 3_000];
+const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
 
 export interface RivetCloudClient {
 	completeBuild(buildId: string): Promise<void>;
@@ -123,12 +127,27 @@ export function createRivetCloudClient(options: RivetCloudOptions): RivetCloudCl
 				method,
 				signal: AbortSignal.timeout(requestTimeoutMs),
 			});
+		// A POST can reach Rivet Cloud and lose only its answer, and sending it again would create a
+		// second build or roll a secret twice. So only GET and PUT, which repeat safely, are retried.
+		const delays = method === "POST" ? [] : retryDelaysMs;
 		// A network failure is the machine's or Rivet Cloud's, not a bug in Orange.
 		const reach = async (token: string): Promise<Response> => {
-			try {
-				return await send(token);
-			} catch (error: unknown) {
-				throw new ExpectedFailure(`Failed to ${action}. Couldn't reach Rivet Cloud at ${url.origin}: ${causeOf(error)}`);
+			for (let attempt = 1; ; attempt += 1) {
+				let response: Response | undefined;
+				let failure: unknown;
+				try {
+					response = await send(token);
+				} catch (error: unknown) {
+					failure = error;
+				}
+				const wait = delays[attempt - 1];
+				if (response !== undefined && (!transientStatuses.has(response.status) || wait === undefined)) return response;
+				if (wait === undefined) {
+					const tries = attempt > 1 ? ` after ${attempt} attempts` : "";
+					throw new ExpectedFailure(`Failed to ${action}${tries}. Couldn't reach Rivet Cloud at ${url.origin}: ${causeOf(failure)}`);
+				}
+				await response?.body?.cancel();
+				await delay(wait);
 			}
 		};
 		// A token error, such as an expired session, already says what failed and what to do.
@@ -243,15 +262,52 @@ function apiError(action: string, cluster: string, status: number, text: string,
 	return new Error(`Failed to ${action} (HTTP ${status}): ${reason}${fields.join("")}`);
 }
 
-// Sends the file in one PUT with exactly `size` bytes and its Content-MD5, as the
-// upload URL requires. The file streams from disk, so a large image is never in memory.
-// `fetch` would send a streamed body chunked, without a Content-Length.
-export function uploadFile(uploadUrl: string, path: string, size: number, md5: string): Promise<void> {
-	const url = new URL(uploadUrl);
+export interface UploadEvents {
+	// Bytes of the current attempt that left the file, and the attempt's age.
+	progress?(sent: number, elapsedMs: number): void;
+	retry?(reason: string, attempt: number, waitMs: number): void;
+}
+
+// Sends the file in one PUT, and again to the same signed URL when the connection drops
+// or storage answers with a transient error. A failure after the last attempt is the
+// network's or storage's, not a bug in Orange.
+export async function uploadFile(uploadUrl: string, path: string, size: number, md5: string, events: UploadEvents = {}): Promise<void> {
+	for (let attempt = 1; ; attempt += 1) {
+		const result = await uploadOnce(new URL(uploadUrl), path, size, md5, events);
+		if (result === undefined) return;
+		const wait = retryDelaysMs[attempt - 1];
+		if (!result.transient) throw new Error(`Failed to upload the image. ${result.reason}`);
+		if (wait === undefined) {
+			throw new ExpectedFailure(`Failed to upload the image after ${attempt} attempts. ${result.reason} Check the connection, then deploy again.`);
+		}
+		events.retry?.(result.reason, attempt, wait);
+		await delay(wait);
+	}
+}
+
+// Sends exactly `size` bytes with their Content-MD5, as the upload URL requires. The file
+// streams from disk, so a large image is never in memory. `fetch` would send a streamed
+// body chunked, without a Content-Length. Resolves to the failure, or undefined on success.
+function uploadOnce(
+	url: URL,
+	path: string,
+	size: number,
+	md5: string,
+	events: UploadEvents,
+): Promise<{ reason: string; transient: boolean } | undefined> {
 	const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-	return new Promise((resolveUpload, rejectUpload) => {
-		const fail = (error: unknown): void =>
-			rejectUpload(new Error(`Failed to upload the image: ${causeOf(error)}`));
+	return new Promise((resolveUpload) => {
+		const file = createReadStream(path);
+		let settled = false;
+		const settle = (result: { reason: string; transient: boolean } | undefined): void => {
+			if (settled) return;
+			settled = true;
+			file.destroy();
+			// A failed attempt must not keep its socket for the next one.
+			if (result !== undefined) request.destroy();
+			resolveUpload(result);
+		};
+		const fail = (error: unknown): void => settle({ reason: `The connection failed: ${sentence(causeOf(error))}`, transient: true });
 		const request = send(
 			url,
 			{ headers: { "content-length": size, "content-md5": md5 }, method: "PUT" },
@@ -264,18 +320,20 @@ export function uploadFile(uploadUrl: string, path: string, size: number, md5: s
 				response.on("error", fail);
 				response.on("end", () => {
 					const status = response.statusCode ?? 0;
-					if (status >= 200 && status < 300) {
-						resolveUpload();
-						return;
-					}
-					rejectUpload(new Error(`Failed to upload the image. ${describeStorageError(status, body)}`));
+					if (status >= 200 && status < 300) settle(undefined);
+					else settle({ reason: describeStorageError(status, body), transient: transientStatuses.has(status) });
 				});
 			},
 		);
 		request.on("error", fail);
 		// A stalled upload fails instead of waiting forever.
 		request.setTimeout(5 * 60_000, () => request.destroy(new Error("the upload stalled for 5 minutes")));
-		const file = createReadStream(path);
+		const startedAt = Date.now();
+		let sent = 0;
+		file.on("data", (chunk) => {
+			sent += chunk.length;
+			events.progress?.(sent, Date.now() - startedAt);
+		});
 		file.on("error", (error) => request.destroy(error));
 		file.pipe(request);
 	});
@@ -287,11 +345,11 @@ function describeStorageError(status: number, body: string): string {
 	const code = /<Code>([^<]*)<\/Code>/.exec(body)?.[1];
 	const message = /<Message>([^<]*)<\/Message>/.exec(body)?.[1];
 	if (code !== undefined || message !== undefined) {
-		return `Storage answered HTTP ${status} ${code ?? ""}: ${message ?? "no message"}`.replace(" :", ":");
+		return sentence(`Storage answered HTTP ${status} ${code ?? ""}: ${message ?? "no message"}`.replace(" :", ":"));
 	}
-	if (status === 408) return "Storage stopped receiving it and timed the upload out (HTTP 408). Check the connection, then deploy again.";
+	if (status === 408) return "Storage stopped receiving it and timed the upload out (HTTP 408).";
 	const text = body.trim();
-	return `Storage answered HTTP ${status}${text.length > 0 && !text.startsWith("<") ? `: ${text.slice(0, 200)}` : ""}`;
+	return sentence(`Storage answered HTTP ${status}${text.length > 0 && !text.startsWith("<") ? `: ${text.slice(0, 200)}` : ""}`);
 }
 
 function causeOf(error: unknown): string {

@@ -39,6 +39,9 @@ export interface RivetCloudDoubleOptions {
 	token: string;
 	// `token` is a cluster token, which Rivet Cloud lets update a pool but not create one.
 	tokenIsClusterToken?: boolean;
+	// The first `builds` build registrations lose their answer after the build exists, and the
+	// first `uploads` uploads lose their connection after part of the body arrived.
+	dropConnections?: { builds?: number; uploads?: number };
 	// Cloud storage refuses the upload with this S3-style error.
 	// `html` answers as the storage front end does, with a page instead of the XML error.
 	uploadRejection?: { code: string; message: string; status: number } | { html: string; status: number };
@@ -199,7 +202,19 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 		};
 	};
 
+	const dropped = { builds: 0, uploads: 0 };
+	const drops = (kind: "builds" | "uploads"): boolean => {
+		if (dropped[kind] >= (options.dropConnections?.[kind] ?? 0)) return false;
+		dropped[kind] += 1;
+		return true;
+	};
+
 	const handleUpload = async (request: IncomingMessage, response: ServerResponse, buildId: string): Promise<void> => {
+		if (drops("uploads")) {
+			await new Promise((resolveChunk) => request.once("data", resolveChunk));
+			request.socket.destroy();
+			return;
+		}
 		const build = builds.get(buildId);
 		const hash = createHash("md5");
 		let bytes = 0;
@@ -333,6 +348,10 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 			}
 			const id = `bld_${randomUUID().slice(0, 8)}`;
 			builds.set(id, { contentLength, contentMd5, failure: null, id, image, reads: 0, status: "uploading", uploaded: false });
+			if (drops("builds")) {
+				request.socket.destroy();
+				return;
+			}
 			send(response, 201, {
 				build_id: id,
 				expires_at: new Date(Date.now() + 3_600_000).toISOString(),

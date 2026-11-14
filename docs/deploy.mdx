@@ -236,7 +236,9 @@ In CI, name the cluster with `--cluster` or `RIVET_CLUSTER`. The cluster token i
    to 5 GiB.
 4. Orange registers a build, uploads the tarball to the build's upload URL,
    and waits until the build is `ready`. Rivet Cloud prepares a build in 3 to
-   5 minutes.
+   5 minutes. In a terminal, Orange shows the bytes sent and the upload rate.
+   When the connection drops, or Rivet Cloud or storage answers 408, 429, or
+   5xx, Orange sends the request again, up to 3 attempts in total.
 5. Orange rolls the runner pool out to the build. With an `orange login` session, it
    creates the pool if it does not exist, and prints `Creating pool default`. With a
    cluster token, the pool must exist. Every later deploy rolls

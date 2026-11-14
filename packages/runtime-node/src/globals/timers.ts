@@ -288,6 +288,8 @@ export function setInterval(
 export function clearTimeout(timer: Timeout | number | null | undefined): void {
 	if (timer instanceof Timeout) timer.close();
 	else if (typeof timer === "number") cancelTimer(timer);
+	// Infrastructure may retain handles created before Worker globals were installed.
+	else if (timer !== null && typeof timer === "object") nodeClearTimeout(timer as NodeTimer);
 }
 
 export function clearInterval(timer: Timeout | number | null | undefined): void {

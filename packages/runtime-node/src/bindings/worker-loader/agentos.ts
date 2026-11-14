@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix, resolve, sep } from "node:path";
 import { PassThrough } from "node:stream";
 
-import type { AgentOs } from "@rivet-dev/agentos-core";
+import { createHostedWorkerVm, workerVmHostBridge, type WorkerVm } from "./host-vm.js";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
@@ -36,7 +36,7 @@ interface BootedVm {
 	// The host directory that the VM mounts read-only at `bundleRoot`.
 	bundleDirectory: string;
 	moduleRewrites: Record<string, string>;
-	vm: AgentOs;
+	vm: WorkerVm;
 }
 
 // A VM that is booting or booted. `dispose` runs once.
@@ -295,7 +295,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		};
 	}
 
-	async #spawn(vm: AgentOs, root: string, owned: OwnedVm): Promise<VmChild> {
+	async #spawn(vm: WorkerVm, root: string, owned: OwnedVm): Promise<VmChild> {
 		const child = await spawnVmChild(vm, root, {
 			dispose: () => owned.dispose(),
 			report: (message) => this.#options.onDiagnostic(message),
@@ -366,6 +366,8 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 				return [specifier, posix.join(runtimeRoot, file)];
 			}),
 		);
+		const bridge = workerVmHostBridge();
+		if (bridge) return { moduleRewrites, vm: await createHostedWorkerVm(bridge, mode === "network") };
 		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos-core");
 		const bundleDirectory = await createHostDirectory();
 		try {
@@ -414,7 +416,7 @@ interface VmChildOptions {
 	report(message: string): void;
 }
 
-async function spawnVmChild(vm: AgentOs, root: string, options: VmChildOptions): Promise<VmChild> {
+async function spawnVmChild(vm: WorkerVm, root: string, options: VmChildOptions): Promise<VmChild> {
 	const stdout = new PassThrough();
 	const exitListeners: ((reason: string) => void)[] = [];
 	let exitReason: string | undefined;
@@ -423,8 +425,16 @@ async function spawnVmChild(vm: AgentOs, root: string, options: VmChildOptions):
 	const descriptor = await vm.process.spawn("node", [posix.join(runtimeRoot, "worker-loader-child.mjs")], {
 		cwd: root,
 		env: { HOME: "/home/user", PATH: "/usr/local/bin:/usr/bin:/bin" },
-		onStderr: (chunk) => process.stderr.write(chunk),
-		onStdout: (chunk) => stdout.write(chunk),
+		onStderr: (chunk) => { process.stderr.write(chunk); },
+		onStdout: (chunk) => {
+			if (stdout.write(chunk)) return;
+			// The hosted adapter awaits this promise. The legacy client can
+			// ignore it safely: close also resolves the waiter, never rejects.
+			return new Promise<void>(resolveDrain => {
+				const done = () => { stdout.off("drain", done); stdout.off("close", done); resolveDrain(); };
+				stdout.once("drain", done); stdout.once("close", done);
+			});
+		},
 	});
 	const pid = descriptor.pid;
 	const exited = new Promise<void>((resolveExit) => {

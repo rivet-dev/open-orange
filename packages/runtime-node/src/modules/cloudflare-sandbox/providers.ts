@@ -8,6 +8,7 @@ import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "no
 import { dirname, join, posix } from "node:path";
 
 import type { AgentOs } from "@rivet-dev/agentos-core";
+import {hostedAgentOsProvider,sandboxVmHostBridge} from "./host-provider.js";
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { runtimeSettings } from "../../internal/runtime-settings.js";
 import type {
@@ -470,6 +471,8 @@ function adapterSandbox(sandbox: AdapterSandbox): SandboxBackend {
 // memory in the Orange runtime, so a sandbox lasts until destroy() or until
 // `orange dev` exits. The library loads only when a sandbox starts.
 function agentOsProvider(): SandboxProvider {
+	const bridge=sandboxVmHostBridge();
+	if(bridge)return hostedAgentOsProvider(bridge);
 	const vms = new Map<string, Promise<AgentOs>>();
 	const disposers = new Map<string, () => void>();
 	const boot = async () => {

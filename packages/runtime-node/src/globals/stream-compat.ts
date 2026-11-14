@@ -476,14 +476,17 @@ function nextResult(value: unknown, step: string): { done: boolean; value: unkno
 // error message when the iterator's return property is not callable.
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/tests/streams-test.js#L508-L527
 function installReadableStreamFrom(): void {
-	const native = method(NativeReadableStream, "from");
+	const native: unknown = Reflect.get(NativeReadableStream, "from");
 	const from = function from(this: unknown, iterable: unknown): unknown {
 		const getIterator: unknown =
 			iterable === null || iterable === undefined
 				? undefined
 				: (Reflect.get(Object(iterable), Symbol.asyncIterator) ??
 					Reflect.get(Object(iterable), Symbol.iterator));
-		if (typeof getIterator !== "function") return Reflect.apply(native, this, [iterable]);
+		if (typeof getIterator !== "function") {
+			if (typeof native === "function") return Reflect.apply(native, this, [iterable]);
+			throw new TypeError("ReadableStream.from requires an iterable");
+		}
 		const iterator: unknown = Reflect.apply(getIterator, iterable, []);
 		if (!isObject(iterator)) {
 			throw new TypeError("The iterator method must return an object");

@@ -347,11 +347,11 @@ export function acceptedWebSocketDrainClosers(): WebSocketDrainCloser[] {
 	const closers: WebSocketDrainCloser[] = [];
 	for (const host of liveHosts) {
 		for (const link of host.links()) {
-			closers.push(async () => {
+			closers.push(Object.assign(async () => {
 				host.forget(link);
 				link.end(webSocketDrainTransportClose.code, webSocketDrainTransportClose.reason);
 				await link.closed;
-			});
+			}, { closed: link.closed }));
 		}
 	}
 	return closers;

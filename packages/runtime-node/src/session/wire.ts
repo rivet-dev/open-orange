@@ -64,6 +64,7 @@ export const serviceTargetHeader = `${openOrangeInternalHeaderPrefix}service-tar
 // Which entrypoint a call reaches, with the binding's props. A connect() call
 // also carries the address and options the caller passed.
 export interface ServiceTarget {
+	worker?: string;
 	address?: string | SocketAddress;
 	entrypoint: string;
 	props?: unknown;

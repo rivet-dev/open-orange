@@ -1,0 +1,145 @@
+---
+title: "Compare Node.js and agentOS"
+description: "Run the same OpenOrange assertions on Node.js and isolated agentOS V8."
+---
+
+`orange dev` and `orange serve` accept `--runtime node` and `--runtime agentos`.
+Node.js remains the default. `OPENORANGE_RUNTIME` sets the default for both commands
+and programmatic runtime startup; an explicit option takes precedence.
+
+The agentOS backend is experimental and requires a matching agentOS client and
+native sidecar build. It executes the OpenOrange runtime and Worker inside V8.
+A guest startup failure is reported as a failure; it never starts a host Node.js
+Worker instead. For an unreleased local agentOS checkout, build its client and
+sidecar, then select them explicitly:
+
+```sh
+pnpm build
+export OPENORANGE_AGENTOS_MODULE="$AGENTOS_CHECKOUT/packages/core/dist/index.js"
+export AGENTOS_SIDECAR_BIN="$AGENTOS_CHECKOUT/target/debug/agentos-sidecar"
+export OPENORANGE_AGENTOS_RIVETKIT_PACKAGE=/absolute/path/to/portable-rivetkit-package
+pnpm orange dev --runtime agentos --host 0.0.0.0
+```
+
+<AiContext summary="Compatibility, permissions and limits">
+
+The selected RivetKit package must include its public WASM runtime. The backend
+verifies its content hashes before guest startup. Worker and actor JavaScript and
+the RivetKit WASM runner execute inside the VM. SQLite uses Rivet’s existing Rust
+remote backend and its actor VFS. The CLI manages the fixed Rivet Engine executable
+on the host, or connects to the explicitly configured external Engine.
+
+For a local Rust Engine source build, the trusted host controller may set
+`OPENORANGE_AGENTOS_RIVET_ENGINE_BUILD` to a JSON receipt with
+`format: "openorange-rust-engine-build-v1"`, the full40-character `sourceRevision`,
+a canonical absolute `path` and its64-character `sha256`. The executable must be
+read-only. OpenOrange verifies its bytes before starting it and records the
+selection in comparison results. This changes only the agentOS Rust remote
+server; the Node baseline keeps its pinned Engine and SDK packages.
+
+
+By default, the VM receives explicit read-only project/runtime/package mounts. A private
+guest link reads the generated input from its read-only mount. The guest does not
+implement separate database persistence. No writable host storage directory is
+mounted by default. An explicit trusted
+controller may set `OPENORANGE_AGENTOS_WRITABLE_PROJECT_BASE` to a canonical,
+owned directory with mode0700. Only selected projects contained in that directory
+receive writable project mounts. Runtime packages and host Engine state stay
+read-only. This supports host-observed files in isolated test fixtures.
+
+Explicit Orange settings,
+provider credentials, Rivet credentials, and configured Secrets Store values are
+forwarded. Other host environment variables and network access are not inherited.
+Its virtual uid/gid match the caller so mounted files retain normal permission
+checks. VM-local listeners are published by the CLI's HTTP bridge.
+
+The bridge streams request and response bodies with backpressure over VM-local
+TCP, including chunked uploads and responses before upload EOF. WebSocket
+upgrades retain bidirectional streaming. Request bodies default to an 8 MiB
+limit. Global `fetch` can be mocked; the saved fetch implementation and Node
+network APIs still enforce the underlying VM policy.
+
+The bridge defaults to 32 concurrent requests and a 30-second request deadline.
+Set `OPENORANGE_AGENTOS_MAX_REQUEST_BYTES`,
+`OPENORANGE_AGENTOS_MAX_CONCURRENT_REQUESTS`, and
+`OPENORANGE_AGENTOS_REQUEST_TIMEOUT_MS` to raise those limits explicitly.
+WebSockets use a separate 125-second idle deadline, configurable through
+`OPENORANGE_AGENTOS_WEBSOCKET_IDLE_TIMEOUT_MS`, so normal keepalive pings do not
+race the HTTP request deadline. Runtime disposal closes all owned connections.
+OpenOrange configures a bounded 256 MiB V8 heap for its runtime. Set
+`OPENORANGE_AGENTOS_V8_HEAP_MB` to choose another budget; agentOS enforces it.
+The default cumulative CPU budget remains agentOS's30 seconds per process.
+`OPENORANGE_AGENTOS_CPU_TIME_MS` supplies an explicit positive budget for longer
+runs; request deadlines remain independent. The runtime's private filesystem
+budget defaults to512MiB (`OPENORANGE_AGENTOS_FILESYSTEM_BYTES`).
+All budgets are enforced; increasing one does not change the network or mount policy.
+
+
+The comparison runner inventories every existing test file and bundles each file
+once for the direct host/guest lane, preserving its assertions and original
+`import.meta.url` locations. It runs one file at a time with deadlines and output
+caps. For the application lane, Node.js controls the existing tests while
+`OPENORANGE_RUNTIME` selects the actual Worker runtime.
+
+```sh
+export OPENORANGE_AGENTOS_ROOT="$AGENTOS_CHECKOUT"
+export OPENORANGE_AGENTOS_NATIVE_MANIFEST=/absolute/path/to/native-build.json
+pnpm exec tsx tests/runtime-comparison/run.ts --lane runtime --name runtime-comparison
+pnpm exec tsx tests/runtime-comparison/run.ts --lane application --application --name application-comparison
+```
+
+The build manifest contains the native binary's `sha256`, exact `sourceRevision`,
+build `features`, and `profile`. The runner verifies the hash before executing.
+It records client, runner, portable SDK and WASM hashes and rejects source or
+artifact changes during a comparison.
+Evidence goes under `.open-orange/runtime-comparison/<name>/`; an existing name
+is refused to preserve earlier evidence. Each run records source revisions,
+binary hashes, full bounded output, test identities, failures, skips, missing or
+extra tests, duplicate identities, timeouts, and unrun files. Incomplete loads,
+zero-test files, duplicate names, skipped cases, and capped output do not count
+as matched passes.
+
+
+
+For local Sandbox POSIX commands, the agentOS runtime uses supervised Wasmtime
+worker processes. Build the sidecar with `node-v8,wasm-v8,wasm-wasmtime-threads`.
+JavaScript runs in V8; command IO goes through the agentOS kernel. A renamed
+sidecar binary can set `AGENTOS_WASMTIME_WORKER_PATH` to that same matching binary.
+`OPENORANGE_AGENTOS_SANDBOX_MAX_CONCURRENT_THREADS` bounds concurrent command
+threads (default16); each command reserves one thread.
+
+`OPENORANGE_AGENTOS_WRITABLE_PROJECT_BASES` accepts a JSON array of at most16
+canonical, owned private directories (mode0700). The driver mounts only its
+selected project from those directories for writing. The comparison profile
+records its per-run temporary directory and private workspace cache explicitly.
+`--max-request-bytes` records a bounded ingress budget up to128MiB; the R2 file
+needs32MiB for its original30MiB upload. Defaults continue to apply when omitted.
+
+Explicit workload capacity may be configured with
+`OPENORANGE_AGENTOS_MAX_TIMERS`, `OPENORANGE_AGENTOS_MAX_SOCKETS`,
+`OPENORANGE_AGENTOS_MAX_CONNECTIONS`, and
+`OPENORANGE_AGENTOS_MAX_SOCKET_BUFFERED_BYTES`. When omitted, agentOS retains its
+defaults (4096 timers,256 sockets,256 connections,4MiB of socket buffers).
+These are enforced admission budgets; configuring one grants no filesystem or
+network authority. Comparisons record every explicit capacity override.
+
+A workload with many simultaneously parked reads may also require explicit
+`OPENORANGE_AGENTOS_MAX_IN_FLIGHT_REQUESTS`,
+`OPENORANGE_AGENTOS_MAX_TERMINAL_FRAMES`, and
+`OPENORANGE_AGENTOS_MAX_TERMINAL_BYTES`. Defaults remain128 requests,128 terminal
+frames and8MiB of terminal bytes. Every admitted request must retain a terminal
+response reservation; native startup rejects inconsistent budgets.
+
+The trusted controller can set `OPENORANGE_AGENTOS_MAX_BLOB_BYTES` and
+`OPENORANGE_AGENTOS_EXECUTOR_BYTES` for large in-memory workloads. Omitted values
+retain agentOS defaults. The Blob override cannot exceed the configured V8 heap;
+executor byte admission, VM memory accounting, and application quotas still
+apply. These settings do not increase transport frame sizes.
+
+
+Large application qualification can set `OPENORANGE_AGENTOS_VM_BLOCKING_BYTES`
+for the VM's blocking-operation budget, separately from the process-wide
+`OPENORANGE_AGENTOS_EXECUTOR_BYTES` budget. Both default to64MiB and remain
+enforced; setting either one leaves the other unchanged.
+
+</AiContext>

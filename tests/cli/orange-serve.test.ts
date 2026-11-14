@@ -16,6 +16,7 @@ import { minioBucketSettings, minioSkip, s3Client, startMinio } from "../harness
 import { mailpitSkip, startMailpit } from "../harness/mailpit.js";
 import { startRivetCloudDouble } from "../harness/rivet-cloud-double.js";
 import { signForwardedHost } from "../../src/serve/front.js";
+import { comparisonEngineBinary } from "../runtime-comparison/engine.js";
 import { collectMessages, copyProject, openWebSocket, repositoryRoot, startOrangeDev, withDeadline, type ClientWebSocket } from "../harness/orange-dev.js";
 import { freePort } from "../harness/free-port.js";
 
@@ -68,7 +69,7 @@ async function startStandaloneEngine(): Promise<StandaloneEngine> {
 			},
 		}),
 	);
-	const child = spawn(getEnginePath(), ["--config", configPath], {
+	const child = spawn(await comparisonEngineBinary(getEnginePath()), ["--config", configPath], {
 		cwd: directory,
 		env: {
 			...process.env,

@@ -1728,15 +1728,15 @@ export class Engine extends DurableObject<Env> {
 				event,
 				stubStep as unknown as WorkflowStep
 			);
-			await this.ctx.storage.put(WORKFLOW_OUTPUT_KEY, {
-				value: normalizeForStorage(result),
-			});
-			this.writeLog(InstanceEvent.WORKFLOW_SUCCESS, null, null, {
-				result,
-			});
-			// NOTE(lduarte): we want to run this in a transaction to guarentee ordering with running setstatus call
-			// in case that it returns immediately
+			// Publish output, success log and terminal status together. A status RPC
+			// must not observe an already-published result before completion.
 			await this.ctx.storage.transaction(async () => {
+				await this.ctx.storage.put(WORKFLOW_OUTPUT_KEY, {
+					value: normalizeForStorage(result),
+				});
+				this.writeLog(InstanceEvent.WORKFLOW_SUCCESS, null, null, {
+					result,
+				});
 				await this.setStatus(accountId, instance.id, InstanceStatus.Complete);
 			});
 			// Dispose dup'd stubs; otherwise they leak across DO lifetimes.

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { runtimeModuleRewrites } from "../build/rewrite-module-imports.js";
+import { runtimeKind, type RuntimeKind } from "./runtime-kind.js";
 import {
 	parseRuntimeChildMessage,
 	type RuntimeAssetsConfiguration,
@@ -23,6 +24,7 @@ import {
 } from "../../packages/runtime-node/src/process-protocol.js";
 
 export interface SpawnRuntimeOptions {
+	runtime?: RuntimeKind;
 	additionalModules?: readonly { name: string; path: string }[];
 	assets?: RuntimeAssetsConfiguration;
 	bindingConfigurations: RuntimeBindingConfiguration[];
@@ -97,7 +99,7 @@ function send(
 }
 
 // An IPC message the CLI cannot parse means the runtime came from another build.
-class RuntimeBuildMismatchError extends Error {
+export class RuntimeBuildMismatchError extends Error {
 	readonly _tag = "RuntimeBuildMismatchError" as const;
 
 	constructor(cause: unknown) {
@@ -125,6 +127,10 @@ function runtimeRunnerPath(): string {
 export async function spawnRuntime(
 	options: SpawnRuntimeOptions,
 ): Promise<RuntimeProcess> {
+	if (runtimeKind(options.runtime) === "agentos") {
+		const { spawnAgentOsRuntime } = await import("./spawn-agentos.js");
+		return spawnAgentOsRuntime(options, runtimeRunnerPath());
+	}
 	const runnerPath = runtimeRunnerPath();
 	const child = fork(runnerPath, [], {
 		env: {

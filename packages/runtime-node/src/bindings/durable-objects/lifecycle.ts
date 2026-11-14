@@ -14,6 +14,7 @@ import {
 	withRivetEngineStartLock,
 } from "../../internal/ports.js";
 import { discoverInstalledRivetKitBuild } from "../../internal/rivetkit-build.js";
+import { ensurePortableRivetEndpoint, portableRivetPackage } from "../../internal/portable-rivet.js";
 
 export interface DurableObjectRegistryLifecycle {
 	client: RivetActorClient;
@@ -50,6 +51,11 @@ export interface StartDurableObjectRegistryOptions {
 export async function startDurableObjectRegistry(
 	options: StartDurableObjectRegistryOptions,
 ): Promise<DurableObjectRegistryLifecycle> {
+	if (portableRivetPackage() !== undefined && options.endpoint === undefined) {
+		const startedAt = Date.now();
+		const endpoint = await ensurePortableRivetEndpoint();
+		return await startDurableObjectRegistryOnPort(options, 0, { endpoint, startedAt });
+	}
 	if (options.endpoint !== undefined) {
 		return await startDurableObjectRegistryOnPort(options, 0);
 	}
@@ -79,6 +85,7 @@ export async function startDurableObjectRegistry(
 async function startDurableObjectRegistryOnPort(
 	options: StartDurableObjectRegistryOptions,
 	enginePort: number,
+	localEngine?: CreateRivetRegistryOptions["localEngine"],
 ): Promise<DurableObjectRegistryLifecycle> {
 	const use: Record<
 		string,
@@ -87,13 +94,14 @@ async function startDurableObjectRegistryOnPort(
 	const endpointHost = (options.engineHost ?? "127.0.0.1").includes(":")
 		? `[${options.engineHost ?? "127.0.0.1"}]`
 		: options.engineHost ?? "127.0.0.1";
-	const clientEndpoint = options.endpoint ?? `http://${endpointHost}:${enginePort}`;
+	const clientEndpoint = options.endpoint ?? localEngine?.endpoint ?? `http://${endpointHost}:${enginePort}`;
 	for (const registration of options.registrations.values()) {
 		use[registration.actorName] = registration.definition;
 	}
 	const registry = (options.createRegistry ?? createRivetRegistry)({
 		engineHost: options.engineHost ?? "127.0.0.1",
 		enginePort,
+		...(localEngine === undefined ? {} : { localEngine }),
 		...(options.endpoint === undefined ? {} : { endpoint: options.endpoint }),
 		namespace: options.namespace,
 		...(options.poolName === undefined ? {} : { poolName: options.poolName }),

@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	type FSWatcher,
@@ -209,6 +209,10 @@ function leaveDevSession(): number[] {
 	if (devSession === undefined) return [];
 	const session = devSession;
 	devSession = undefined;
+	return leaveRegisteredDevSession(session);
+}
+
+function leaveRegisteredDevSession(session: { pid: number; storagePath: string }): number[] {
 	// The runtimes of a multi-Worker session share one entry, and only the one that removes it
 	// stops the Engine. RivetKit also stops an Engine it spawned, and a third SIGTERM makes the
 	// Engine force its shutdown, which leaves its storage lease for the next start to wait out.
@@ -237,6 +241,11 @@ export function signalRivetEngineStopAfterLastDevSession(): void {
 
 export async function stopRivetEngineAfterLastDevSession(): Promise<void> {
 	await Promise.all(leaveDevSession().map(stopRivetEngineProcess));
+}
+
+/** Releases an explicit host driver's shared Engine registration. */
+export async function stopRivetEngineAfterSession(storagePath: string, pid: number): Promise<void> {
+	await Promise.all(leaveRegisteredDevSession({ storagePath, pid }).map(stopRivetEngineProcess));
 }
 
 // The Engine waits up to 6 seconds for its storage to stop and forces its own exit
@@ -454,6 +463,8 @@ export interface StartRivetEngineOptions {
 	host: string;
 	port: number;
 	storagePath: string;
+	/** Tracks the exact child when a runtime driver owns backend cleanup. */
+	onSpawn?(child: ChildProcess): void;
 }
 
 // The longest a fresh Engine takes to answer /health, which includes recovering its storage.
@@ -551,6 +562,7 @@ export async function ensureRivetEngine(options: StartRivetEngineOptions): Promi
 	});
 	const pid = child.pid;
 	if (pid === undefined) throw new Error(`Could not start the Rivet Engine at ${options.binaryPath}`);
+	options.onSpawn?.(child);
 	child.unref();
 	// The Engine logs through tracing to stdout, and a signal such as the OOM killer's leaves no log,
 	// so a startup error names how the Engine exited and shows both logs.

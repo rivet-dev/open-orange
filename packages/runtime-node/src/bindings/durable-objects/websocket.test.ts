@@ -12,7 +12,7 @@ import {
 	createLinkedTestWebSocketPair,
 	type LinkedTestWebSocket,
 } from "./rpc/test-websocket.js";
-import { createDurableObjectGeneration } from "./state.js";
+import { createDurableObjectGeneration, disposeDurableObjectGeneration } from "./state.js";
 import {
 	attachDurableObjectWebSocket,
 	fetchDurableObjectWebSocketStub,
@@ -224,4 +224,96 @@ test("rejects missing and already-claimed upgrade tokens", () => {
 		[1008, "Durable Object WebSocket token is missing"],
 		[1008, "Durable Object WebSocket upgrade token is invalid or expired"],
 	]);
+});
+
+
+test("runtime control: abrupt disconnect uses the owned WebSocket and awaits its close handler", async () => {
+ const {createDurableObjectClientWebSocketTransport,DurableObjectActorWebSocketTransport}=await import("./websocket-transport.js");
+ const [clientWire,actorWire]=createLinkedTestWebSocketPair();
+ const token="628a2b62-4f34-4903-b7fb-d2849b49bb35";
+ const actor=new DurableObjectActorWebSocketTransport(actorWire,token);
+ const notification=Promise.withResolvers<void>(),handler=Promise.withResolvers<void>();
+ let notifications=0,finished=false;const closes:unknown[]=[];
+ actor.addEventListener("close",async event=>{closes.push(event);await handler.promise;});
+ void actor.closed.then(()=>{finished=true;});
+ const client=createDurableObjectClientWebSocketTransport(clientWire,async()=>{notifications++;await notification.promise;},token);
+ try{
+  assert.ok(client.terminate);client.terminate();
+  assert.equal(notifications,0,"the existing WebSocket must carry abrupt close without another actor HTTP request");
+  assert.equal(clientWire.readyState,3);
+  assert.equal(eventProperty(closes[0],"code"),1006);
+  assert.equal(eventProperty(closes[0],"reason"),"WebSocket disconnected without sending Close frame.");
+  assert.equal(eventProperty(closes[0],"wasClean"),false);
+  await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(finished,false);
+  handler.resolve();await actor.closed;assert.equal(finished,true);
+  client.terminate();assert.equal(closes.length,1);
+ }finally{notification.resolve();handler.resolve();await actorWire.flush();}
+});
+
+test("runtime control: disconnect metadata for another upgrade remains an ordinary close", async () => {
+ const {createDurableObjectClientWebSocketTransport,DurableObjectActorWebSocketTransport}=await import("./websocket-transport.js");
+ const [clientWire,actorWire]=createLinkedTestWebSocketPair();let frame:{code?:number;reason?:string}|undefined;
+ const original=clientWire.close.bind(clientWire);clientWire.close=(code,reason)=>{frame={code,reason};original(code,reason);};
+ const actor=new DurableObjectActorWebSocketTransport(actorWire,"correct-upgrade");let observed:unknown;
+ actor.addEventListener("close",event=>{observed=event;});
+ const client=createDurableObjectClientWebSocketTransport(clientWire,async()=>{},"different-upgrade");assert.ok(client.terminate);client.terminate();
+ await actor.closed;
+ assert.ok(frame&&typeof frame.code==="number"&&frame.code>=3000&&frame.code<=4999);
+ assert.ok(new TextEncoder().encode(frame.reason).byteLength<=123);
+ assert.equal(eventProperty(observed,"code"),frame.code);
+ assert.equal(eventProperty(observed,"reason"),frame.reason);
+});
+
+test("runtime control: ordinary application close codes and reasons stay unchanged", async () => {
+ const {createDurableObjectClientWebSocketTransport,DurableObjectActorWebSocketTransport}=await import("./websocket-transport.js");
+ const [clientWire,actorWire]=createLinkedTestWebSocketPair();const actor=new DurableObjectActorWebSocketTransport(actorWire,"upgrade");let observed:unknown;let notifications=0;
+ actor.addEventListener("close",event=>{observed=event;});
+ const client=createDurableObjectClientWebSocketTransport(clientWire,async()=>{notifications++;},"upgrade");
+ client.close(4000,"normal application close");await actor.closed;
+ assert.equal(eventProperty(observed,"code"),4000);assert.equal(eventProperty(observed,"reason"),"normal application close");assert.equal(notifications,0);
+});
+
+
+test("runtime control: older and unknown-version peers retain their disconnect notification", async () => {
+ const {terminateCoupledWebSocket}=await import("../../globals/websocket.js");
+ for(const version of [undefined,2]){
+  const [clientWire,actorWire]=createLinkedTestWebSocketPair();const notification=Promise.withResolvers<void>();let notifications=0;let calls=0;
+  const handle=fakeRivetActorHandle({async fetch(request:Request){if(calls++===0)return Response.json({headers:[],statusText:"Switching Protocols",token:"older-upgrade",...(version===undefined?{}:{disconnectFrameVersion:version})});notifications++;assert.equal((await request.json() as {token:string}).token,"older-upgrade");await notification.promise;return new Response("");},async webSocket(){return clientWire;}});
+  const response=await fetchDurableObjectWebSocketStub(()=>handle,new Request("https://worker.example/socket",{headers:{connection:"Upgrade",upgrade:"websocket"}}),{key:"older-peer",sequence:0},new AbortController().signal);
+  const socket=response.webSocket;assert.ok(socket);socket.accept();
+  try{terminateCoupledWebSocket(socket,1006,"",false);await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(notifications,1,"new clients must not send private close frames to peers that do not advertise them");assert.equal(clientWire.readyState,1);}finally{notification.resolve();await clientWire.flush();await actorWire.flush();}
+ }
+});
+
+
+test("runtime control: only the selected WASM registry advertises disconnect frames", async () => {
+	const previous = process.env.OPENORANGE_RIVETKIT_PACKAGE;
+	class Room extends DurableObject {
+		fetch(): OrangeResponse {
+			const pair = new WebSocketPair();
+			pair[1].accept();
+			return new OrangeResponse(null, { status: 101, webSocket: pair[0] });
+		}
+	}
+	try {
+		for (const wasm of [false, true]) {
+			if (wasm) process.env.OPENORANGE_RIVETKIT_PACKAGE = "/test/selected-wasm-sdk";
+			else delete process.env.OPENORANGE_RIVETKIT_PACKAGE;
+			const generation = createDurableObjectGeneration({ bindings: {}, className: "Room", userClass: Room });
+			try {
+				const response = await prepareDurableObjectWebSocket(generation, new Request("http://actor/prepare", {
+					method: "POST",
+					body: JSON.stringify({ headers: [["upgrade", "websocket"]], method: "GET", url: "https://worker.example/socket", order: { key: "advertisement", sequence: 0 } }),
+				}));
+				const prepared = await response.json() as { disconnectFrameVersion?: number };
+				assert.equal(prepared.disconnectFrameVersion, wasm ? 1 : undefined,
+					"ordinary Node must retain its pinned backend's existing disconnect notification");
+			} finally {
+				await disposeDurableObjectGeneration(generation);
+			}
+		}
+	} finally {
+		if (previous === undefined) delete process.env.OPENORANGE_RIVETKIT_PACKAGE;
+		else process.env.OPENORANGE_RIVETKIT_PACKAGE = previous;
+	}
 });

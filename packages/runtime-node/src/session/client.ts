@@ -56,6 +56,7 @@ function callHeaders(
 ): Record<string, string> {
 	return {
 		[serviceTargetHeader]: encodeServiceTarget({
+			worker: options.service,
 			entrypoint: options.entrypoint,
 			...(props === undefined ? {} : { props }),
 		}),
@@ -217,6 +218,7 @@ function connectRemote(
 		if (worker === undefined) throw missingError(options);
 		const tunnel = await openConnectTunnel(worker, {
 			[serviceTargetHeader]: encodeServiceTarget({
+				worker: options.service,
 				address,
 				entrypoint: options.entrypoint,
 				...(props === undefined ? {} : { props }),

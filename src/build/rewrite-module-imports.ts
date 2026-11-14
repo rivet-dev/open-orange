@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { runtimeKind, type RuntimeKind } from "../runtime/runtime-kind.js";
 
 interface RuntimeModule {
 	artifact: string;
@@ -106,12 +107,18 @@ function runtimeModulePath(
 	specifier: string,
 	artifact: string,
 	source: string,
+	runtime: RuntimeKind,
 ): string {
 	const packagedPath = fileURLToPath(
 		new URL(`./runtime/${artifact}.js`, import.meta.url),
 	);
 	if (existsSync(packagedPath)) {
 		return packagedPath;
+	}
+	if (runtime === "agentos") {
+		const builtPath = fileURLToPath(new URL(`../../dist/runtime/${artifact}.js`, import.meta.url));
+		if (existsSync(builtPath)) return builtPath;
+		throw new Error("agentOS needs the built OpenOrange runtime. Run pnpm build first.");
 	}
 	const sourcePath = fileURLToPath(
 		new URL(`../../packages/runtime-node/src/${source}`, import.meta.url),
@@ -122,11 +129,11 @@ function runtimeModulePath(
 	throw new Error(`OpenOrange ${specifier} runtime artifact is missing`);
 }
 
-export function runtimeModuleRewrites(): Readonly<Record<string, string>> {
+export function runtimeModuleRewrites(runtime: RuntimeKind = runtimeKind()): Readonly<Record<string, string>> {
 	return Object.fromEntries(
 		Object.entries(runtimeModules).map(([specifier, { artifact, source }]) => [
 			specifier,
-			runtimeModulePath(specifier, artifact, source),
+			runtimeModulePath(specifier, artifact, source, runtime),
 		]),
 	);
 }

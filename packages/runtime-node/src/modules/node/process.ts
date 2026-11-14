@@ -286,6 +286,7 @@ export const kill = notImplemented("process.kill");
 export const binding = notImplemented("process.binding");
 export const dlopen = notImplemented("process.dlopen");
 export const getActiveResourcesInfo = notImplemented("process.getActiveResourcesInfo");
+export const addUncaughtExceptionCaptureCallback = notImplemented("process.addUncaughtExceptionCaptureCallback");
 export const setUncaughtExceptionCaptureCallback = notImplemented("process.setUncaughtExceptionCaptureCallback");
 export const hasUncaughtExceptionCaptureCallback = notImplemented("process.hasUncaughtExceptionCaptureCallback");
 export const threadCpuUsage = notImplemented("process.threadCpuUsage");
@@ -434,7 +435,7 @@ const members = {
 	config, connected, constrainedMemory, cpuUsage, cwd, debugPort, dlopen, domain, emitWarning, env,
 	execArgv, execPath, execve, exit, exitCode, features, finalization, getActiveResourcesInfo,
 	getBuiltinModule, getSourceMapsSupport, getegid, geteuid, getgid, getgroups, getuid,
-	hasUncaughtExceptionCaptureCallback, hrtime, initgroups, kill, loadEnvFile, memoryUsage,
+	addUncaughtExceptionCaptureCallback, hasUncaughtExceptionCaptureCallback, hrtime, initgroups, kill, loadEnvFile, memoryUsage,
 	moduleLoadList, nextTick, noDeprecation, openStdin, permission, pid, platform, ppid, reallyExit,
 	ref, release, report, resourceUsage, send, setSourceMapsEnabled, setUncaughtExceptionCaptureCallback,
 	setegid, seteuid, setgid, setgroups, setuid, sourceMapsEnabled, stderr, stdin, stdout,

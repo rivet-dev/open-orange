@@ -2,7 +2,7 @@ import { assertFitsRivetCommit } from "../../internal/rivet-limits.js";
 import { Buffer } from "node:buffer";
 import { deserialize } from "node:v8";
 
-import type { RivetSynchronousSqliteExecutor } from "../../internal/rivetkit.js";
+import type { RivetSqliteStatement, RivetSynchronousSqliteExecutor } from "../../internal/rivetkit.js";
 import type {
 	SyncKvListOptions,
 	SyncKvStorage,
@@ -204,6 +204,15 @@ class SyncKvListIterator<T> implements IterableIterator<[string, T]> {
 	[Symbol.iterator](): IterableIterator<[string, T]> {
 		return this;
 	}
+}
+
+/** Prepare void KV intents using the same validation and serialization as ordinary puts. */
+export function prepareDurableObjectPuts(entries: readonly (readonly [string, unknown])[]): RivetSqliteStatement[] {
+	const writes = entries.map(([key, value]) => {
+		const normalizedKey = requireKey(key);
+		return { sql: putSql, params: [normalizedKey, serializeStoredValue(normalizedKey, value)] };
+	});
+	return writes.length === 0 ? [] : [{ sql: createTableSql }, ...writes];
 }
 
 export class DurableObjectKvStore {

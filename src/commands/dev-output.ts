@@ -401,6 +401,7 @@ export function renderDevHelp(theme: Theme): string {
 		option("-e, --env <name>", "Environment from the configuration"),
 		option("--cwd <dir>", "Run as if started in <dir>"),
 		option("--port <port>", "Port to listen on. Default 8787. 0 picks a free port."),
+		option("--runtime <runtime>", "node or agentos. Default OPENORANGE_RUNTIME, then node."),
 		option("--ip <host>", "Host to listen on. Default 127.0.0.1."),
 		option("--log-level <level>", "RivetKit logs: debug, info, warn, error, or none. Default error."),
 		option("--json", "Print JSON Lines events instead of the terminal view"),

@@ -1,3 +1,4 @@
+import {randomUUID} from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { cp, glob, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -252,6 +253,10 @@ export async function startOrangeDev(
 	configFile: string | readonly string[] = "wrangler.jsonc",
 	options: StartOrangeDevOptions = {},
 ): Promise<RunningOrangeDev> {
+ const guestInspection=(options.environment?.OPENORANGE_RUNTIME??process.env.OPENORANGE_RUNTIME)==="agentos"&&/--inspect-port(?:=|\s)/.test(options.environment?.NODE_OPTIONS??process.env.NODE_OPTIONS??"");
+ const inspectionDirectory=guestInspection?await mkdtemp(join(tmpdir(),"open-orange-heap-")):undefined;
+ const inspectionFile=inspectionDirectory?join(inspectionDirectory,"address.json"):undefined;
+ const inspectionToken=inspectionDirectory?randomUUID():undefined;
 	const configFiles = typeof configFile === "string" ? [configFile] : configFile;
 	const child = spawnOrange(
 		[
@@ -268,14 +273,14 @@ export async function startOrangeDev(
 		],
 		{
 			...options.environment,
+            ...(inspectionFile?{OPENORANGE_AGENTOS_INSPECTION_FILE:inspectionFile,OPENORANGE_AGENTOS_INSPECTION_TOKEN:inspectionToken}:{}),
 			...(options.actorLifecycleLogs === true ? { RIVET_LOG_LEVEL: "info" } : {}),
 		},
 		options.cli,
 		options.terminal,
 	);
 	const exited = new Promise<number | null>((resolveExit) => {
-		child.once("exit", (code) => resolveExit(code));
-	});
+		child.once("exit", (code) => resolveExit(code));}).finally(async()=>{if(inspectionDirectory)await rm(inspectionDirectory,{recursive:true,force:true});});
 	const readiness = Promise.withResolvers<number>();
 	const outputWaiters = new Set<() => void>();
 	const output = collectOutput(child, (current) => {
@@ -401,6 +406,15 @@ export async function startOrangeDev(
 		output,
 		pid: child.pid ?? 0,
 		async runtimeHeapUsed(): Promise<number> {
+            if(inspectionFile){
+                const address:unknown=JSON.parse(await readFile(inspectionFile,"utf8"));
+                assert.ok(isRecord(address)&&typeof address.port==="number"&&Number.isInteger(address.port)&&address.port>0&&address.port<65536,"invalid guest inspection address");
+                const response=await fetch(`http://127.0.0.1:${address.port}/heap`,{headers:{authorization:`Bearer ${inspectionToken}`}});
+                const result:unknown=await response.json();assert.equal(response.status,200,JSON.stringify(result));
+                assert.ok(isRecord(result)&&typeof result.heapUsed==="number"&&Number.isSafeInteger(result.heapUsed)&&result.heapUsed>=0,"the guest did not report its heap");
+                return result.heapUsed;
+            }
+
 			const runtime = (child.pid === undefined ? [] : descendantPids(child.pid)).find(isOrangeRuntime);
 			assert.ok(runtime !== undefined, "orange dev has no runtime process");
 			inspector ??= await openInspector(runtime, output);

@@ -51,6 +51,47 @@ test("runs a Worker in a dedicated HTTP-owning child process", async () => {
 	}
 });
 
+test("runs the Worker in UTC with the en-US locale, whatever the host is set to", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "open-orange-runtime-"));
+	const host = { LANG: process.env.LANG, LC_ALL: process.env.LC_ALL, TZ: process.env.TZ };
+	let runtime: Awaited<ReturnType<typeof spawnRuntime>> | undefined;
+	try {
+		// The runtime inherits the environment of the process that starts it.
+		Object.assign(process.env, { LANG: "de_DE.UTF-8", LC_ALL: "de_DE.UTF-8", TZ: "Asia/Tokyo" });
+		const bundle = await bundleWorker({
+			entrypoint: new URL("./fixtures/time-and-locale-worker.js", import.meta.url).pathname,
+			outputPath: join(directory, "worker.mjs"),
+		});
+		runtime = await spawnRuntime({
+			bindingConfigurations: [],
+			builtAt: new Date("2026-09-04T12:00:00.000Z"),
+			bundlePath: bundle.outputPath,
+			deploymentIdentity: "runtime-time-zone-test",
+			host: "0.0.0.0",
+			normalizedConfiguration: "{}",
+			port: 0,
+			projectRoot: directory,
+			rivetNamespace: "openorange_runtime_time_zone_test",
+			rivetStoragePath: join(directory, "rivetkit"),
+		});
+		const response = await fetch(`http://127.0.0.1:${runtime.port}/`);
+		assert.deepEqual(await response.json(), {
+			date: "1/1/1970",
+			locale: "en-US",
+			number: "1,234,567.891",
+			offsetMinutes: 0,
+			timeZone: "UTC",
+		});
+	} finally {
+		await runtime?.stop();
+		for (const [name, value] of Object.entries(host)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		await rm(directory, { force: true, recursive: true });
+	}
+});
+
 test("streams request and response bodies across the runtime process", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "open-orange-runtime-"));
 	let runtime: Awaited<ReturnType<typeof spawnRuntime>> | undefined;

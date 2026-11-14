@@ -133,7 +133,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "133"
+					"lines": "279-290"
 				}
 			]
 		},
@@ -164,7 +164,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "84"
+					"lines": "258-277"
 				}
 			]
 		},
@@ -1626,7 +1626,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "test",
@@ -3708,7 +3708,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				}
 			]
 		},
@@ -3734,7 +3734,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "code",
@@ -3881,7 +3881,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "test",
@@ -8738,7 +8738,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "test",
@@ -8920,7 +8920,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "code",
@@ -8951,7 +8951,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				}
 			]
 		},
@@ -11122,7 +11122,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				}
 			]
 		},
@@ -11635,7 +11635,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				}
 			]
 		},
@@ -13222,7 +13222,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "test",
@@ -14030,7 +14030,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				}
 			]
 		},
@@ -14056,12 +14056,12 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "403-422"
+					"lines": "420-460"
 				},
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "355-360"
+					"lines": "478-487"
 				}
 			]
 		},
@@ -14114,7 +14114,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "324-351"
+					"lines": "462-476"
 				}
 			]
 		},

@@ -185,6 +185,13 @@ function decodeCustomMetadata(
 }
 
 // S3 has no object version without bucket versioning, so the ETag stands in.
+// S3 gives objects written while versioning is suspended the version ID
+// "null", and Neon Object Storage sends it for every object. It names no
+// distinct version, so the ETag stands in for it too.
+export function objectVersion(versionId: string | undefined, etag: string): string {
+	return versionId === undefined || versionId === "null" ? etag : versionId;
+}
+
 function objectFromHead(key: string, output: HeadObjectCommandOutput): R2StoredObject {
 	const etag = unquote(output.ETag);
 	const checksums: R2Checksums = definedFields({
@@ -210,7 +217,7 @@ function objectFromHead(key: string, output: HeadObjectCommandOutput): R2StoredO
 		size: output.ContentLength ?? 0,
 		storageClass: "Standard",
 		uploaded: output.LastModified?.getTime() ?? Date.now(),
-		version: output.VersionId ?? etag,
+		version: objectVersion(output.VersionId, etag),
 	};
 }
 
@@ -481,7 +488,7 @@ export class R2S3Backend implements R2Backend {
 				size: sized.size,
 				storageClass: "Standard",
 				uploaded: Date.now(),
-				version: output.VersionId ?? etag,
+				version: objectVersion(output.VersionId, etag),
 			};
 		} finally {
 			await sized.cleanup();

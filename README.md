@@ -158,7 +158,7 @@ See [Architecture](https://openorange.dev/docs/architecture/).
 | [Workflows](https://openorange.dev/docs/bindings/workflows/) | Partial | Cloudflare's own Workflows engine, with one Rivet Actor for each instance |
 | [Cron Triggers](https://openorange.dev/docs/bindings/cron-triggers/) | Drop-in | A Rivet Actor |
 | [Tail Workers](https://openorange.dev/docs/bindings/tail-workers/) | Partial | Rivet Durable Streams |
-| [R2](https://openorange.dev/docs/bindings/r2/) | Pluggable | A Rivet Actor, or Amazon S3, Google Cloud Storage, Cloudflare R2 or MinIO |
+| [R2](https://openorange.dev/docs/bindings/r2/) | Pluggable | A Rivet Actor, or Amazon S3, Google Cloud Storage, Cloudflare R2, Neon Object Storage or MinIO |
 | [Worker Loader](https://openorange.dev/docs/bindings/worker-loader/) | Partial | A separate process in an agentOS VM |
 | [Workers AI](https://openorange.dev/docs/bindings/workers-ai/) | Pluggable | OpenRouter, OpenAI, or any OpenAI-compatible endpoint |
 | [Send Email](https://openorange.dev/docs/bindings/email/) | Pluggable | Amazon SES, or any SMTP server |

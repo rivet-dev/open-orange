@@ -123,4 +123,15 @@ export ORANGE_R2_FILES_S3_SECRET_ACCESS_KEY=<aws-secret>
 export ORANGE_R2_FILES_S3_BUCKET=my-files
 ```
 
+Neon Object Storage, with the values from the **Storage** tab of the Neon
+Console's **Connect** dialog, or from `neon credentials create --scope storage:write`:
+
+```sh
+export ORANGE_R2_FILES_S3_ENDPOINT=https://<branch-id>.storage.<cell>.<region>.aws.neon.tech
+export ORANGE_R2_FILES_S3_REGION=<region>
+export ORANGE_R2_FILES_S3_ACCESS_KEY_ID=<neon-token-id>
+export ORANGE_R2_FILES_S3_SECRET_ACCESS_KEY=<neon-s3-secret-access-key>
+export ORANGE_R2_FILES_S3_BUCKET=my-files
+```
+
 The Worker code does not change.

@@ -28,7 +28,7 @@ async function writeExample(
 	id: string,
 	manifest: Record<string, unknown>,
 ): Promise<void> {
-	const directory = join(root, "tests", "examples", area, id);
+	const directory = join(root, "tests", "cloudflare-examples", area, id);
 	await mkdir(join(directory, "src"), { recursive: true });
 	await Promise.all([
 		writeFile(join(directory, "src", "index.ts"), "export default {};\n"),

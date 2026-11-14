@@ -12,7 +12,6 @@ import { bundleWorker } from "../../src/build/bundle-worker.js";
 import { runtimeModuleRewrites } from "../../src/build/rewrite-module-imports.js";
 import { type RuntimeProcess, spawnRuntime } from "../../src/runtime/spawn.js";
 import {
-	closeWebSocket,
 	collectMessages,
 	isRecord,
 	openWebSocket,
@@ -67,7 +66,7 @@ async function readHibernatableMessages(origin: string): Promise<unknown[]> {
 	const binaryResponse = once(socket, "message");
 	socket.send(Uint8Array.of(1, 2, 3));
 	const [binaryData, binaryBinary] = await binaryResponse;
-	await closeWebSocket(socket);
+	socket.close(1000, "done");
 	return [
 		normalizedMessage(autoData, autoBinary),
 		normalizedMessage(textData, textBinary),
@@ -103,7 +102,7 @@ async function readPhysicalHibernation(origin: string): Promise<{
 		return value;
 	});
 
-	await closeWebSocket(socket);
+	socket.close(1000, "done");
 	let inspection: unknown;
 	const deadline = Date.now() + 5_000;
 	do {

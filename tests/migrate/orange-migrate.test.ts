@@ -223,7 +223,7 @@ test("a KV-backed class fails prepare with a clear error, and nothing is written
 
 test("prepare names every blocker that doctor finds, as an expected failure, not a bug", { timeout: 120_000 }, async () => {
 	// A KV-backed `Cart`, and a SQLite `Lobby` with no binding.
-	const project = await copyProject(join(repositoryRoot, "src", "commands", "fixtures", "mixed-bindings"));
+	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "mixed-bindings"));
 	try {
 		const { code, output } = await orange(["migrate", "prepare"], project.directory);
 		assert.equal(code, 1, output);

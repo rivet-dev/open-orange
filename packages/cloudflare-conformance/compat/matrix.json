@@ -11462,7 +11462,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-hibernation-registration.test.ts",
-					"lines": "227"
+					"lines": "226"
 				}
 			]
 		},
@@ -11483,7 +11483,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-hibernation-registration.test.ts",
-					"lines": "227"
+					"lines": "226"
 				}
 			]
 		},

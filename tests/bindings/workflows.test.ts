@@ -62,12 +62,7 @@ describe("Workflow bindings through orange dev", () => {
 	let deploymentIdentity: string;
 
 	async function call(path: string, body?: unknown): Promise<unknown> {
-		const response = await fetch(`${server.origin}${path}`, {
-			...(body === undefined ? {} : { body: JSON.stringify(body), method: "POST" }),
-		});
-		const text = await response.text();
-		assert.equal(response.status, 200, `${path}: ${text}\n${server.output()}`);
-		return JSON.parse(text);
+		return server.json(path, body === undefined ? undefined : { body: JSON.stringify(body), method: "POST" });
 	}
 
 	async function value(path: string, body?: unknown): Promise<unknown> {

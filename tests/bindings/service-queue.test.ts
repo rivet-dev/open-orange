@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import test from "node:test";
 
-import { copyProject, repositoryRoot, startOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
+import { type RunningOrangeDev, withOrangeDev } from "../harness/orange-dev.js";
 
 type Bytes = number[];
 
@@ -50,20 +49,6 @@ interface Answer {
 	result?: { outcome: string; ackAll: boolean; retryBatch: unknown; explicitAcks: string[]; retryMessages: unknown[] };
 	seen?: { attempts: number; backlog: number[]; body: Record<string, unknown>; oldest: unknown };
 	thrown?: string;
-}
-
-async function withDev(run: (dev: RunningOrangeDev) => Promise<void>): Promise<void> {
-	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "service-queue"));
-	try {
-		const dev = await startOrangeDev(project.directory);
-		try {
-			await run(dev);
-		} finally {
-			await dev.close();
-		}
-	} finally {
-		await project.dispose();
-	}
 }
 
 async function send(dev: RunningOrangeDev, queue: string, payload: Bytes): Promise<Answer> {
@@ -148,7 +133,7 @@ const crafted: Record<string, Bytes> = {
 };
 
 test("a service binding's queue() reads every supported host object in serializedBody", { timeout: 120_000 }, async () => {
-	await withDev(async (dev) => {
+	await withOrangeDev("service-queue", async (dev) => {
 		for (const [name, { payload, body }] of Object.entries(valid)) {
 			const answer = await send(dev, "ackall", payload);
 			assert.equal(answer.result?.outcome, "ok", `${name}: ${JSON.stringify(answer)}`);
@@ -158,7 +143,7 @@ test("a service binding's queue() reads every supported host object in serialize
 });
 
 test("a crafted serializedBody fails the event, and the handler never runs", { timeout: 120_000 }, async () => {
-	await withDev(async (dev) => {
+	await withOrangeDev("service-queue", async (dev) => {
 		for (const [name, payload] of Object.entries(crafted)) {
 			const answer = await send(dev, `crafted`, payload);
 			assert.equal(answer.result?.outcome, "exception", `${name}: ${JSON.stringify(answer)}`);
@@ -170,7 +155,7 @@ test("a crafted serializedBody fails the event, and the handler never runs", { t
 });
 
 test("queue() reports what the handler did, and overlapping calls don't see each other's result", { timeout: 120_000 }, async () => {
-	await withDev(async (dev) => {
+	await withOrangeDev("service-queue", async (dev) => {
 		const call = async (queue: string, id: string): Promise<Answer> => {
 			const options = encodeURIComponent(JSON.stringify({ body: { id }, id }));
 			return (await (await fetch(`${dev.origin}/body?queue=${queue}&options=${options}`)).json()) as Answer;
@@ -196,7 +181,7 @@ test("queue() reports what the handler did, and overlapping calls don't see each
 });
 
 test("queue() rejects a message with both or neither of body and serializedBody", { timeout: 120_000 }, async () => {
-	await withDev(async (dev) => {
+	await withOrangeDev("service-queue", async (dev) => {
 		for (const path of ["/both", "/neither"]) {
 			const answer = (await (await fetch(`${dev.origin}${path}`)).json()) as Answer;
 			assert.equal(answer.thrown, "TypeError", path);

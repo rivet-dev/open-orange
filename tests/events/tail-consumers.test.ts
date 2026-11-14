@@ -4,7 +4,7 @@ import { glob, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { copyProject, descendantProcesses, repositoryRoot, startOrangeDev } from "../harness/orange-dev.js";
+import { copyProject, descendantProcesses, processIsAlive, repositoryRoot, startOrangeDev } from "../harness/orange-dev.js";
 
 const configs = ["wrangler.jsonc", "consumer.wrangler.jsonc"];
 
@@ -109,12 +109,6 @@ test("tail consumers get each event's logs, exceptions, and outcome, in the Work
 	}
 });
 
-async function getJson(url: string): Promise<unknown> {
-	const response = await fetch(url);
-	assert.equal(response.status, 200, url);
-	return await response.json();
-}
-
 async function request(origin: string, path: string): Promise<void> {
 	const response = await fetch(`${origin}${path}`);
 	await response.text();
@@ -137,7 +131,7 @@ test("a tail consumer that is not running gets the events in one batch when it s
 				assert.equal((await tailEvents(dev.origin, "/consumer-events", path)).length, 1, `${path}\n${dev.output()}`);
 			}
 			// The batch can also hold events of this session's own requests, which come later.
-			const batches = await getJson(`${dev.origin}/consumer-batches`);
+			const batches = await dev.json("/consumer-batches");
 			const [first] = Array.isArray(batches) ? batches : [];
 			assert.deepEqual(Array.isArray(first) ? first.slice(0, paths.length) : first, paths);
 		} finally {
@@ -155,7 +149,7 @@ test("a tail() call that throws gets the same events again until a call returns"
 		try {
 			await request(dev.origin, "/tail-throws");
 			assert.equal((await tailEvents(dev.origin, "/consumer-events", "/tail-throws")).length, 1, dev.output());
-			const attempts = await getJson(`${dev.origin}/consumer-attempts`);
+			const attempts = await dev.json("/consumer-attempts");
 			assert.equal(Reflect.get(attempts as object, "/tail-throws"), 3);
 			assert.match(dev.output(), /tail\(\) failed/);
 		} finally {
@@ -176,7 +170,7 @@ test("events of a tail() call that a crash interrupts reach the consumer after a
 			await request(crashed.origin, "/tail-hangs");
 			// tail() got the event and hangs.
 			const deadline = Date.now() + 20_000;
-			while (Reflect.get((await getJson(`${crashed.origin}/consumer-attempts`)) as object, "/tail-hangs") !== 1) {
+			while (Reflect.get((await crashed.json("/consumer-attempts")) as object, "/tail-hangs") !== 1) {
 				assert.ok(Date.now() < deadline, crashed.output());
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
@@ -313,24 +307,15 @@ test("Rivet Services exits when the runtime that started it is killed", { timeou
 			killed = true;
 			await dev.exited;
 			const deadline = Date.now() + 5_000;
-			while (services.some((pid) => isAlive(pid))) {
+			while (services.some((pid) => processIsAlive(pid))) {
 				assert.ok(Date.now() < deadline, "Rivet Services outlived its runtime");
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
 		} finally {
-			for (const pid of services) if (isAlive(pid)) process.kill(pid, "SIGKILL");
+			for (const pid of services) if (processIsAlive(pid)) process.kill(pid, "SIGKILL");
 			if (!killed) await dev.close();
 		}
 	} finally {
 		await project.dispose();
 	}
 });
-
-function isAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}

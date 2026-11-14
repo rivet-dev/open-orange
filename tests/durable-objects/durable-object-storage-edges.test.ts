@@ -4,12 +4,6 @@ import test from "node:test";
 
 import { copyProject, repositoryRoot, startOrangeDev } from "../harness/orange-dev.js";
 
-async function getJson(origin: string, path: string, output: () => string): Promise<unknown> {
-	const response = await fetch(new URL(path, origin));
-	assert.equal(response.status, 200, `${await response.clone().text()}\n${output()}`);
-	return await response.json();
-}
-
 // Expected values are workerd 1.20260903.1's output for the same fixture.
 test("Durable Object storage accepts what workerd's SQLite backend accepts, and fails like it", { timeout: 120_000 }, async (t) => {
 	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "storage-edges"));
@@ -17,13 +11,13 @@ test("Durable Object storage accepts what workerd's SQLite backend accepts, and 
 		const dev = await startOrangeDev(project.directory);
 		try {
 			await t.test("a Proxy around a stub can replace the stub's id and name", async () => {
-				assert.deepEqual(await getJson(dev.origin, "/stub-proxy", dev.output), {
+				assert.deepEqual(await dev.json("/stub-proxy"), {
 					value: { id: "from-the-proxy", name: "from-the-proxy" },
 				});
 			});
 
 			await t.test("key-value calls take any key count, coerce keys, and reject uncloneable values with DataCloneError", async () => {
-				assert.deepEqual(await getJson(dev.origin, "/key-value", dev.output), {
+				assert.deepEqual(await dev.json("/key-value"), {
 					put129: { value: null },
 					get129: { value: 129 },
 					delete129: { value: 129 },
@@ -36,7 +30,7 @@ test("Durable Object storage accepts what workerd's SQLite backend accepts, and 
 			});
 
 			await t.test("sql.exec() binds other values as their string form and rejects a BigInt", async () => {
-				assert.deepEqual(await getJson(dev.origin, "/sql-bindings", dev.output), {
+				assert.deepEqual(await dev.json("/sql-bindings"), {
 					boolean: { value: { v: "true", t: "text" } },
 					object: { value: { v: "[object Object]", t: "text" } },
 					bigint: {
@@ -51,14 +45,14 @@ test("Durable Object storage accepts what workerd's SQLite backend accepts, and 
 
 			await t.test("a transaction rejects deleteAll() and writes after rollback() with workerd's errors", async () => {
 				const error = (message: string) => ({ error: { isDOMException: false, isTypeError: false, message, name: "Error" } });
-				assert.deepEqual(await getJson(dev.origin, "/transaction", dev.output), {
+				assert.deepEqual(await dev.json("/transaction"), {
 					deleteAll: error("Cannot call deleteAll() within a transaction"),
 					putAfterRollback: error("Cannot put() on rolled back transaction"),
 				});
 			});
 
 			await t.test("sql.ingest() runs each complete statement and keeps a failed batch's earlier statements", async () => {
-				const ingested = (await getJson(dev.origin, "/sql-ingest", dev.output)) as { counts: Record<string, unknown> };
+				const ingested = (await dev.json("/sql-ingest")) as { counts: Record<string, unknown> };
 				// workerd reports rowsRead 2 here. Orange's row counters come from returned rows.
 				delete ingested.counts.rowsRead;
 				assert.deepEqual(ingested, {
@@ -84,7 +78,7 @@ test("Durable Object storage accepts what workerd's SQLite backend accepts, and 
 				const noStatement = {
 					error: { isDOMException: false, isTypeError: false, message: "SQL code did not contain a statement.", name: "Error" },
 				};
-				assert.deepEqual(await getJson(dev.origin, "/sql-without-statement", dev.output), {
+				assert.deepEqual(await dev.json("/sql-without-statement"), {
 					empty: noStatement,
 					whitespace: noStatement,
 					semicolon: noStatement,

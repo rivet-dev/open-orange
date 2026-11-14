@@ -23,7 +23,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "138-148"
+					"lines": "63-73"
 				},
 				{
 					"kind": "code",
@@ -54,7 +54,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "138-148"
+					"lines": "63-73"
 				}
 			]
 		},
@@ -80,7 +80,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "138-148"
+					"lines": "63-73"
 				}
 			]
 		},
@@ -133,7 +133,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "151"
+					"lines": "133"
 				}
 			]
 		},
@@ -164,7 +164,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "102"
+					"lines": "84"
 				}
 			]
 		},
@@ -292,7 +292,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "175-286"
+					"lines": "101-211"
 				},
 				{
 					"kind": "code",
@@ -328,12 +328,12 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "175-192"
+					"lines": "101-117"
 				},
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "206-223"
+					"lines": "131-148"
 				}
 			]
 		},
@@ -354,7 +354,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "175-192"
+					"lines": "101-117"
 				},
 				{
 					"kind": "code",
@@ -380,7 +380,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "175-192"
+					"lines": "101-117"
 				}
 			]
 		},
@@ -406,12 +406,12 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "175-192"
+					"lines": "101-117"
 				},
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "206-223"
+					"lines": "131-148"
 				}
 			]
 		},
@@ -442,12 +442,12 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "175-192"
+					"lines": "101-117"
 				},
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "206-223"
+					"lines": "131-148"
 				}
 			]
 		},
@@ -495,7 +495,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "193-204"
+					"lines": "119-129"
 				}
 			]
 		},
@@ -557,12 +557,12 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "236-286"
+					"lines": "163-211"
 				},
 				{
 					"kind": "code",
 					"path": "tests/cli/d1.test.ts",
-					"lines": "29-180"
+					"lines": "29-144"
 				}
 			]
 		},
@@ -593,7 +593,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "236-256"
+					"lines": "163-181"
 				}
 			]
 		},
@@ -624,7 +624,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "236-256"
+					"lines": "163-181"
 				}
 			]
 		},
@@ -676,7 +676,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "236-256"
+					"lines": "163-181"
 				}
 			]
 		},
@@ -744,7 +744,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "258-277"
+					"lines": "183-202"
 				}
 			]
 		},
@@ -966,7 +966,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/service-binding.test.ts",
-					"lines": "49"
+					"lines": "6"
 				},
 				{
 					"kind": "test",
@@ -1240,7 +1240,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/assets.test.ts",
-					"lines": "163-340"
+					"lines": "105-280"
 				}
 			]
 		},
@@ -1281,7 +1281,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/orange-email.test.ts",
-					"lines": "15-105"
+					"lines": "15-101"
 				},
 				{
 					"kind": "code",
@@ -1446,7 +1446,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/orange-browser.test.ts",
-					"lines": "102-159"
+					"lines": "102-157"
 				},
 				{
 					"kind": "code",
@@ -1492,12 +1492,12 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/workflows.test.ts",
-					"lines": "57-577"
+					"lines": "57-572"
 				},
 				{
 					"kind": "code",
 					"path": "tests/examples/examples.test.ts",
-					"lines": "176-216"
+					"lines": "171-203"
 				}
 			]
 		},
@@ -1533,7 +1533,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/queues.test.ts",
-					"lines": "139-338"
+					"lines": "59-252"
 				},
 				{
 					"kind": "test",
@@ -1584,7 +1584,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/r2.test.ts",
-					"lines": "212-489"
+					"lines": "146-424"
 				},
 				{
 					"kind": "test",
@@ -1626,7 +1626,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "test",
@@ -1773,7 +1773,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/ai-binding.test.ts",
-					"lines": "243-438"
+					"lines": "167-362"
 				}
 			]
 		},
@@ -2270,7 +2270,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/bindings.test.ts",
-					"lines": "288-400"
+					"lines": "213-323"
 				}
 			]
 		},
@@ -2532,7 +2532,7 @@
 				{
 					"kind": "code",
 					"path": "tests/events/cron-triggers.test.ts",
-					"lines": "208-356"
+					"lines": "143-291"
 				},
 				{
 					"kind": "test",
@@ -2568,7 +2568,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/queues.test.ts",
-					"lines": "139-338"
+					"lines": "59-252"
 				},
 				{
 					"kind": "code",
@@ -2578,7 +2578,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/multi-worker.test.ts",
-					"lines": "148-225"
+					"lines": "82-121"
 				},
 				{
 					"kind": "test",
@@ -2634,7 +2634,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/orange-email.test.ts",
-					"lines": "106-160"
+					"lines": "102-140"
 				}
 			]
 		},
@@ -3708,7 +3708,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				}
 			]
 		},
@@ -3734,12 +3734,12 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "code",
 					"path": "tests/bindings/workflows.test.ts",
-					"lines": "448-513"
+					"lines": "443-508"
 				}
 			]
 		},
@@ -3881,7 +3881,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "test",
@@ -8738,7 +8738,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "test",
@@ -8920,7 +8920,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "code",
@@ -8951,7 +8951,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				}
 			]
 		},
@@ -9787,7 +9787,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "431-472"
+					"lines": "340-376"
 				}
 			]
 		},
@@ -9825,7 +9825,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "431-472"
+					"lines": "340-376"
 				}
 			]
 		},
@@ -10268,7 +10268,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-rpc-values.test.ts",
-					"lines": "13-67"
+					"lines": "7-61"
 				},
 				{
 					"kind": "test",
@@ -10505,7 +10505,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-output-gate.test.ts",
-					"lines": "244"
+					"lines": "154"
 				}
 			]
 		},
@@ -10531,7 +10531,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-output-gate.test.ts",
-					"lines": "244"
+					"lines": "154"
 				}
 			]
 		},
@@ -10604,7 +10604,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-output-gate.test.ts",
-					"lines": "244"
+					"lines": "154"
 				}
 			]
 		},
@@ -10651,7 +10651,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-output-gate.test.ts",
-					"lines": "241"
+					"lines": "151"
 				}
 			]
 		},
@@ -11012,7 +11012,7 @@
 				{
 					"kind": "code",
 					"path": "tests/rpc-and-websockets/accepted-websockets.test.ts",
-					"lines": "154-222"
+					"lines": "145-198"
 				}
 			]
 		},
@@ -11122,7 +11122,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				}
 			]
 		},
@@ -11184,7 +11184,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/sandbox.test.ts",
-					"lines": "494-553"
+					"lines": "444-504"
 				}
 			]
 		},
@@ -11220,7 +11220,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-facets.test.ts",
-					"lines": "86-163"
+					"lines": "21-91"
 				},
 				{
 					"kind": "test",
@@ -11421,17 +11421,17 @@
 				{
 					"kind": "code",
 					"path": "tests/rpc-and-websockets/accepted-websockets.test.ts",
-					"lines": "88-129"
+					"lines": "89-125"
 				},
 				{
 					"kind": "code",
 					"path": "tests/rpc-and-websockets/accepted-websockets.test.ts",
-					"lines": "154-201"
+					"lines": "145-182"
 				},
 				{
 					"kind": "code",
 					"path": "tests/rpc-and-websockets/accepted-websockets.test.ts",
-					"lines": "300-354"
+					"lines": "279-282"
 				},
 				{
 					"kind": "test",
@@ -11462,7 +11462,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-hibernation-registration.test.ts",
-					"lines": "304"
+					"lines": "227"
 				}
 			]
 		},
@@ -11483,7 +11483,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-hibernation-registration.test.ts",
-					"lines": "304"
+					"lines": "227"
 				}
 			]
 		},
@@ -11610,7 +11610,7 @@
 				{
 					"kind": "code",
 					"path": "tests/durable-objects/durable-object-output-gate.test.ts",
-					"lines": "244"
+					"lines": "154"
 				},
 				{
 					"kind": "note",
@@ -11635,7 +11635,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				}
 			]
 		},
@@ -13222,7 +13222,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "test",
@@ -13946,7 +13946,7 @@
 				{
 					"kind": "code",
 					"path": "tests/events/cron-triggers.test.ts",
-					"lines": "208-356"
+					"lines": "143-291"
 				}
 			]
 		},
@@ -14030,7 +14030,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				}
 			]
 		},
@@ -14056,12 +14056,12 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "499-547"
+					"lines": "403-422"
 				},
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "438-451"
+					"lines": "355-360"
 				}
 			]
 		},
@@ -14114,7 +14114,7 @@
 				{
 					"kind": "code",
 					"path": "tests/cli/dev.test.ts",
-					"lines": "415-437"
+					"lines": "324-351"
 				}
 			]
 		},
@@ -14247,7 +14247,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/assets.test.ts",
-					"lines": "163-340"
+					"lines": "105-280"
 				}
 			]
 		},
@@ -14525,7 +14525,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/sandbox.test.ts",
-					"lines": "494-553"
+					"lines": "444-504"
 				}
 			]
 		},
@@ -14551,7 +14551,7 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/sandbox.test.ts",
-					"lines": "1-28"
+					"lines": "1-24"
 				}
 			]
 		},
@@ -14618,7 +14618,7 @@
 				{
 					"kind": "code",
 					"path": "tests/events/tail-consumers.test.ts",
-					"lines": "25-122"
+					"lines": "25-116"
 				}
 			]
 		},

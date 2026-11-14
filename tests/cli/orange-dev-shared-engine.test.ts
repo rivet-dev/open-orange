@@ -5,12 +5,6 @@ import test from "node:test";
 
 import { copyProject, isRecord, repositoryRoot, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
-async function greet(origin: string, name: string): Promise<unknown> {
-	const response = await fetch(`${origin}/${name}`);
-	assert.equal(response.status, 200, await response.clone().text());
-	return await response.json();
-}
-
 async function enginePid(projectDirectory: string): Promise<number> {
 	for await (const path of glob("**/.open-orange/rivetkit/*/.rivetkit/var/engine/runtime.json", {
 		cwd: projectDirectory,
@@ -36,12 +30,12 @@ test("the orange dev that started the shared Engine exits and the other keeps se
 	const project = await copyProject(join(repositoryRoot, "examples", "hello-durable-object"));
 	try {
 		const first = await startOrangeDev(project.directory);
-		assert.deepEqual(await greet(first.origin, "alice"), { greeting: "Hello, alice!", visits: 1 });
+		assert.deepEqual(await first.json("/alice"), { greeting: "Hello, alice!", visits: 1 });
 		const second = await startOrangeDev(project.directory);
-		assert.deepEqual(await greet(second.origin, "alice"), { greeting: "Hello, alice!", visits: 2 });
+		assert.deepEqual(await second.json("/alice"), { greeting: "Hello, alice!", visits: 2 });
 
 		await first.close();
-		assert.deepEqual(await greet(second.origin, "alice"), { greeting: "Hello, alice!", visits: 3 });
+		assert.deepEqual(await second.json("/alice"), { greeting: "Hello, alice!", visits: 3 });
 
 		const pid = await enginePid(project.directory);
 		assert.ok(processIsAlive(pid), "the Engine stopped while an orange dev still used it");

@@ -1,22 +1,7 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import test from "node:test";
 
-import { copyProject, repositoryRoot, startOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
-
-async function withDev(run: (dev: RunningOrangeDev) => Promise<void>): Promise<void> {
-	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "service-scheduled"));
-	try {
-		const dev = await startOrangeDev(project.directory);
-		try {
-			await run(dev);
-		} finally {
-			await dev.close();
-		}
-	} finally {
-		await project.dispose();
-	}
-}
+import { withOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
 
 interface Answer {
 	result: { noRetry: boolean; outcome: string };
@@ -29,7 +14,7 @@ async function scheduled(dev: RunningOrangeDev, options?: object): Promise<Answe
 }
 
 test("a service binding's scheduled() runs the handler and reports its outcome", { timeout: 120_000 }, async () => {
-	await withDev(async (dev) => {
+	await withOrangeDev("service-scheduled", async (dev) => {
 		const before = Date.now();
 		const defaults = await scheduled(dev);
 		assert.deepEqual(defaults.result, { noRetry: false, outcome: "ok" });
@@ -53,7 +38,7 @@ test("a service binding's scheduled() runs the handler and reports its outcome",
 });
 
 test("a service binding sends a stream of unknown length as chunked, and a known body with its length", { timeout: 120_000 }, async () => {
-	await withDev(async (dev) => {
+	await withOrangeDev("service-scheduled", async (dev) => {
 		const stream = (await (await fetch(`${dev.origin}/stream`)).json()) as Record<string, string>;
 		assert.equal(stream["transfer-encoding"], "chunked");
 		assert.equal(stream["content-length"], undefined);

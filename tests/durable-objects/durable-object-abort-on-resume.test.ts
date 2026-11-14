@@ -1,82 +1,21 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
-import { cp, mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
-import { isRecord, stopProjectEngines, waitFor } from "../harness/orange-dev.js";
+import {
+	copyProject,
+	repositoryRoot,
+	startOrangeDev,
+	stopProjectEngines,
+	waitFor,
+	type RunningOrangeDev,
+} from "../harness/orange-dev.js";
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
-const fixtureDirectory = fileURLToPath(
-	new URL("../fixtures/durable-object-abort-on-resume/", import.meta.url),
-);
+const fixtureDirectory = join(repositoryRoot, "tests", "fixtures", "durable-object-abort-on-resume");
 
 // A retried alarm runs again after 2 s plus up to 25% jitter.
 const retryWindowMs = 4_000;
-
-async function startOrangeDev(
-	projectDirectory: string,
-): Promise<{ child: ChildProcess; origin: string; output(): string }> {
-	const child = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectDirectory, "wrangler.jsonc"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			env: { ...process.env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const ready = Promise.withResolvers<number>();
-	const timeout = setTimeout(() => {
-		ready.reject(new Error(`orange dev readiness timed out:\n${output}`));
-	}, 30_000);
-	const collect = (chunk: unknown): void => {
-		output += String(chunk);
-		const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-		if (match?.[1] !== undefined) ready.resolve(Number(match[1]));
-	};
-	child.stdout?.on("data", collect);
-	child.stderr?.on("data", collect);
-	child.once("exit", (code) => {
-		ready.reject(new Error(`orange dev exited (code ${code}):\n${output}`));
-	});
-	try {
-		const port = await ready.promise;
-		return { child, origin: `http://127.0.0.1:${port}`, output: () => output };
-	} catch (error: unknown) {
-		child.kill("SIGKILL");
-		throw error;
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
-function stopOrangeDev(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-	return new Promise((resolveStop) => {
-		const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
-		child.once("exit", () => {
-			clearTimeout(timeout);
-			resolveStop();
-		});
-		child.kill("SIGINT");
-	});
-}
 
 function listeningPort(server: Server): number {
 	const address = server.address();
@@ -85,9 +24,8 @@ function listeningPort(server: Server): number {
 }
 
 test("an overdue alarm that resets its object with retryAlarm: false runs once when orange dev resumes, and the object keeps serving", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "open-orange-abort-on-resume-"));
-	const projectDirectory = join(directory, "project");
-	await cp(fixtureDirectory, projectDirectory, { recursive: true });
+	const project = await copyProject(fixtureDirectory);
+	const projectDirectory = project.directory;
 	const alarmRuns: number[] = [];
 	const firstRun = Promise.withResolvers<void>();
 	// The alarm is due 1 s after /arm. Under load it can fire before the first `orange dev` stops,
@@ -107,7 +45,7 @@ test("an overdue alarm that resets its object with retryAlarm: false runs once w
 	});
 	await new Promise<void>((resolveListen) => peer.listen(0, "127.0.0.1", resolveListen));
 	const peerOrigin = `http://127.0.0.1:${listeningPort(peer)}`;
-	let orange: Awaited<ReturnType<typeof startOrangeDev>> | undefined;
+	let orange: RunningOrangeDev | undefined;
 	try {
 		// The first run stores the object with a pending alarm, then stops before it is due.
 		orange = await startOrangeDev(projectDirectory);
@@ -115,7 +53,7 @@ test("an overdue alarm that resets its object with retryAlarm: false runs once w
 			`${orange.origin}/arm?delay=1000&peer=${encodeURIComponent(peerOrigin)}`,
 		);
 		assert.equal(await armed.text(), "armed", orange.output());
-		await stopOrangeDev(orange.child);
+		await orange.close();
 		await stopProjectEngines(projectDirectory);
 		orange = undefined;
 		assert.deepEqual(alarmRuns, []);
@@ -135,21 +73,21 @@ test("an overdue alarm that resets its object with retryAlarm: false runs once w
 		assert.deepEqual(await response.json(), { alarm: null });
 		assert.equal(alarmRuns.length, 1, orange.output());
 	} finally {
-		if (orange !== undefined) await stopOrangeDev(orange.child);
-		await stopProjectEngines(projectDirectory);
-		peer.closeAllConnections();
-		await new Promise((resolveClose) => peer.close(() => resolveClose(undefined)));
-		await rm(directory, { force: true, recursive: true });
+		try {
+			await orange?.close();
+		} finally {
+			peer.closeAllConnections();
+			await new Promise((resolveClose) => peer.close(() => resolveClose(undefined)));
+			await project.dispose();
+		}
 	}
 });
 
 test("ctx.abort() keeps the writes of turns that finished before it and discards the writes of its own turn", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "open-orange-abort-durable-"));
-	const projectDirectory = join(directory, "project");
-	await cp(fixtureDirectory, projectDirectory, { recursive: true });
-	let orange: Awaited<ReturnType<typeof startOrangeDev>> | undefined;
+	const project = await copyProject(fixtureDirectory);
+	let orange: RunningOrangeDev | undefined;
 	try {
-		orange = await startOrangeDev(projectDirectory);
+		orange = await startOrangeDev(project.directory);
 		const origin = orange.origin;
 		const keys = async (name: string): Promise<unknown> =>
 			(await fetch(`${origin}/keys?name=${name}`)).json();
@@ -192,8 +130,10 @@ test("ctx.abort() keeps the writes of turns that finished before it and discards
 		await aborted.arrayBuffer();
 		assert.deepEqual(await keys("same-turn"), ["kept"], orange.output());
 	} finally {
-		if (orange !== undefined) await stopOrangeDev(orange.child);
-		await stopProjectEngines(projectDirectory);
-		await rm(directory, { force: true, recursive: true });
+		try {
+			await orange?.close();
+		} finally {
+			await project.dispose();
+		}
 	}
 });

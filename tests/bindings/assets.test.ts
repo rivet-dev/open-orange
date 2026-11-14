@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+
+import { runOrange, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
 // Drives Wrangler's static assets through a real `orange dev` process and
 // real HTTP requests.
-
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 
 const worker = `export default {
 	async fetch(request, env) {
@@ -33,69 +31,9 @@ const publicFiles: Record<string, string> = {
 	"public/secret.txt": "secret value",
 };
 
-interface DevServer {
-	origin: string;
-	stop(): Promise<void>;
-}
-
 interface Project {
 	root: string;
-	server: DevServer;
-}
-
-function startDev(projectRoot: string): {
-	exit: Promise<{ code: number | null; output: string }>;
-	ready: Promise<DevServer>;
-} {
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-		],
-		{ env: { ...process.env, CI: "1", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-	);
-	let output = "";
-	const exit = new Promise<{ code: number | null; output: string }>((resolveExit) => {
-		child.once("exit", (code) => resolveExit({ code, output }));
-	});
-	const ready = new Promise<DevServer>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(() => {
-			child.kill("SIGKILL");
-			rejectReady(new Error(`orange dev readiness timed out: ${output}`));
-		}, 60_000);
-		const onData = (chunk: unknown): void => {
-			output += String(chunk);
-			const match = /Local\s+(http:\/\/127\.0\.0\.1:\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady({
-					origin: match[1],
-					async stop(): Promise<void> {
-						if (child.exitCode === null && child.signalCode === null) {
-							child.kill("SIGINT");
-							await exit;
-						}
-					},
-				});
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		void exit.then(({ code }) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return { exit, ready };
+	server: RunningOrangeDev;
 }
 
 async function writeProject(
@@ -117,7 +55,7 @@ async function startProject(
 ): Promise<Project> {
 	const root = await writeProject(configuration, files);
 	try {
-		return { root, server: await startDev(root).ready };
+		return { root, server: await startOrangeDev(root, "wrangler.json") };
 	} catch (error: unknown) {
 		await rm(root, { force: true, recursive: true });
 		throw error;
@@ -126,8 +64,12 @@ async function startProject(
 
 async function stopProject(project: Project | undefined): Promise<void> {
 	if (project === undefined) return;
-	await project.server.stop();
-	await rm(project.root, { force: true, recursive: true });
+	try {
+		await project.server.close();
+	} finally {
+		await stopProjectEngines(project.root);
+		await rm(project.root, { force: true, recursive: true });
+	}
 }
 
 async function get(
@@ -326,9 +268,7 @@ it("stops orange dev when the assets directory does not exist", async () => {
 		{ "worker.js": worker },
 	);
 	try {
-		const { exit, ready } = startDev(root);
-		ready.catch(() => undefined);
-		const result = await exit;
+		const result = await runOrange(root, ["dev", "--port", "0"], "wrangler.json");
 		assert.equal(result.code, 1);
 		assert.match(
 			result.output,

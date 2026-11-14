@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,79 +7,13 @@ import { after, before, describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-import { isRecord } from "../../src/unknown-values.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
 // Drives the Cache API through a real `orange dev` process and real HTTP. The
 // fixture Worker maps each route to one caches.default or caches.open() call.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/cache/worker.js", import.meta.url));
 const kib = 1024;
-
-interface DevServer {
-	origin: string;
-	stop(): Promise<void>;
-}
-
-function stopChild(child: ChildProcess): Promise<void> {
-	return new Promise<void>((resolveStop) => {
-		if (child.exitCode !== null || child.signalCode !== null) {
-			resolveStop();
-			return;
-		}
-		const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-		child.once("exit", () => {
-			clearTimeout(timeout);
-			resolveStop();
-		});
-		child.kill("SIGINT");
-	});
-}
-
-async function startDev(projectRoot: string, env: Record<string, string> = {}): Promise<DevServer> {
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			env: { ...process.env, ...env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(
-			() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-			60_000,
-		);
-		const onData = (data: unknown): void => {
-			output += String(data);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return { origin: `http://127.0.0.1:${port}`, stop: () => stopChild(child) };
-}
 
 async function createProject(): Promise<string> {
 	const projectRoot = await mkdtemp(join(tmpdir(), "open-orange-cache-"));
@@ -103,7 +36,7 @@ function prefixed(prefix: string, headers: Record<string, string>): Record<strin
 
 describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 	let projectRoot = "";
-	let server: DevServer | undefined;
+	let server: RunningOrangeDev | undefined;
 	const origin = (): string => {
 		if (server === undefined) throw new Error("orange dev is not running");
 		return server.origin;
@@ -137,12 +70,16 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 
 	before(async () => {
 		projectRoot = await createProject();
-		server = await startDev(projectRoot);
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 	});
 
 	after(async () => {
-		await server?.stop();
-		await rm(projectRoot, { force: true, recursive: true });
+		try {
+			await server?.close();
+		} finally {
+			await stopProjectEngines(projectRoot);
+			await rm(projectRoot, { force: true, recursive: true });
+		}
 	});
 
 	it("when a fresh response is put, match returns its body with cf-cache-status HIT in that cache only", async () => {
@@ -315,9 +252,9 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 		const url = "https://example.com/durable";
 		const body = randomBytes(700 * kib);
 		await put(url, body, fresh);
-		await server?.stop();
+		await server?.close();
 		server = undefined;
-		server = await startDev(projectRoot);
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 		const hit = await match(url);
 		assert.equal(hit.headers.get("cf-cache-status"), "HIT");
 		assert.deepEqual(Buffer.from(await hit.arrayBuffer()), body);
@@ -326,16 +263,20 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 
 describe("Cache API with ORANGE_CACHE=off", { timeout: 120_000 }, () => {
 	let projectRoot = "";
-	let server: DevServer | undefined;
+	let server: RunningOrangeDev | undefined;
 
 	before(async () => {
 		projectRoot = await createProject();
-		server = await startDev(projectRoot, { ORANGE_CACHE: "off" });
+		server = await startOrangeDev(projectRoot, "wrangler.json", { environment: { ORANGE_CACHE: "off" } });
 	});
 
 	after(async () => {
-		await server?.stop();
-		await rm(projectRoot, { force: true, recursive: true });
+		try {
+			await server?.close();
+		} finally {
+			await stopProjectEngines(projectRoot);
+			await rm(projectRoot, { force: true, recursive: true });
+		}
 	});
 
 	it("when a response is put, match misses and delete returns false, as on workers.dev", async () => {

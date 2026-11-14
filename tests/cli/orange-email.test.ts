@@ -4,11 +4,11 @@ import { test } from "node:test";
 
 import { freePort } from "../harness/free-port.js";
 import { mailpitSkip, startMailpit } from "../harness/mailpit.js";
-import { copyProject, repositoryRoot, startOrangeDev } from "../harness/orange-dev.js";
+import { copyProject, repositoryRoot, startOrangeDev, withOrangeDev } from "../harness/orange-dev.js";
 
 const sendEmailFixture = join(repositoryRoot, "tests", "fixtures", "send-email");
 
-async function post(origin: string, path: string): Promise<{ status: number; text: string }> {
+async function postStatusAndText(origin: string, path: string): Promise<{ status: number; text: string }> {
 	const response = await fetch(`${origin}${path}`, { method: "POST" });
 	return { status: response.status, text: await response.text() };
 }
@@ -21,16 +21,12 @@ test("a Worker's mail reaches the configured SMTP server, as an EmailMessage and
 			environment: { ORANGE_EMAIL_SMTP_URL: mailpit.smtpUrl },
 		});
 		try {
-			const raw = await post(dev.origin, "/raw");
-			assert.equal(raw.status, 200, `${raw.text}\n${dev.output()}`);
-			assert.deepEqual(JSON.parse(raw.text), { messageId: "<raw-1@example.com>" });
+			assert.deepEqual(await dev.json("/raw", { method: "POST" }), { messageId: "<raw-1@example.com>" });
 
-			const object = await post(dev.origin, "/object");
-			assert.equal(object.status, 200, `${object.text}\n${dev.output()}`);
-			const { messageId } = JSON.parse(object.text) as { messageId: string };
+			const { messageId } = (await dev.json("/object", { method: "POST" })) as { messageId: string };
 			assert.match(messageId, /^<.+@.+>$/);
 
-			const refused = await post(dev.origin, "/stranger");
+			const refused = await postStatusAndText(dev.origin, "/stranger");
 			assert.equal(refused.status, 500);
 			assert.match(refused.text, /may not send to stranger@example\.com: it is not in allowed_destination_addresses/);
 		} finally {
@@ -63,7 +59,7 @@ test("without an SMTP server send() fails with the setting to configure, and wit
 			environment: { ORANGE_EMAIL_SMTP_URL: "" },
 		});
 		try {
-			const result = await post(unconfigured.origin, "/raw");
+			const result = await postStatusAndText(unconfigured.origin, "/raw");
 			assert.equal(result.status, 500);
 			assert.match(result.text, /Send Email binding "MAIL" is not supported by OpenOrange\. Set ORANGE_EMAIL_SMTP_URL/);
 		} finally {
@@ -75,7 +71,7 @@ test("without an SMTP server send() fails with the setting to configure, and wit
 			environment: { ORANGE_EMAIL_SMTP_URL: `smtp://user:secret@127.0.0.1:${closedPort}` },
 		});
 		try {
-			const result = await post(down.origin, "/raw");
+			const result = await postStatusAndText(down.origin, "/raw");
 			assert.equal(result.status, 500);
 			assert.match(result.text, new RegExp(`Sending email through smtp://127\\.0\\.0\\.1:${closedPort} failed`));
 			assert.doesNotMatch(result.text, /secret/);
@@ -142,20 +138,10 @@ test("a raw MIME message POSTed to orange dev reaches email(), whose forward() a
 });
 
 test("when forward() cannot reach the SMTP server, the inbound POST fails with an error that names the server", { timeout: 120_000 }, async () => {
-	const project = await copyProject(inboundEmailFixture);
-	try {
-		const closedPort = await freePort();
-		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", {
-			environment: { ORANGE_EMAIL_INBOUND_SECRET: "", ORANGE_EMAIL_SMTP_URL: `smtp://127.0.0.1:${closedPort}` },
-		});
-		try {
-			const delivered = await deliver(dev.origin, inboundMessage);
-			assert.equal(delivered.status, 500);
-			assert.match(await delivered.text(), new RegExp(`Sending email through smtp://127\\.0\\.0\\.1:${closedPort} failed`));
-		} finally {
-			await dev.close();
-		}
-	} finally {
-		await project.dispose();
-	}
+	const closedPort = await freePort();
+	await withOrangeDev("inbound-email", async (dev) => {
+		const delivered = await deliver(dev.origin, inboundMessage);
+		assert.equal(delivered.status, 500);
+		assert.match(await delivered.text(), new RegExp(`Sending email through smtp://127\\.0\\.0\\.1:${closedPort} failed`));
+	}, { environment: { ORANGE_EMAIL_INBOUND_SECRET: "", ORANGE_EMAIL_SMTP_URL: `smtp://127.0.0.1:${closedPort}` } });
 });

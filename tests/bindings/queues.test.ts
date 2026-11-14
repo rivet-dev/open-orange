@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
 // Drives Queues producers and the queue() consumer through a real `orange dev`
 // process, Wrangler configuration, and Rivet Engine.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/queues/worker.js", import.meta.url));
 
 const wranglerConfiguration = {
@@ -58,108 +56,23 @@ function isDelivery(value: unknown): value is Delivery {
 	);
 }
 
-interface DevServer {
-	origin: string;
-	output(): string;
-	// Kills `orange dev` and its runtime process without a graceful shutdown.
-	crash(): Promise<void>;
-	stop(): Promise<void>;
-}
-
-function waitForExit(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-	return new Promise((resolveExit) => child.once("exit", () => resolveExit()));
-}
-
-async function startDev(projectRoot: string): Promise<DevServer> {
-	// Its own process group, so a crash can kill the runtime child with it.
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			detached: true,
-			env: { ...process.env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(
-			() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-			60_000,
-		);
-		const onData = (chunk: unknown): void => {
-			output += String(chunk);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	const pid = child.pid;
-	if (pid === undefined) throw new Error("orange dev has no process ID");
-	return {
-		origin: `http://127.0.0.1:${port}`,
-		output: () => output,
-		async crash(): Promise<void> {
-			const exited = waitForExit(child);
-			process.kill(-pid, "SIGKILL");
-			await exited;
-		},
-		async stop(): Promise<void> {
-			if (child.exitCode !== null || child.signalCode !== null) return;
-			const exited = waitForExit(child);
-			const timeout = setTimeout(() => process.kill(-pid, "SIGKILL"), 15_000);
-			child.kill("SIGINT");
-			await exited;
-			clearTimeout(timeout);
-		},
-	};
-}
-
 describe("Queues through orange dev", () => {
 	let projectRoot: string;
-	let server: DevServer;
-
-	async function getJson(path: string, init?: RequestInit): Promise<unknown> {
-		const response = await fetch(`${server.origin}${path}`, init);
-		const text = await response.text();
-		assert.equal(response.status, 200, `${path}: ${text}\n${server.output()}`);
-		return JSON.parse(text);
-	}
+	let server: RunningOrangeDev;
 
 	async function send(
 		binding: string,
 		messages: readonly Record<string, unknown>[],
 		delaySeconds?: number,
 	): Promise<unknown> {
-		return getJson(`/send?binding=${binding}`, {
+		return server.json(`/send?binding=${binding}`, {
 			body: JSON.stringify({ delaySeconds, messages }),
 			method: "POST",
 		});
 	}
 
 	async function deliveries(queue: string): Promise<Delivery[]> {
-		const value = await getJson(`/deliveries?queue=${queue}`);
+		const value = await server.json(`/deliveries?queue=${queue}`);
 		assert.ok(Array.isArray(value) && value.every(isDelivery));
 		return value;
 	}
@@ -188,13 +101,14 @@ describe("Queues through orange dev", () => {
 		projectRoot = await mkdtemp(join(tmpdir(), "open-orange-queues-"));
 		await cp(fixtureWorker, join(projectRoot, "worker.js"));
 		await writeFile(join(projectRoot, "wrangler.json"), JSON.stringify(wranglerConfiguration));
-		server = await startDev(projectRoot);
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 	});
 
 	after(async () => {
 		try {
-			await server?.stop();
+			await server?.close();
 		} finally {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
@@ -276,7 +190,7 @@ describe("Queues through orange dev", () => {
 	});
 
 	it("delivers a 128,000-byte message intact, and takes a message over Cloudflare's 128 KB", async () => {
-		assert.deepEqual(await getJson("/send-bytes?size=128000"), { sent: 1 });
+		assert.deepEqual(await server.json("/send-bytes?size=128000"), { sent: 1 });
 		const records = await waitForDeliveries("delayed", (found) =>
 			found.some((delivery) => isRecord(delivery.body) && delivery.body.type === "Uint8Array"),
 		);
@@ -286,11 +200,11 @@ describe("Queues through orange dev", () => {
 			records.filter((delivery) => isRecord(delivery.body) && delivery.body.type === "Uint8Array").map((delivery) => delivery.body),
 			[{ byteLength: 128_000, sum: expectedSum, type: "Uint8Array" }],
 		);
-		assert.deepEqual(await getJson("/send-bytes?size=140000"), { sent: 1 });
+		assert.deepEqual(await server.json("/send-bytes?size=140000"), { sent: 1 });
 	});
 
 	it("rejects invalid sends like workerd", async () => {
-		assert.deepEqual(await getJson("/send-invalid"), {
+		assert.deepEqual(await server.json("/send-invalid"), {
 			badContentType: { message: "Unsupported queue message content type: xml", name: "TypeError" },
 			badDelay: {
 				message:
@@ -309,8 +223,8 @@ describe("Queues through orange dev", () => {
 	it("delivers a batch again after orange dev crashes while queue() runs", async () => {
 		await send("SLOW", [{ body: { hang: true } }]);
 		const [started] = await waitForDeliveries("slow", (found) => found.length === 1);
-		await server.crash();
-		server = await startDev(projectRoot);
+		await server.kill();
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 		const records = await waitForDeliveries("slow", (found) => found.length === 2, 60_000);
 		assert.deepEqual(
 			records.map((delivery) => delivery.id),
@@ -321,8 +235,8 @@ describe("Queues through orange dev", () => {
 	it("delivers a delayed message after orange dev restarts", async () => {
 		const sentAt = Date.now();
 		await send("DELAYED", [{ body: { name: "after-restart" }, delaySeconds: 5 }]);
-		await server.stop();
-		server = await startDev(projectRoot);
+		await server.close();
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 		const records = await waitForDeliveries(
 			"delayed",
 			(found) => found.some((delivery) => isRecord(delivery.body) && delivery.body.name === "after-restart"),

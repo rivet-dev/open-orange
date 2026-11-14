@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { runOrange } from "../../src/bin.js";
+import { copyProject, repositoryRoot } from "../harness/orange-dev.js";
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
+const cliEntrypoint = join(repositoryRoot, "src", "bin.ts");
 
 // The CLI as a user starts it: a process with these arguments. With `closedStdout`, the reader of
 // its output is gone before it writes, as for `orange doctor --json | head -n 1`.
@@ -142,12 +141,11 @@ test("orange --help lists only the commands and global flags that work in Orange
 });
 
 async function withFixture(name: string, run: (project: string) => Promise<void>): Promise<void> {
-	const project = await mkdtemp(join(tmpdir(), "open-orange-pipe-"));
+	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", name));
 	try {
-		await cp(fileURLToPath(new URL(`../../src/commands/fixtures/${name}/`, import.meta.url)), project, { recursive: true });
-		await run(project);
+		await run(project.directory);
 	} finally {
-		await rm(project, { force: true, recursive: true });
+		await project.dispose();
 	}
 }
 

@@ -108,9 +108,7 @@ test("a Worker drives a real headless Chromium through @cloudflare/puppeteer, an
 		try {
 			// A second launch works too: browser.close() in the first did not close the shared Chromium.
 			for (let run = 0; run < 2; run += 1) {
-				const response = await fetch(`${dev.origin}/?url=${encodeURIComponent(page.url)}`);
-				assert.equal(response.status, 200, `${await response.clone().text()}\n${dev.output()}`);
-				assert.deepEqual(await response.json(), { heading: "Hello from the page", sessionsAfterClose: 0, title: "Orange page" });
+				assert.deepEqual(await dev.json(`/?url=${encodeURIComponent(page.url)}`), { heading: "Hello from the page", sessionsAfterClose: 0, title: "Orange page" });
 			}
 		} finally {
 			await dev.close();

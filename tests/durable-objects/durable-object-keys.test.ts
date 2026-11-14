@@ -23,9 +23,7 @@ const workerName = "orange-test-readable-keys";
 const engineHeaders = { authorization: "Bearer default", "content-type": "application/json" };
 
 async function call(dev: RunningOrangeDev, query: Record<string, string>): Promise<ObjectView> {
-	const response = await fetch(`${dev.origin}/?${new URLSearchParams(query)}`);
-	assert.equal(response.status, 200, `${await response.clone().text()}\n${dev.output()}`);
-	return (await response.json()) as ObjectView;
+	return (await dev.json(`/?${new URLSearchParams(query)}`)) as ObjectView;
 }
 
 async function engineEndpoint(projectDirectory: string): Promise<string> {

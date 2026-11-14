@@ -16,10 +16,7 @@ test("a Worker's Cap'n Web session hands out stubs that came from a Durable Obje
 		);
 		const dev = await startOrangeDev(project.directory);
 		try {
-			const response = await fetch(dev.origin);
-			const body = await response.text();
-			assert.equal(response.status, 200, `${body}\n${dev.output()}`);
-			assert.deepEqual(JSON.parse(body), { returned: "pong", object: "room", objectIsServiceStub: true });
+			assert.deepEqual(await dev.json("/"), { returned: "pong", object: "room", objectIsServiceStub: true });
 		} finally {
 			await dev.close();
 		}

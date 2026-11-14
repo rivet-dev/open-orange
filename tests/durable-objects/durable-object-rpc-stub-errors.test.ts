@@ -4,12 +4,6 @@ import test from "node:test";
 
 import { copyProject, repositoryRoot, startOrangeDev } from "../harness/orange-dev.js";
 
-async function getJson(origin: string, path: string, output: () => string): Promise<unknown> {
-	const response = await fetch(new URL(path, origin));
-	assert.equal(response.status, 200, `${await response.clone().text()}\n${output()}`);
-	return await response.json();
-}
-
 const remoteKeys = ["durableObjectId", "remote"];
 const appError = { isDOMException: false, isTypeError: false, keys: remoteKeys, message: "app failure", name: "Error" };
 
@@ -22,7 +16,7 @@ test(
 			const dev = await startOrangeDev(project.directory);
 			try {
 				await t.test("later calls on the stub succeed, and the error keeps its type and fields", async () => {
-					assert.deepEqual(await getJson(dev.origin, "/keeps", dev.output), {
+					assert.deepEqual(await dev.json("/keeps"), {
 						error: { error: appError },
 						afterError: { value: 1 },
 						typeError: {
@@ -37,7 +31,7 @@ test(
 				});
 
 				await t.test("a call in flight on the same stub still completes when another call throws", async () => {
-					assert.deepEqual(await getJson(dev.origin, "/in-flight", dev.output), {
+					assert.deepEqual(await dev.json("/in-flight"), {
 						failed: { error: appError },
 						slow: { value: "slow done" },
 						after: { value: 4 },
@@ -45,7 +39,7 @@ test(
 				});
 
 				await t.test("an error thrown by the object's fetch() rejects the caller's fetch() and keeps the stub", async () => {
-					assert.deepEqual(await getJson(dev.origin, "/fetch-throws", dev.output), {
+					assert.deepEqual(await dev.json("/fetch-throws"), {
 						thrown: { error: { isDOMException: false, isTypeError: false, keys: ["remote"], message: "fetch failure", name: "Error" } },
 						afterFetch: { value: "fetched" },
 						afterRpc: { value: 7 },
@@ -53,7 +47,7 @@ test(
 				});
 
 				await t.test("a call to a method the object lacks rejects with workerd's TypeError and keeps the stub", async () => {
-					assert.deepEqual(await getJson(dev.origin, "/missing-method", dev.output), {
+					assert.deepEqual(await dev.json("/missing-method"), {
 						missing: {
 							error: {
 								isDOMException: false,
@@ -72,7 +66,7 @@ test(
 					const cloneError = (message: string) => ({
 						error: { code: 25, isDOMException: true, isTypeError: false, message, name: "DataCloneError" },
 					});
-					assert.deepEqual(await getJson(dev.origin, "/unserializable", dev.output), {
+					assert.deepEqual(await dev.json("/unserializable"), {
 						symbol: cloneError("Symbol(s) could not be cloned."),
 						afterSymbol: { value: 8 },
 						weakMap: cloneError("#<WeakMap> could not be cloned."),
@@ -88,7 +82,7 @@ test(
 						message: "reset by test",
 						name: "Error",
 					};
-					assert.deepEqual(await getJson(dev.origin, "/abort-breaks", dev.output), {
+					assert.deepEqual(await dev.json("/abort-breaks"), {
 						reset: { error: resetError },
 						afterReset: { error: resetError },
 						freshStub: { value: 6 },

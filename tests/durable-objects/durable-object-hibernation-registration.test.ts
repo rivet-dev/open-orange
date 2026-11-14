@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,7 +11,14 @@ import { readWorkerdMetadata } from "../../packages/cloudflare-conformance/src/r
 import { bundleWorker } from "../../src/build/bundle-worker.js";
 import { runtimeModuleRewrites } from "../../src/build/rewrite-module-imports.js";
 import { type RuntimeProcess, spawnRuntime } from "../../src/runtime/spawn.js";
-import { isRecord, stopEngineFromRuntimeFile } from "../harness/orange-dev.js";
+import {
+	closeWebSocket,
+	collectMessages,
+	isRecord,
+	openWebSocket,
+	stopEngineFromRuntimeFile,
+	type ClientWebSocket,
+} from "../harness/orange-dev.js";
 
 const workerEntrypoint = new URL(
 	"../fixtures/durable-object-hibernation-registration-worker.js",
@@ -26,46 +32,6 @@ const workerdConfig = new URL(
 interface RuntimeEndpoint {
 	close(): Promise<void>;
 	origin: string;
-}
-
-type SocketListener = (...parameters: unknown[]) => void;
-
-interface ClientWebSocket {
-	binaryType: string;
-	close(code?: number, reason?: string): void;
-	off(type: string, listener: SocketListener): void;
-	on(type: string, listener: SocketListener): void;
-	once(type: string, listener: SocketListener): void;
-	send(data: string | ArrayBuffer | ArrayBufferView): void;
-}
-
-function isClientWebSocket(value: unknown): value is ClientWebSocket {
-	return (
-		isRecord(value) &&
-		typeof value.close === "function" &&
-		typeof value.off === "function" &&
-		typeof value.on === "function" &&
-		typeof value.once === "function" &&
-		typeof value.send === "function"
-	);
-}
-
-function webSocketConstructor(): Function {
-	const packageValue: unknown = createRequire(import.meta.url)("ws");
-	if (typeof packageValue === "function") return packageValue;
-	if (isRecord(packageValue) && typeof packageValue.default === "function") {
-		return packageValue.default;
-	}
-	throw new Error("The ws package does not export a client constructor");
-}
-
-function createClientWebSocket(url: string): ClientWebSocket {
-	const value: unknown = Reflect.construct(webSocketConstructor(), [url]);
-	if (!isClientWebSocket(value)) {
-		throw new Error("The ws package returned an invalid client WebSocket");
-	}
-	value.binaryType = "arraybuffer";
-	return value;
 }
 
 function once(socket: ClientWebSocket, type: string): Promise<unknown[]> {
@@ -90,14 +56,7 @@ function normalizedMessage(data: unknown, binary: unknown): string | number[] {
 }
 
 async function readHibernatableMessages(origin: string): Promise<unknown[]> {
-	const socket = createClientWebSocket(
-		`${origin.replace("http:", "ws:")}/socket?id=event-methods`,
-	);
-	const opened = once(socket, "open");
-	const error = once(socket, "error").then((parameters) =>
-		Promise.reject(parameters[0] ?? new Error("WebSocket connection failed")),
-	);
-	await Promise.race([opened, error]);
+	const socket = await openWebSocket(`${origin}/socket?id=event-methods`);
 
 	const autoResponse = once(socket, "message");
 	socket.send("ping");
@@ -108,9 +67,7 @@ async function readHibernatableMessages(origin: string): Promise<unknown[]> {
 	const binaryResponse = once(socket, "message");
 	socket.send(Uint8Array.of(1, 2, 3));
 	const [binaryData, binaryBinary] = await binaryResponse;
-	const closed = once(socket, "close");
-	socket.close(1000, "done");
-	await closed;
+	await closeWebSocket(socket);
 	return [
 		normalizedMessage(autoData, autoBinary),
 		normalizedMessage(textData, textBinary),
@@ -118,40 +75,11 @@ async function readHibernatableMessages(origin: string): Promise<unknown[]> {
 	];
 }
 
-function collectMessages(
-	socket: ClientWebSocket,
-	count: number,
-): Promise<Array<string | number[]>> {
-	return new Promise((resolve, reject) => {
-		const messages: Array<string | number[]> = [];
-		const onMessage: SocketListener = (data, binary) => {
-			try {
-				messages.push(normalizedMessage(data, binary));
-				if (messages.length === count) {
-					socket.off("message", onMessage);
-					resolve(messages);
-				}
-			} catch (error) {
-				socket.off("message", onMessage);
-				reject(error);
-			}
-		};
-		socket.on("message", onMessage);
-	});
-}
-
 async function readPhysicalHibernation(origin: string): Promise<{
 	events: Array<Record<string, unknown>>;
 	inspection: unknown;
 }> {
-	const socket = createClientWebSocket(
-		`${origin.replace("http:", "ws:")}/socket?id=physical&physical=1`,
-	);
-	const opened = once(socket, "open");
-	const error = once(socket, "error").then((parameters) =>
-		Promise.reject(parameters[0] ?? new Error("WebSocket connection failed")),
-	);
-	await Promise.race([opened, error]);
+	const socket = await openWebSocket(`${origin}/socket?id=physical&physical=1`);
 
 	// Orange configures the same ten-second idle deadline as workerd. Crossing
 	// it before the first frame makes a changed class-generation number a
@@ -168,9 +96,6 @@ async function readPhysicalHibernation(origin: string): Promise<{
 		}),
 	]);
 	const events = messages.map((message) => {
-		if (typeof message !== "string") {
-			throw new TypeError("Physical hibernation fixture expected text JSON");
-		}
 		const value: unknown = JSON.parse(message);
 		if (!isRecord(value)) {
 			throw new TypeError("Physical hibernation fixture returned invalid JSON");
@@ -178,9 +103,7 @@ async function readPhysicalHibernation(origin: string): Promise<{
 		return value;
 	});
 
-	const closed = once(socket, "close");
-	socket.close(1000, "done");
-	await closed;
+	await closeWebSocket(socket);
 	let inspection: unknown;
 	const deadline = Date.now() + 5_000;
 	do {

@@ -44,7 +44,7 @@ async function withDev(
 	}
 }
 
-async function json(response: Response, status = 200): Promise<unknown> {
+async function expectJson(response: Response, status = 200): Promise<unknown> {
 	const body = await response.text();
 	assert.equal(response.status, status, body);
 	return JSON.parse(body);
@@ -74,14 +74,14 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 	async "alarms"(projectDirectory) {
 		await withDev(projectDirectory, async ({ origin }) => {
 			const list = `${origin}/reminders/me`;
-			const { dueAt, ...later } = (await json(
+			const { dueAt, ...later } = (await expectJson(
 				await post(list, { text: "later", inSeconds: 3600 }),
 				201,
 			)) as { dueAt: number };
 			assert.deepEqual(later, { firedAt: null, id: 1, text: "later" });
 			assert.ok(dueAt > Date.now() + 3_500_000);
-			await json(await post(list, { text: "soon", inSeconds: 1 }), 201);
-			assert.deepEqual(await json(await post(list, { text: "now", inSeconds: 0 }), 400), {
+			await expectJson(await post(list, { text: "soon", inSeconds: 1 }), 201);
+			assert.deepEqual(await expectJson(await post(list, { text: "now", inSeconds: 0 }), 400), {
 				error: 'Send JSON like {"text":"stretch","inSeconds":5}',
 			});
 
@@ -91,7 +91,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			// The alarm fires in the background; the caller can only see it by
 			// reading the list again.
 			while (Date.now() < deadline) {
-				({ reminders } = (await json(await fetch(list))) as { reminders: Reminder[] });
+				({ reminders } = (await expectJson(await fetch(list))) as { reminders: Reminder[] });
 				if (reminders.some(({ firedAt }) => firedAt !== null)) break;
 				await delay(250);
 			}
@@ -122,12 +122,12 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.equal(route.status, 200);
 			assert.equal(await route.text(), index);
 
-			assert.deepEqual(await json(await fetch(`${origin}/api/hello`)), {
+			assert.deepEqual(await expectJson(await fetch(`${origin}/api/hello`)), {
 				message: "Hello from the Worker",
 			});
 			// An unknown API route is a Worker 404, never the app's index.html.
 			assert.deepEqual(
-				await json(await fetch(`${origin}/api/missing`, { headers: navigation }), 404),
+				await expectJson(await fetch(`${origin}/api/missing`, { headers: navigation }), 404),
 				{ error: "No API route for /api/missing" },
 			);
 		});
@@ -143,10 +143,10 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			const article = `${origin}/articles/a`;
 			const miss = await get(article);
 			assert.equal(miss.status, "MISS");
-			const first = (await json(miss.response)) as Body;
+			const first = (await expectJson(miss.response)) as Body;
 			const hit = await get(article);
 			assert.equal(hit.status, "HIT");
-			assert.deepEqual(await json(hit.response), first);
+			assert.deepEqual(await expectJson(hit.response), first);
 			// HEAD reuses the GET entry through ignoreMethod.
 			const head = await fetch(article, { method: "HEAD" });
 			assert.equal(head.headers.get("cf-cache-status"), "HIT");
@@ -172,37 +172,37 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 
 			// no-store and private responses are never cached.
 			for (const path of ["/live", "/me"]) {
-				const a = (await json((await get(`${origin}${path}`)).response)) as Body;
+				const a = (await expectJson((await get(`${origin}${path}`)).response)) as Body;
 				const again = await get(`${origin}${path}`);
 				assert.equal(again.status, "MISS", path);
-				assert.notEqual(((await json(again.response)) as Body).version, a.version, path);
+				assert.notEqual(((await expectJson(again.response)) as Body).version, a.version, path);
 			}
 
 			// max-age=1 expires.
-			const score = (await json((await get(`${origin}/scores/s`)).response)) as Body;
+			const score = (await expectJson((await get(`${origin}/scores/s`)).response)) as Body;
 			assert.equal((await get(`${origin}/scores/s`)).status, "HIT");
 			await delay(1_500);
 			const expired = await get(`${origin}/scores/s`);
 			assert.equal(expired.status, "MISS");
-			assert.notEqual(((await json(expired.response)) as Body).version, score.version);
+			assert.notEqual(((await expectJson(expired.response)) as Body).version, score.version);
 
 			// A named cache is separate from caches.default.
-			await json((await get(`${origin}/thumbs/articles/a`)).response);
+			await expectJson((await get(`${origin}/thumbs/articles/a`)).response);
 			const peek = (path: string, cache: string) =>
-				fetch(`${origin}/peek?path=${path}&cache=${cache}`).then((r) => json(r));
+				fetch(`${origin}/peek?path=${path}&cache=${cache}`).then((r) => expectJson(r));
 			assert.deepEqual(await peek("/thumbs/articles/a", "thumbnails"), { cached: true });
 			assert.deepEqual(await peek("/thumbs/articles/a", "default"), { cached: false });
 			assert.deepEqual(await peek("/articles/a", "thumbnails"), { cached: false });
 
 			assert.deepEqual(
-				await json(await post(`${origin}/purge`, { cache: "thumbnails", path: "/thumbs/articles/a" })),
+				await expectJson(await post(`${origin}/purge`, { cache: "thumbnails", path: "/thumbs/articles/a" })),
 				{ deleted: true },
 			);
 			assert.deepEqual(
-				await json(await post(`${origin}/purge`, { cache: "thumbnails", path: "/thumbs/articles/a" })),
+				await expectJson(await post(`${origin}/purge`, { cache: "thumbnails", path: "/thumbs/articles/a" })),
 				{ deleted: false },
 			);
-			assert.deepEqual(await json(await post(`${origin}/purge`, { path: "/articles/a" })), { deleted: true });
+			assert.deepEqual(await expectJson(await post(`${origin}/purge`, { path: "/articles/a" })), { deleted: true });
 			assert.equal((await get(article)).status, "MISS");
 			assert.equal((await post(`${origin}/purge`, {})).status, 400);
 			assert.equal((await fetch(article, { method: "POST" })).headers.get("cf-cache-status"), "BYPASS");
@@ -216,7 +216,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				const again = await get(`${origin}/articles/b`);
 				assert.equal(again.status, "MISS");
 				await again.response.text();
-				assert.deepEqual(await json(await post(`${origin}/purge`, { path: "/articles/b" })), {
+				assert.deepEqual(await expectJson(await post(`${origin}/purge`, { path: "/articles/b" })), {
 					deleted: false,
 				});
 			});
@@ -328,7 +328,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				fetch(`${origin}/cdn-cgi/local/scheduled?cron=${encodeURIComponent(cron)}${query}`);
 			type Run = { count: number; cron: string; lastError?: string; lastOutcome: string; scheduledTime: number };
 			const state = async () =>
-				(await json(await fetch(`${origin}/`))) as {
+				(await expectJson(await fetch(`${origin}/`))) as {
 					digestSentAt: number | null;
 					lastHeartbeat: number | null;
 					runs: (Run & { job: string })[];
@@ -343,9 +343,9 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 
 			assert.equal((await fetch(`${origin}/tmp/a`, { body: "1", method: "PUT" })).status, 204);
 			assert.equal((await fetch(`${origin}/tmp/b`, { body: "2", method: "PUT" })).status, 204);
-			assert.deepEqual(await json(await fetch(`${origin}/tmp`)), { keys: ["a", "b"] });
+			assert.deepEqual(await expectJson(await fetch(`${origin}/tmp`)), { keys: ["a", "b"] });
 			assert.equal((await run("0 3 * * *")).status, 200);
-			assert.deepEqual(await json(await fetch(`${origin}/tmp`)), { keys: [] });
+			assert.deepEqual(await expectJson(await fetch(`${origin}/tmp`)), { keys: [] });
 
 			assert.equal((await run("0 18 LW * *", "&time=1793383200000")).status, 200);
 			assert.equal((await job("month-end-report"))?.scheduledTime, 1793383200000);
@@ -398,7 +398,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.match(applied.output, /0001_create_comments_table\.sql/);
 			assert.match(applied.output, /0002_index_comments_by_author\.sql/);
 
-			assert.deepEqual(await json(await fetch(comments)), {
+			assert.deepEqual(await expectJson(await fetch(comments)), {
 				comments: [
 					{ author: "Kristian", content: "Congrats!", id: 1 },
 					{ author: "Serena", content: "Great job!", id: 2 },
@@ -406,11 +406,11 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				],
 			});
 			const ada = { author: "Ada", content: "Nice work", id: 4 };
-			assert.deepEqual(await json(await post(comments, { author: "Ada", content: "Nice work" }), 201), ada);
-			assert.deepEqual(await json(await post(comments, { author: "Ada" }), 400), {
+			assert.deepEqual(await expectJson(await post(comments, { author: "Ada", content: "Nice work" }), 201), ada);
+			assert.deepEqual(await expectJson(await post(comments, { author: "Ada" }), 400), {
 				error: "Send JSON with string author and content fields",
 			});
-			assert.deepEqual(await json(await fetch(`${comments}?author=Ada`)), { comments: [ada] });
+			assert.deepEqual(await expectJson(await fetch(`${comments}?author=Ada`)), { comments: [ada] });
 		});
 	},
 
@@ -418,31 +418,31 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 		await withDev(projectDirectory, async ({ origin }) => {
 			const ada = `${origin}/workspaces/team/users/ada`;
 			const add = (url: string, text: string) => fetch(`${url}/notes`, { body: text, method: "POST" });
-			assert.deepEqual(await json(await add(ada, " buy milk "), 201), { id: 1, text: " buy milk " });
-			assert.deepEqual(await json(await add(ada, ""), 400), { error: "Send the note text as the body" });
+			assert.deepEqual(await expectJson(await add(ada, " buy milk "), 201), { id: 1, text: " buy milk " });
+			assert.deepEqual(await expectJson(await add(ada, ""), 400), { error: "Send the note text as the body" });
 			// Each user is a separate facet with its own database.
-			await json(await add(`${origin}/workspaces/team/users/bob`, "bob's note"), 201);
-			assert.deepEqual(await json(await fetch(`${ada}/notes`)), {
+			await expectJson(await add(`${origin}/workspaces/team/users/bob`, "bob's note"), 201);
+			assert.deepEqual(await expectJson(await fetch(`${ada}/notes`)), {
 				notes: [{ id: 1, text: " buy milk " }],
 				version: 1,
 			});
 
 			// Swapping the class aborts the running facet; its data stays.
-			assert.deepEqual(await json(await fetch(`${ada}/upgrade`, { method: "POST" })), {
+			assert.deepEqual(await expectJson(await fetch(`${ada}/upgrade`, { method: "POST" })), {
 				inFlightError: "upgrading to NotesV2",
 				notes: [{ id: 1, text: " buy milk " }],
 				oldStubError: "upgrading to NotesV2",
 				version: 2,
 			});
-			assert.deepEqual(await json(await add(ada, " call home "), 201), { id: 2, text: "call home" });
+			assert.deepEqual(await expectJson(await add(ada, " call home "), 201), { id: 2, text: "call home" });
 
 			const run = (code: string) => fetch(`${ada}/run`, { body: code, method: "POST" });
 			assert.deepEqual(
-				await json(await run("export default { run(notes) { return notes.map((n) => n.text.trim().toUpperCase()); } };")),
+				await expectJson(await run("export default { run(notes) { return notes.map((n) => n.text.trim().toUpperCase()); } };")),
 				{ result: ["BUY MILK", "CALL HOME"] },
 			);
 			assert.deepEqual(
-				await json(await run("export default { async run() { return (await fetch('https://example.com')).status; } };"), 422),
+				await expectJson(await run("export default { async run() { return (await fetch('https://example.com')).status; } };"), 422),
 				{
 					error: {
 						message:
@@ -452,19 +452,19 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				},
 			);
 			// The exact parser message depends on the JavaScript engine.
-			const broken = (await json(await run("export default { run( };"), 422)) as {
+			const broken = (await expectJson(await run("export default { run( };"), 422)) as {
 				error: { message: string; name: string };
 			};
 			assert.equal(broken.error.name, "SyntaxError");
 			assert.match(broken.error.message, /^Unexpected token/);
-			assert.deepEqual(await json(await run("export default { run() { throw new TypeError('bad plugin'); } };"), 422), {
+			assert.deepEqual(await expectJson(await run("export default { run() { throw new TypeError('bad plugin'); } };"), 422), {
 				error: { message: "bad plugin", name: "TypeError" },
 			});
 
 			// delete() stops the facet and erases its data. Other users keep theirs.
-			assert.deepEqual(await json(await fetch(ada, { method: "DELETE" })), { inFlightError: "Facet was deleted." });
-			assert.deepEqual(await json(await fetch(`${ada}/notes`)), { notes: [], version: 1 });
-			assert.deepEqual(await json(await fetch(`${origin}/workspaces/team/users/bob/notes`)), {
+			assert.deepEqual(await expectJson(await fetch(ada, { method: "DELETE" })), { inFlightError: "Facet was deleted." });
+			assert.deepEqual(await expectJson(await fetch(`${ada}/notes`)), { notes: [], version: 1 });
+			assert.deepEqual(await expectJson(await fetch(`${origin}/workspaces/team/users/bob/notes`)), {
 				notes: [{ id: 1, text: "bob's note" }],
 				version: 1,
 			});
@@ -473,23 +473,23 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 
 	async "hello-durable-object"(projectDirectory) {
 		await withDev(projectDirectory, async ({ origin }) => {
-			assert.deepEqual(await json(await fetch(`${origin}/alice`)), {
+			assert.deepEqual(await expectJson(await fetch(`${origin}/alice`)), {
 				greeting: "Hello, alice!",
 				visits: 1,
 			});
-			assert.deepEqual(await json(await fetch(`${origin}/alice`)), {
+			assert.deepEqual(await expectJson(await fetch(`${origin}/alice`)), {
 				greeting: "Hello, alice!",
 				visits: 2,
 			});
 			// Another name is another object with its own database.
-			assert.deepEqual(await json(await fetch(`${origin}/bob`)), {
+			assert.deepEqual(await expectJson(await fetch(`${origin}/bob`)), {
 				greeting: "Hello, bob!",
 				visits: 1,
 			});
 		});
 		// The count survives a restart of orange dev.
 		await withDev(projectDirectory, async ({ origin }) => {
-			assert.deepEqual(await json(await fetch(`${origin}/alice`)), {
+			assert.deepEqual(await expectJson(await fetch(`${origin}/alice`)), {
 				greeting: "Hello, alice!",
 				visits: 3,
 			});
@@ -508,7 +508,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.equal((await put("todo-3?ttl=30", "soon")).status, 204);
 
 			assert.equal(await (await fetch(`${origin}/notes/todo-1`)).text(), "buy milk");
-			const { keys } = (await json(await fetch(`${origin}/notes?prefix=todo-`))) as {
+			const { keys } = (await expectJson(await fetch(`${origin}/notes?prefix=todo-`))) as {
 				keys: { expiration?: number; name: string }[];
 			};
 			assert.deepEqual(
@@ -533,30 +533,30 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			projectDirectory,
 			async ({ origin }) => {
 				assert.equal(await (await fetch(`${origin}/health`)).text(), "auth is up");
-				assert.deepEqual(await json(await fetch(`${origin}/login/ada`)), { logins: 1, user: "ada" });
-				assert.deepEqual(await json(await fetch(`${origin}/login/ada`)), { logins: 2, user: "ada" });
+				assert.deepEqual(await expectJson(await fetch(`${origin}/login/ada`)), { logins: 1, user: "ada" });
+				assert.deepEqual(await expectJson(await fetch(`${origin}/login/ada`)), { logins: 2, user: "ada" });
 				// The RangeError thrown in auth reaches gateway over RPC.
-				assert.deepEqual(await json(await fetch(`${origin}/login/Ada!`), 400), {
+				assert.deepEqual(await expectJson(await fetch(`${origin}/login/Ada!`), 400), {
 					error: "user must be lowercase letters",
 				});
 				// gateway reads auth's Durable Object through script_name.
-				assert.deepEqual(await json(await fetch(`${origin}/sessions/ada`)), { active: true, logins: 2 });
-				assert.deepEqual(await json(await fetch(`${origin}/stats`)), { users: ["ada"] });
-				assert.deepEqual(await json(await fetch(`${origin}/sessions/ada`, { method: "DELETE" })), {
+				assert.deepEqual(await expectJson(await fetch(`${origin}/sessions/ada`)), { active: true, logins: 2 });
+				assert.deepEqual(await expectJson(await fetch(`${origin}/stats`)), { users: ["ada"] });
+				assert.deepEqual(await expectJson(await fetch(`${origin}/sessions/ada`, { method: "DELETE" })), {
 					revoked: "ada",
 				});
-				assert.deepEqual(await json(await fetch(`${origin}/sessions/ada`)), { active: false, logins: 0 });
+				assert.deepEqual(await expectJson(await fetch(`${origin}/sessions/ada`)), { active: false, logins: 0 });
 
-				await json(await post(`${origin}/emails`, { to: "ada@example.com" }), 202);
-				await json(await post(`${origin}/emails`, { to: "nobody@bounce.test" }), 202);
-				assert.deepEqual(await json(await post(`${origin}/emails`, {}), 400), {
+				await expectJson(await post(`${origin}/emails`, { to: "ada@example.com" }), 202);
+				await expectJson(await post(`${origin}/emails`, { to: "nobody@bounce.test" }), 202);
+				assert.deepEqual(await expectJson(await post(`${origin}/emails`, {}), 400), {
 					error: 'Send JSON like {"to":"ada@example.com"}',
 				});
 				const signup = `${origin}/signups/bob`;
-				assert.deepEqual(await json(await post(signup, { email: "bob@example.com" }), 201), { id: "bob" });
+				assert.deepEqual(await expectJson(await post(signup, { email: "bob@example.com" }), 201), { id: "bob" });
 				// One Workflow instance per id: a second signup fails.
-				await json(await post(signup, { email: "bob@example.com" }), 409);
-				assert.deepEqual(await json(await fetch(`${origin}/signups/nobody`), 404), {
+				await expectJson(await post(signup, { email: "bob@example.com" }), 409);
+				assert.deepEqual(await expectJson(await fetch(`${origin}/signups/nobody`), 404), {
 					error: "No signup for nobody",
 				});
 
@@ -567,8 +567,8 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				// The consumer and the Workflow run in jobs in the background; the
 				// caller can only see them by reading again.
 				while (Date.now() < deadline) {
-					({ emails } = (await json(await fetch(`${origin}/workers/jobs/emails`))) as { emails: Email[] });
-					status = (await json(await fetch(signup))) as typeof status;
+					({ emails } = (await expectJson(await fetch(`${origin}/workers/jobs/emails`))) as { emails: Email[] });
+					status = (await expectJson(await fetch(signup))) as typeof status;
 					if (emails.length === 3 && status.status === "complete") break;
 					await delay(250);
 				}
@@ -581,7 +581,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 						{ status: "bounced", to: "nobody@bounce.test" },
 					],
 				);
-				const missing = (await json(await fetch(`${origin}/workers/billing/`), 404)) as { error: string };
+				const missing = (await expectJson(await fetch(`${origin}/workers/billing/`), 404)) as { error: string };
 				assert.match(missing.error, /^Worker not found\./);
 			},
 			configs,
@@ -597,28 +597,28 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			// reading the results again.
 			const waitFor = async <T>(url: string, done: (value: T) => boolean): Promise<T> => {
 				const deadline = Date.now() + 30_000;
-				let value = (await json(await fetch(url))) as T;
+				let value = (await expectJson(await fetch(url))) as T;
 				while (!done(value) && Date.now() < deadline) {
 					await delay(250);
-					value = (await json(await fetch(url))) as T;
+					value = (await expectJson(await fetch(url))) as T;
 				}
 				return value;
 			};
 
-			assert.deepEqual(await json(await post(jobs, { id: "a" }), 202), { queued: "a" });
-			await json(await post(jobs, { failUntilAttempt: 1, id: "b" }), 202);
+			assert.deepEqual(await expectJson(await post(jobs, { id: "a" }), 202), { queued: "a" });
+			await expectJson(await post(jobs, { failUntilAttempt: 1, id: "b" }), 202);
 			// It fails more often than max_retries allows, so it lands in the dead letter queue.
-			await json(await post(jobs, { failUntilAttempt: 9, id: "c" }), 202);
-			await json(await post(jobs, { delaySeconds: 2, id: "d" }), 202);
+			await expectJson(await post(jobs, { failUntilAttempt: 9, id: "c" }), 202);
+			await expectJson(await post(jobs, { delaySeconds: 2, id: "d" }), 202);
 			const batch = Array.from({ length: 7 }, (_, index) => ({ id: `batch-${index}` }));
-			assert.deepEqual(await json(await post(`${jobs}/batch`, { delaySeconds: 1, jobs: batch }), 202), {
+			assert.deepEqual(await expectJson(await post(`${jobs}/batch`, { delaySeconds: 1, jobs: batch }), 202), {
 				queued: batch.map(({ id }) => id),
 			});
 
-			assert.deepEqual(await json(await post(jobs, {}), 400), {
+			assert.deepEqual(await expectJson(await post(jobs, {}), 400), {
 				error: 'Send JSON like {"id":"a","failUntilAttempt":1,"delaySeconds":2}',
 			});
-			assert.deepEqual(await json(await post(jobs, { delaySeconds: -1, id: "late" }), 400), {
+			assert.deepEqual(await expectJson(await post(jobs, { delaySeconds: -1, id: "late" }), 400), {
 				error: "Queue send failed: message delay -1 is invalid. It must be a whole number of seconds, 0 or more.",
 			});
 
@@ -650,7 +650,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.equal((await send(new Uint8Array([1, 2, 3]), "bytes")).status, 202);
 			assert.equal((await send(JSON.stringify({ kind: "signup" }))).status, 202);
 			const xml = await send("<a/>", "xml");
-			assert.deepEqual(await json(xml, 400), { error: "Unsupported queue message content type: xml" });
+			assert.deepEqual(await expectJson(xml, 400), { error: "Unsupported queue message content type: xml" });
 
 			type Event = { attempts: number; type: string; value: unknown };
 			const first = await waitFor<{ events: Event[] }>(events, ({ events }) => events.length === 3);
@@ -669,7 +669,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			const flaky = second.events.find(({ value }) => (value as { kind?: string }).kind === "flaky");
 			assert.equal(flaky?.attempts, 2);
 
-			assert.deepEqual(await json(await fetch(`${origin}/metrics`)), { backlogBytes: 0, backlogCount: 0 });
+			assert.deepEqual(await expectJson(await fetch(`${origin}/metrics`)), { backlogBytes: 0, backlogCount: 0 });
 		});
 	},
 
@@ -681,7 +681,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 			type Stored = { checksums: { sha256?: string }; etag: string; size: number };
-			const created = (await json(
+			const created = (await expectJson(
 				await put("notes/a.txt", "hello world", {
 					"cache-control": "max-age=60",
 					"content-disposition": 'attachment; filename="a.txt"',
@@ -693,7 +693,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			)) as Stored;
 			assert.equal(created.checksums.sha256, sha256("hello world"));
 			// A body that does not match its checksum is rejected and not stored.
-			const corrupt = (await json(
+			const corrupt = (await expectJson(
 				await put("notes/bad.txt", "tampered", { "x-sha256": sha256("original") }),
 				400,
 			)) as { error: string };
@@ -727,16 +727,16 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.equal(stale.status, 412);
 
 			// Optimistic writes: a stale If-Match leaves the file alone.
-			await json(await put("notes/a.txt", "lost update", { "if-match": '"old"' }), 412);
-			await json(await put("notes/a.txt", "hello again", { "if-match": etag! }), 201);
+			await expectJson(await put("notes/a.txt", "lost update", { "if-match": '"old"' }), 412);
+			await expectJson(await put("notes/a.txt", "hello again", { "if-match": etag! }), 201);
 			assert.equal(await (await fetch(`${files}/notes/a.txt`)).text(), "hello again");
 
-			await json(await put("notes/b.txt", "b"), 201);
-			await json(await put("notes/archive/c.txt", "c"), 201);
-			await json(await put("images/d.png", "d", { "content-type": "image/png" }), 201);
+			await expectJson(await put("notes/b.txt", "b"), 201);
+			await expectJson(await put("notes/archive/c.txt", "c"), 201);
+			await expectJson(await put("images/d.png", "d", { "content-type": "image/png" }), 201);
 
 			type Page = { cursor?: string; files: { key: string }[]; folders: string[]; truncated: boolean };
-			const tree = (await json(await fetch(`${files}?prefix=notes/&delimiter=/`))) as Page;
+			const tree = (await expectJson(await fetch(`${files}?prefix=notes/&delimiter=/`))) as Page;
 			assert.deepEqual(tree.files.map(({ key }) => key), ["notes/a.txt", "notes/b.txt"]);
 			assert.deepEqual(tree.folders, ["notes/archive/"]);
 
@@ -745,7 +745,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			let pages = 0;
 			do {
 				const query = cursor === undefined ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-				const page = (await json(await fetch(`${files}?limit=2${query}`))) as Page;
+				const page = (await expectJson(await fetch(`${files}?limit=2${query}`))) as Page;
 				keys.push(...page.files.map(({ key }) => key));
 				cursor = page.cursor;
 				pages += 1;
@@ -754,11 +754,11 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.deepEqual(keys, ["images/d.png", "notes/a.txt", "notes/archive/c.txt", "notes/b.txt"]);
 
 			assert.deepEqual(
-				await json(await post(`${files}/delete`, { keys: ["notes/a.txt", "notes/b.txt", "missing"] })),
+				await expectJson(await post(`${files}/delete`, { keys: ["notes/a.txt", "notes/b.txt", "missing"] })),
 				{ deleted: 3 },
 			);
 			assert.deepEqual(
-				((await json(await fetch(files))) as Page).files.map(({ key }) => key),
+				((await expectJson(await fetch(files))) as Page).files.map(({ key }) => key),
 				["images/d.png", "notes/archive/c.txt"],
 			);
 
@@ -766,17 +766,17 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			const uploads = `${origin}/uploads/videos/big.bin`;
 			const start = async () =>
 				(
-					(await json(
+					(await expectJson(
 						await fetch(uploads, { headers: { "content-type": "video/mp4" }, method: "POST" }),
 						201,
 					)) as { uploadId: string }
 				).uploadId;
 			const sendPart = async (uploadId: string, part: number, body: Uint8Array) =>
-				json(await fetch(`${uploads}?uploadId=${uploadId}&part=${part}`, { body, method: "PUT" }));
+				expectJson(await fetch(`${uploads}?uploadId=${uploadId}&part=${part}`, { body, method: "PUT" }));
 			const uploadId = await start();
 			const first = new Uint8Array(5 * 1024 * 1024).fill(1);
 			const parts = [await sendPart(uploadId, 1, first), await sendPart(uploadId, 2, new Uint8Array(1024).fill(2))];
-			const big = (await json(await post(`${uploads}?uploadId=${uploadId}`, { parts }), 201)) as Stored;
+			const big = (await expectJson(await post(`${uploads}?uploadId=${uploadId}`, { parts }), 201)) as Stored;
 			assert.equal(big.size, 5 * 1024 * 1024 + 1024);
 			const tail = await fetch(`${files}/videos/big.bin`, { headers: { range: "bytes=-2" } });
 			assert.equal(tail.status, 206);
@@ -789,7 +789,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				await sendPart(small, 1, new Uint8Array(10)),
 				await sendPart(small, 2, new Uint8Array(10)),
 			];
-			await json(await post(`${uploads}?uploadId=${small}`, { parts: smallParts }), 400);
+			await expectJson(await post(`${uploads}?uploadId=${small}`, { parts: smallParts }), 400);
 			assert.equal((await fetch(`${uploads}?uploadId=${small}`, { method: "DELETE" })).status, 204);
 		});
 	},
@@ -874,15 +874,15 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.equal(await (await fetch(`${origin}/greet?name=Ada`)).text(), "Hello, Ada!");
 
 			const counter = `${origin}/counters/a`;
-			assert.deepEqual(await json(await fetch(`${counter}?amount=2`, { method: "POST" })), { total: 2 });
-			assert.deepEqual(await json(await fetch(counter, { method: "POST" })), { total: 3 });
+			assert.deepEqual(await expectJson(await fetch(`${counter}?amount=2`, { method: "POST" })), { total: 2 });
+			assert.deepEqual(await expectJson(await fetch(counter, { method: "POST" })), { total: 3 });
 			// The error thrown inside the Durable Object reaches the Worker.
 			assert.deepEqual(
-				await json(await fetch(`${counter}?amount=-1`, { method: "POST" }), 400),
+				await expectJson(await fetch(`${counter}?amount=-1`, { method: "POST" }), 400),
 				{ error: "amount must be a positive integer" },
 			);
-			assert.deepEqual(await json(await fetch(counter)), { total: 3 });
-			assert.deepEqual(await json(await fetch(`${origin}/counters/b`)), { total: 0 });
+			assert.deepEqual(await expectJson(await fetch(counter)), { total: 3 });
+			assert.deepEqual(await expectJson(await fetch(`${origin}/counters/b`)), { total: 0 });
 		});
 	},
 
@@ -890,7 +890,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 		await withDev(projectDirectory, async ({ origin }) => {
 			const ada = `${origin}/users/ada`;
 			const run = async (user: string, command: string) =>
-				(await json(await post(`${origin}/users/${user}/run`, { command }))) as {
+				(await expectJson(await post(`${origin}/users/${user}/run`, { command }))) as {
 					exitCode: number;
 					stderr: string;
 					stdout: string;
@@ -905,10 +905,10 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			});
 			// A failing command is a result the caller can read, not an HTTP error.
 			assert.deepEqual(await run("ada", "exit 3"), { exitCode: 3, stderr: "", stdout: "", success: false });
-			assert.deepEqual(await json(await post(`${ada}/run`, {}), 400), {
+			assert.deepEqual(await expectJson(await post(`${ada}/run`, {}), 400), {
 				error: 'Send JSON like {"command":"echo hi"}',
 			});
-			assert.equal((await json(await post(`${origin}/users/Not_Valid/run`, { command: "true" }), 400) as { error: string }).error, "User ids are lowercase letters, digits, and dashes");
+			assert.equal((await expectJson(await post(`${origin}/users/Not_Valid/run`, { command: "true" }), 400) as { error: string }).error, "User ids are lowercase letters, digits, and dashes");
 
 			const stream = await fetch(`${ada}/stream`, { body: "echo one; echo two >&2; exit 1", method: "POST" });
 			assert.equal(stream.headers.get("content-type"), "text/event-stream");
@@ -928,22 +928,22 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			assert.equal(await (await fetch(`${ada}/files/notes/todo.txt`)).text(), "ship it");
 			// Commands see the files the file API wrote.
 			assert.equal((await run("ada", "cat notes/todo.txt")).stdout, "ship it");
-			assert.deepEqual(await json(await fetch(`${ada}/files`)), [{ path: "notes/todo.txt", size: 7 }]);
-			assert.deepEqual(await json(await fetch(`${ada}/files/missing.txt`), 404), {
+			assert.deepEqual(await expectJson(await fetch(`${ada}/files`)), [{ path: "notes/todo.txt", size: 7 }]);
+			assert.deepEqual(await expectJson(await fetch(`${ada}/files/missing.txt`), 404), {
 				error: "No file /workspace/missing.txt",
 			});
 			// Each user id has its own sandbox.
-			assert.deepEqual(await json(await fetch(`${origin}/users/bob/files/notes/todo.txt`), 404), {
+			assert.deepEqual(await expectJson(await fetch(`${origin}/users/bob/files/notes/todo.txt`), 404), {
 				error: "No file /workspace/notes/todo.txt",
 			});
 
 			const git = await fetch(`${ada}/git`, { method: "POST" });
 			if (git.status !== 503) {
-				assert.deepEqual(((await json(git)) as { files: string[] }).files, ["README.md"]);
+				assert.deepEqual(((await expectJson(git)) as { files: string[] }).files, ["README.md"]);
 			}
 
 			const port = await freePort();
-			const { previewUrl } = (await json(await fetch(`${ada}/server?port=${port}`, { method: "POST" }), 201)) as {
+			const { previewUrl } = (await expectJson(await fetch(`${ada}/server?port=${port}`, { method: "POST" }), 201)) as {
 				previewUrl: string;
 			};
 			const preview = new URL(previewUrl);
@@ -964,21 +964,21 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 					.end();
 			});
 			assert.equal(previewBody, "hello from the sandbox /hi");
-			assert.deepEqual(await json(await fetch(`${ada}/server?port=${port}`, { method: "POST" }), 409), {
+			assert.deepEqual(await expectJson(await fetch(`${ada}/server?port=${port}`, { method: "POST" }), 409), {
 				error: "The server is already running",
 			});
 
-			assert.deepEqual(await json(await fetch(`${ada}/processes/web`, { method: "DELETE" })), {
+			assert.deepEqual(await expectJson(await fetch(`${ada}/processes/web`, { method: "DELETE" })), {
 				id: "web",
 				status: "killed",
 			});
-			assert.deepEqual(await json(await fetch(`${ada}/processes/nope`, { method: "DELETE" }), 404), {
+			assert.deepEqual(await expectJson(await fetch(`${ada}/processes/nope`, { method: "DELETE" }), 404), {
 				error: "No process nope",
 			});
 
 			assert.equal((await fetch(ada, { method: "DELETE" })).status, 204);
 			// After destroy, the next call gets a new, empty sandbox.
-			assert.deepEqual(await json(await fetch(`${ada}/files`)), []);
+			assert.deepEqual(await expectJson(await fetch(`${ada}/files`)), []);
 		});
 	},
 
@@ -986,7 +986,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 		await withDev(projectDirectory, async ({ origin }) => {
 			const ada = `${origin}/sandboxes/ada`;
 			const exec = async (name: string, argv: string[]) =>
-				(await json(await fetch(`${origin}/sandboxes/${name}/exec`, { body: JSON.stringify({ argv }), method: "POST" }))) as {
+				(await expectJson(await fetch(`${origin}/sandboxes/${name}/exec`, { body: JSON.stringify({ argv }), method: "POST" }))) as {
 					exitCode: number;
 					stderr: string;
 					stdout: string;
@@ -1092,13 +1092,13 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			await withDev(projectDirectory, async ({ origin }) => {
 				const user = (content: string) => ({ messages: [{ content, role: "user" }] });
 
-				assert.deepEqual(await json(await post(`${origin}/chat`, user("hi"))), {
+				assert.deepEqual(await expectJson(await post(`${origin}/chat`, user("hi"))), {
 					answer: "echo: hi",
 					usage: { completion_tokens: 2, prompt_tokens: 3, total_tokens: 5 },
 				});
 				// ORANGE_AI_MODELS sent the Workers AI model to the mapped provider model.
 				assert.equal(providerModels.at(-1), "local-chat");
-				assert.deepEqual(await json(await post(`${origin}/chat`, {}), 400), {
+				assert.deepEqual(await expectJson(await post(`${origin}/chat`, {}), 400), {
 					error: 'Send {"messages":[{"role":"user","content":"..."}]}',
 				});
 
@@ -1119,14 +1119,14 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				);
 
 				assert.deepEqual(
-					await json(await post(`${origin}/ask`, { question: "Weather in Lisbon?" })),
+					await expectJson(await post(`${origin}/ask`, { question: "Weather in Lisbon?" })),
 					{
 						answer: 'weather: {"city":"Lisbon","forecast":"sunny","celsius":24}',
 						toolCalls: [{ arguments: { city: "Lisbon" }, name: "get_weather" }],
 					},
 				);
 
-				const ranked = (await json(
+				const ranked = (await expectJson(
 					await post(`${origin}/search`, {
 						documents: ["Queues send messages", "KV stores values"],
 						query: "storage",
@@ -1138,13 +1138,13 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 					["KV stores values", "Queues send messages"],
 				);
 
-				assert.deepEqual(await json(await post(`${origin}/openai`, user("hello"))), {
+				assert.deepEqual(await expectJson(await post(`${origin}/openai`, user("hello"))), {
 					answer: "echo: hello",
 					model: "openai/gpt-oss-20b",
 				});
 
 				// A provider failure is an InferenceUpstreamError with the provider's message.
-				const failed = (await json(await post(`${origin}/chat`, user("provider-down")), 502)) as {
+				const failed = (await expectJson(await post(`${origin}/chat`, user("provider-down")), 502)) as {
 					error: string;
 					name: string;
 				};
@@ -1159,7 +1159,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				assert.equal(rawFailed.status, 503);
 				assert.match(await rawFailed.text(), /the model is overloaded/);
 
-				const listed = (await json(await fetch(`${origin}/models?search=llama-3.1-8b`))) as {
+				const listed = (await expectJson(await fetch(`${origin}/models?search=llama-3.1-8b`))) as {
 					models: string[];
 				};
 				assert.ok(listed.models.includes("@cf/meta/llama-3.1-8b-instruct"));
@@ -1168,7 +1168,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			// With the provider down, the Worker still answers with a clear 502.
 			await new Promise<void>((resolveClose) => provider.close(() => resolveClose()));
 			await withDev(projectDirectory, async ({ origin }) => {
-				const down = (await json(
+				const down = (await expectJson(
 					await post(`${origin}/chat`, { messages: [{ content: "hi", role: "user" }] }),
 					502,
 				)) as { error: string };
@@ -1189,7 +1189,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				// The Workflow runs in the background; the caller can only see its
 				// progress by reading the status again.
 				while (Date.now() < deadline) {
-					current = (await json(await fetch(`${orders}/${id}`))) as Status;
+					current = (await expectJson(await fetch(`${orders}/${id}`))) as Status;
 					if (current.status === status) return current;
 					await delay(250);
 				}
@@ -1199,12 +1199,12 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			// A flaky payment succeeds on its third attempt. The approval is sent
 			// early and waits in the queue until the Workflow asks for it.
 			assert.deepEqual(
-				await json(await post(orders, { card: "flaky", id: "order-1", item: "book", quantity: 2 }), 201),
+				await expectJson(await post(orders, { card: "flaky", id: "order-1", item: "book", quantity: 2 }), 201),
 				{ ids: ["order-1"] },
 			);
 			// A batch: one order the manager rejects, and one nobody answers in time.
 			assert.deepEqual(
-				await json(
+				await expectJson(
 					await post(`${orders}/batch`, [
 						{ id: "order-2", item: "lamp", quantity: 1 },
 						{ approvalTimeout: "2 seconds", id: "order-3", item: "book", quantity: 1 },
@@ -1214,22 +1214,22 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				{ ids: ["order-2", "order-3"] },
 			);
 			// Failures that a retry cannot fix.
-			await json(await post(orders, { id: "order-4", item: "lamp", quantity: 5 }), 201);
-			await json(await post(orders, { card: "declined", id: "order-5", item: "book", quantity: 1 }), 201);
+			await expectJson(await post(orders, { id: "order-4", item: "lamp", quantity: 5 }), 201);
+			await expectJson(await post(orders, { card: "declined", id: "order-5", item: "book", quantity: 1 }), 201);
 
 			// A taken id and an invalid id reject the create.
-			assert.deepEqual(await json(await post(orders, { id: "order-1", item: "book", quantity: 1 }), 409), {
+			assert.deepEqual(await expectJson(await post(orders, { id: "order-1", item: "book", quantity: 1 }), 409), {
 				error: '(instance.already_exists) Workflow instance with id "order-1" already exists',
 				name: "WorkflowError",
 			});
 			assert.equal((await post(orders, { id: "bad id!", item: "book", quantity: 1 })).status, 400);
 			assert.equal((await post(orders, { item: "book" })).status, 400);
 			// Without an id, the instance gets a random UUID.
-			const { ids } = (await json(await post(orders, { item: "book", quantity: 1 }), 201)) as { ids: string[] };
+			const { ids } = (await expectJson(await post(orders, { item: "book", quantity: 1 }), 201)) as { ids: string[] };
 			assert.match(ids[0] ?? "", /^[0-9a-f-]{36}$/);
 
-			await json(await fetch(`${orders}/order-1/approve?by=ada`, { method: "POST" }), 202);
-			await json(await fetch(`${orders}/order-2/reject?by=grace`, { method: "POST" }), 202);
+			await expectJson(await fetch(`${orders}/order-1/approve?by=ada`, { method: "POST" }), 202);
+			await expectJson(await fetch(`${orders}/order-2/reject?by=grace`, { method: "POST" }), 202);
 
 			assert.deepEqual((await waitFor("order-1", "complete")).output, {
 				approvedBy: "ada",
@@ -1258,14 +1258,14 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 			});
 
 			// Pausing a finished instance does nothing, and terminating it fails.
-			assert.deepEqual(await json(await fetch(`${orders}/order-1/pause`, { method: "POST" })), {
+			assert.deepEqual(await expectJson(await fetch(`${orders}/order-1/pause`, { method: "POST" })), {
 				done: "pause",
 			});
-			assert.deepEqual(await json(await fetch(`${orders}/order-1/terminate`, { method: "POST" }), 409), {
+			assert.deepEqual(await expectJson(await fetch(`${orders}/order-1/terminate`, { method: "POST" }), 409), {
 				error: "(instance.cannot_terminate) Cannot terminate instance since its on a finite state",
 				name: "WorkflowError",
 			});
-			assert.deepEqual(await json(await fetch(`${orders}/missing`), 404), { error: "No order missing" });
+			assert.deepEqual(await expectJson(await fetch(`${orders}/missing`), 404), { error: "No order missing" });
 		});
 	},
 };

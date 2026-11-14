@@ -55,12 +55,12 @@ test("a D1 export arrives whole, the Worker reads it through its binding, and it
 		assert.equal(copy.code, 0, copy.output);
 		const dev = await startOrangeDev(project.directory);
 		try {
-			assert.deepEqual(await (await fetch(dev.origin)).json(), seeded);
+			assert.deepEqual(await dev.json("/"), seeded);
 			// AUTOINCREMENT continues past the deleted row, and the trigger still fires.
-			const owner = (await (await fetch(`${dev.origin}/owner`, { body: "new", method: "POST" })).json()) as { id: number };
+			const owner = (await dev.json("/owner", { body: "new", method: "POST" })) as { id: number };
 			assert.equal(owner.id, 5);
 			assert.equal((await fetch(`${dev.origin}/pet`, { body: "rex", method: "POST" })).status, 200);
-			assert.equal(((await (await fetch(dev.origin)).json()) as typeof seeded).audit.at(-1), "pet 4");
+			assert.equal(((await dev.json("/")) as typeof seeded).audit.at(-1), "pet 4");
 		} finally {
 			await dev.close();
 		}
@@ -126,9 +126,7 @@ test("each statement in a batch reports the changes it made, not those of the ba
 		];
 		const dev = await startOrangeDev(project.directory);
 		try {
-			const response = await fetch(`${dev.origin}/batch-meta`, { body: JSON.stringify(statements), method: "POST" });
-			assert.equal(response.status, 200, await response.clone().text());
-			const metas = (await response.json()) as { changed_db: boolean; changes: number; last_row_id: number; size_after: number }[];
+			const metas = (await dev.json("/batch-meta", { body: JSON.stringify(statements), method: "POST" })) as { changed_db: boolean; changes: number; last_row_id: number; size_after: number }[];
 			assert.deepEqual(
 				metas.slice(1).map((meta) => [meta.changes, meta.last_row_id, meta.changed_db]),
 				[
@@ -181,7 +179,7 @@ test("a copy never overwrites Orange's data unless asked, and a copy that fails 
 		assert.equal(rerun.code, 0, rerun.output);
 		const dev = await startOrangeDev(project.directory);
 		try {
-			assert.deepEqual(await (await fetch(dev.origin)).json(), seeded);
+			assert.deepEqual(await dev.json("/"), seeded);
 		} finally {
 			await dev.close();
 		}

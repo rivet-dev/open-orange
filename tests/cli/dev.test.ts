@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { cp, glob, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { glob, readFile, rename } from "node:fs/promises";
 import { get, type IncomingHttpHeaders } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
-import { isRecord } from "../harness/orange-dev.js";
+import {
+	copyProject,
+	isRecord,
+	repositoryRoot,
+	runOrange,
+	startOrangeDev,
+	stopProjectEngines,
+} from "../harness/orange-dev.js";
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
-const configPath = fileURLToPath(
-	new URL("../../src/config/fixtures/wrangler.toml", import.meta.url),
-);
+const cliEntrypoint = join(repositoryRoot, "src", "bin.ts");
+const configDirectory = join(repositoryRoot, "src", "config", "fixtures");
+const configPath = join(configDirectory, "wrangler.toml");
 
 function waitForReady(child: ChildProcess): Promise<number> {
 	const stdoutStream = child.stdout;
@@ -66,36 +70,14 @@ function waitForExit(child: ChildProcess): Promise<{
 }
 
 test("serves a Worker request through orange dev", async () => {
-	const child = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			configPath,
-			"--port",
-			"0",
-			"--ip",
-			"0.0.0.0",
-			"--host",
-			"0.0.0.0",
-			"--show-interactive-dev-session=false",
-		],
-		{ env: { ...process.env, CI: "1", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-	);
+	const dev = await startOrangeDev(configDirectory, "wrangler.toml");
 	try {
-		const port = await waitForReady(child);
-		const response = await fetch(`http://127.0.0.1:${port}/hello`);
+		const response = await fetch(`${dev.origin}/hello`);
 		assert.equal(response.status, 200);
 		assert.equal(await response.text(), "ok");
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
 	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
-		}
+		// close() asserts that SIGINT stops orange dev with exit code 0.
+		await dev.close();
 	}
 });
 
@@ -202,8 +184,8 @@ test("open-orange dev --json writes only JSON Lines events an agent can follow f
 });
 
 test("orange dev marks stubbed bindings with their alternative, in the header and the --json config event", async () => {
-	const project = await copyProjectFixture("stub-bindings");
-	const config = join(project, "wrangler.jsonc");
+	const project = await copyFixture("stub-bindings");
+	const config = join(project.directory, "wrangler.jsonc");
 	const children: ChildProcess[] = [];
 	try {
 		const human = spawnDev(config);
@@ -250,7 +232,7 @@ test("orange dev marks stubbed bindings with their alternative, in the header an
 		for (const child of children) {
 			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 		}
-		await rm(project, { force: true, recursive: true });
+		await project.dispose();
 	}
 });
 
@@ -275,30 +257,9 @@ test("open-orange dev --json reports a startup failure as one failure event", as
 
 test("injects stable version metadata through orange dev", async () => {
 	const earliestTimestamp = Date.now();
-	const child = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			configPath,
-			"--port",
-			"0",
-			"--ip",
-			"0.0.0.0",
-			"--show-interactive-dev-session=false",
-		],
-		{ env: { ...process.env, CI: "1", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-	);
+	const dev = await startOrangeDev(configDirectory, "wrangler.toml");
 	try {
-		const port = await waitForReady(child);
-		const firstResponse = await fetch(
-			`http://127.0.0.1:${port}/version-metadata`,
-		);
-		assert.equal(firstResponse.status, 200);
-		const first: unknown = await firstResponse.json();
+		const first = await dev.json("/version-metadata");
 		assert.ok(isRecord(first));
 		assert.match(String(first.id), /^[a-f0-9]{64}$/);
 		assert.equal(first.tag, "dev");
@@ -307,73 +268,25 @@ test("injects stable version metadata through orange dev", async () => {
 		assert.ok(parsedTimestamp >= earliestTimestamp);
 		assert.ok(parsedTimestamp <= Date.now());
 
-		const secondResponse = await fetch(
-			`http://127.0.0.1:${port}/version-metadata`,
-		);
+		const secondResponse = await fetch(`${dev.origin}/version-metadata`);
 		const second: unknown = await secondResponse.json();
 		assert.deepEqual(second, first);
-
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
 	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
-		}
+		await dev.close();
 	}
 });
 
 test("resolves a Secrets Store value without logging it", async () => {
 	const secret = "orange-secret-store-e2e-do-not-log";
-	const child = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			configPath,
-			"--port",
-			"0",
-			"--ip",
-			"0.0.0.0",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			env: {
-				...process.env,
-				CI: "1",
-				NO_COLOR: "1",
-				TOML_SECRET: secret,
-			},
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	child.stdout?.on("data", (chunk: unknown) => {
-		output += chunk instanceof Uint8Array
-			? Buffer.from(chunk).toString()
-			: String(chunk);
-	});
-	child.stderr?.on("data", (chunk: unknown) => {
-		output += chunk instanceof Uint8Array
-			? Buffer.from(chunk).toString()
-			: String(chunk);
-	});
+	const dev = await startOrangeDev(configDirectory, "wrangler.toml", { environment: { TOML_SECRET: secret } });
 	try {
-		const port = await waitForReady(child);
-		const response = await fetch(`http://127.0.0.1:${port}/secret-store`);
+		const response = await fetch(`${dev.origin}/secret-store`);
 		assert.equal(response.status, 200);
 		assert.equal(await response.text(), secret);
-
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
-		assert.doesNotMatch(output, new RegExp(secret));
 	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
-		}
+		await dev.close();
 	}
+	assert.doesNotMatch(dev.output(), new RegExp(secret));
 });
 
 function spawnDev(config: string): ChildProcess {
@@ -385,12 +298,8 @@ function spawnDev(config: string): ChildProcess {
 }
 
 // Each test runs on a fresh copy, so build output and storage stay out of the repository.
-async function copyProjectFixture(name = "cloudflare-project"): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "open-orange-project-"));
-	await cp(fileURLToPath(new URL(`../../src/commands/fixtures/${name}/`, import.meta.url)), directory, {
-		recursive: true,
-	});
-	return directory;
+function copyFixture(name = "cloudflare-project"): ReturnType<typeof copyProject> {
+	return copyProject(join(repositoryRoot, "tests", "fixtures", name));
 }
 
 // Reads the actor names from the project's Rivet Engine, without the hash of the deployment.
@@ -427,185 +336,152 @@ function getRaw(url: string): Promise<{ body: Buffer; headers: IncomingHttpHeade
 }
 
 test("encodes response bodies named by Content-Encoding, as workerd does", async () => {
-	const project = await copyProjectFixture("content-encoding");
-	const child = spawnDev(join(project, "wrangler.jsonc"));
-	let output = "";
-	child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
-	child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+	const project = await copyFixture("content-encoding");
 	try {
-		const origin = `http://127.0.0.1:${await waitForReady(child)}`;
+		const dev = await startOrangeDev(project.directory);
+		const { origin } = dev;
+		try {
+			const gzip = await getRaw(`${origin}/gzip`);
+			assert.equal(gzip.headers["content-encoding"], "gzip");
+			// The Worker's Content-Length describes the unencoded body, so it is dropped.
+			assert.equal(gzip.headers["content-length"], undefined);
+			assert.equal(gunzipSync(gzip.body).toString(), "automatic gzip");
+			const br = await getRaw(`${origin}/br`);
+			assert.equal(brotliDecompressSync(br.body).toString(), "automatic br");
 
-		const gzip = await getRaw(`${origin}/gzip`);
-		assert.equal(gzip.headers["content-encoding"], "gzip");
-		// The Worker's Content-Length describes the unencoded body, so it is dropped.
-		assert.equal(gzip.headers["content-length"], undefined);
-		assert.equal(gunzipSync(gzip.body).toString(), "automatic gzip");
-		const br = await getRaw(`${origin}/br`);
-		assert.equal(brotliDecompressSync(br.body).toString(), "automatic br");
+			// An `encodeBody: "manual"` body is already encoded and is sent as it is.
+			const manual = await getRaw(`${origin}/manual`);
+			assert.equal(gunzipSync(manual.body).toString(), "manual gzip");
 
-		// An `encodeBody: "manual"` body is already encoded and is sent as it is.
-		const manual = await getRaw(`${origin}/manual`);
-		assert.equal(gunzipSync(manual.body).toString(), "manual gzip");
+			// Workerd encodes only gzip and br. Other codings are sent as they are.
+			const deflate = await getRaw(`${origin}/deflate`);
+			assert.equal(deflate.headers["content-encoding"], "deflate");
+			assert.equal(deflate.body.toString(), "not encoded");
 
-		// Workerd encodes only gzip and br. Other codings are sent as they are.
-		const deflate = await getRaw(`${origin}/deflate`);
-		assert.equal(deflate.headers["content-encoding"], "deflate");
-		assert.equal(deflate.body.toString(), "not encoded");
+			// fetch() decodes a compressed response, and returning it encodes it once.
+			const proxy = await getRaw(`${origin}/proxy`);
+			assert.equal(gunzipSync(proxy.body).toString(), "automatic gzip");
 
-		// fetch() decodes a compressed response, and returning it encodes it once.
-		const proxy = await getRaw(`${origin}/proxy`);
-		assert.equal(gunzipSync(proxy.body).toString(), "automatic gzip");
-
-		// Durable Object and service binding callers read decoded bodies.
-		const object = await getRaw(`${origin}/object`);
-		assert.equal(gunzipSync(object.body).toString(), "from object");
-		assert.equal((await getRaw(`${origin}/object-text`)).body.toString(), "from object");
-		assert.equal((await getRaw(`${origin}/service-text`)).body.toString(), "from service");
-
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
-	} catch (error) {
-		if (error instanceof Error) error.message += `\n--- orange dev output ---\n${output}`;
-		throw error;
-	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
+			// Durable Object and service binding callers read decoded bodies.
+			const object = await getRaw(`${origin}/object`);
+			assert.equal(gunzipSync(object.body).toString(), "from object");
+			assert.equal((await getRaw(`${origin}/object-text`)).body.toString(), "from object");
+			assert.equal((await getRaw(`${origin}/service-text`)).body.toString(), "from service");
+		} catch (error) {
+			if (error instanceof Error) error.message += `\n--- orange dev output ---\n${dev.output()}`;
+			throw error;
+		} finally {
+			await dev.close();
 		}
-		await rm(project, { force: true, recursive: true });
+	} finally {
+		await project.dispose();
 	}
 });
 
 test("keeps Durable Object data when the project moves", { timeout: 60_000 }, async () => {
-	const project = await copyProjectFixture("durable-storage");
-	const moved = `${project}-moved`;
-	let child = spawnDev(join(project, "wrangler.jsonc"));
+	const project = await copyFixture("durable-storage");
+	const moved = `${project.directory}-moved`;
 	try {
-		const origin = `http://127.0.0.1:${await waitForReady(child)}`;
-		assert.equal(await (await fetch(origin, { body: "kept", method: "PUT" })).text(), "kept");
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
-
-		await rename(project, moved);
-		child = spawnDev(join(moved, "wrangler.jsonc"));
-		const movedOrigin = `http://127.0.0.1:${await waitForReady(child)}`;
-		assert.equal(await (await fetch(movedOrigin)).text(), "kept");
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
-	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
+		let dev = await startOrangeDev(project.directory);
+		try {
+			assert.equal(await (await fetch(dev.origin, { body: "kept", method: "PUT" })).text(), "kept");
+		} finally {
+			await dev.close();
 		}
-		await rm(project, { force: true, recursive: true });
-		await rm(moved, { force: true, recursive: true });
+
+		await rename(project.directory, moved);
+		dev = await startOrangeDev(moved);
+		try {
+			assert.equal(await (await fetch(dev.origin)).text(), "kept");
+		} finally {
+			await dev.close();
+		}
+	} finally {
+		// dispose() deletes the moved copy too, but it stops only the engines it finds in the original place.
+		await stopProjectEngines(moved);
+		await project.dispose();
 	}
 });
 
 test("an Engine log size set in the shell wins, so one larger than the free disk stops orange dev and names the setting", { timeout: 60_000 }, async () => {
-	const project = await copyProjectFixture("durable-storage");
-	const child = spawn(
-		process.execPath,
-		["--import", "tsx", cliEntrypoint, "dev", "--config", join(project, "wrangler.jsonc"), "--port", "0"],
-		{
-			// 1 PiB is more than any test machine has free.
-			env: { ...process.env, CI: "1", NO_COLOR: "1", RIVET__STORAGE__LOG_SHARD__MAX_DISK_BYTES: String(1024 ** 5) },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
-	child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+	const project = await copyFixture("durable-storage");
 	try {
-		assert.deepEqual(await waitForExit(child), { code: 1, signal: null });
+		const { code, output } = await runOrange(project.directory, ["dev", "--port", "0"], "wrangler.jsonc", {
+			// 1 PiB is more than any test machine has free.
+			environment: { RIVET__STORAGE__LOG_SHARD__MAX_DISK_BYTES: String(1024 ** 5) },
+		});
+		assert.equal(code, 1, output);
 		assert.match(output, /RIVET__STORAGE__LOG_SHARD__MAX_DISK_BYTES is 1073741824 MiB, but only \d+ MiB is free/);
 	} finally {
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-		await rm(project, { force: true, recursive: true });
+		await project.dispose();
 	}
 });
 
 test("runs a Cloudflare project that uses Wrangler build features", async () => {
-	const project = await copyProjectFixture();
-	const child = spawnDev(join(project, "wrangler.jsonc"));
-	let stderr = "";
-	child.stderr?.on("data", (chunk: Buffer) => {
-		stderr += chunk.toString();
-	});
+	const project = await copyFixture();
 	try {
-		const port = await waitForReady(child);
-		const response = await fetch(`http://127.0.0.1:${port}/`);
-		assert.equal(response.status, 200, stderr);
-		assert.deepEqual(await response.json(), {
-			aiService:
-				"NotSupportedError: cloudflare:ai Ai is not implemented by OpenOrange because it needs Cloudflare's AI service. Call the model provider's HTTP API with fetch().",
-			cached: null,
-			cloudflareModules: ["InferenceUpstreamError", "function", "function", "cosine"],
-			colo: "DFW",
-			connectingIp: "127.0.0.1",
-			data: [1, 2, 3],
-			emailFrom: "from@example.com",
-			env: { GREETING: "hello", SETTINGS: '{"mode":"dev"}' },
-			generated: "built before bundling",
-			legacy: "function",
-			nonRetryable: "NonRetryableError",
-			page: "<h1>page</h1>\n",
-			runtime: "workerd",
-			throughExports: 1,
-			traced: "false!",
-			tracedFailure: "TypeError: traced failure",
-			objectTracing: "undefined",
-			wasm: true,
-		});
-		// The Engine lists the Durable Object under its class name, next to the
-		// actors that run the project's cron triggers, facets, and Cache API.
-		assert.deepEqual((await engineActorNames(project)).sort(), [
-			"counter",
-			"facet",
-			"openorange-cache",
-			"openorange:cron",
-		]);
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
-	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
+		const dev = await startOrangeDev(project.directory);
+		try {
+			assert.deepEqual(await dev.json("/"), {
+				aiService:
+					"NotSupportedError: cloudflare:ai Ai is not implemented by OpenOrange because it needs Cloudflare's AI service. Call the model provider's HTTP API with fetch().",
+				cached: null,
+				cloudflareModules: ["InferenceUpstreamError", "function", "function", "cosine"],
+				colo: "DFW",
+				connectingIp: "127.0.0.1",
+				data: [1, 2, 3],
+				emailFrom: "from@example.com",
+				env: { GREETING: "hello", SETTINGS: '{"mode":"dev"}' },
+				generated: "built before bundling",
+				legacy: "function",
+				nonRetryable: "NonRetryableError",
+				page: "<h1>page</h1>\n",
+				runtime: "workerd",
+				throughExports: 1,
+				traced: "false!",
+				tracedFailure: "TypeError: traced failure",
+				objectTracing: "undefined",
+				wasm: true,
+			});
+			// The Engine lists the Durable Object under its class name, next to the
+			// actors that run the project's cron triggers, facets, and Cache API.
+			assert.deepEqual((await engineActorNames(project.directory)).sort(), [
+				"counter",
+				"facet",
+				"openorange-cache",
+				"openorange:cron",
+			]);
+		} finally {
+			await dev.close();
 		}
-		await rm(project, { force: true, recursive: true });
+	} finally {
+		await project.dispose();
 	}
 });
 
 test("runs @cloudflare/vite-plugin output, which sets no_bundle", async () => {
-	const project = await copyProjectFixture("vite-output");
-	const child = spawnDev(join(project, "wrangler.json"));
-	let stderr = "";
-	child.stderr?.on("data", (chunk: Buffer) => {
-		stderr += chunk.toString();
-	});
+	const project = await copyFixture("vite-output");
 	try {
-		const port = await waitForReady(child);
-		const response = await fetch(`http://127.0.0.1:${port}/`);
-		assert.equal(response.status, 200, stderr);
-		assert.equal(await response.text(), "built by vite");
-		child.kill("SIGINT");
-		assert.deepEqual(await waitForExit(child), { code: 0, signal: null });
-	} finally {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
+		const dev = await startOrangeDev(project.directory, "wrangler.json");
+		try {
+			const response = await fetch(`${dev.origin}/`);
+			assert.equal(response.status, 200, dev.output());
+			assert.equal(await response.text(), "built by vite");
+		} finally {
+			await dev.close();
 		}
-		await rm(project, { force: true, recursive: true });
+	} finally {
+		await project.dispose();
 	}
 });
 
 test("stops orange dev when the custom build fails", async () => {
-	const project = await copyProjectFixture();
+	const project = await copyFixture();
 	try {
-		const child = spawnDev(join(project, "wrangler-failing-build.jsonc"));
-		let stderr = "";
-		child.stderr?.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString();
-		});
-		assert.deepEqual(await waitForExit(child), { code: 1, signal: null });
-		assert.match(stderr, /Running custom build `exit 3` failed with exit code 3/);
+		const { code, output } = await runOrange(project.directory, ["dev", "--port", "0"], "wrangler-failing-build.jsonc");
+		assert.equal(code, 1, output);
+		assert.match(output, /Running custom build `exit 3` failed with exit code 3/);
 	} finally {
-		await rm(project, { force: true, recursive: true });
+		await project.dispose();
 	}
 });

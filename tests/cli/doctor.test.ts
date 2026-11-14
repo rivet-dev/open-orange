@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, cp, mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { isRecord } from "../../src/unknown-values.js";
+import { copyProject, repositoryRoot } from "../harness/orange-dev.js";
 
 const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 // Resolved here, so the CLI can start in a project directory that has no tsx.
@@ -65,14 +66,11 @@ function runOrangeIn(project: string, env: Record<string, string>, ...args: stri
 
 // A copy of a project with AI (needs a key), a stubbed Images binding, and a variable.
 async function withProject(run: (project: string) => Promise<void>, fixture = "stub-bindings"): Promise<void> {
-	const project = await mkdtemp(join(tmpdir(), "open-orange-doctor-test-"));
+	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", fixture));
 	try {
-		await cp(fileURLToPath(new URL(`../../src/commands/fixtures/${fixture}/`, import.meta.url)), project, {
-			recursive: true,
-		});
-		await run(project);
+		await run(project.directory);
 	} finally {
-		await rm(project, { force: true, recursive: true });
+		await project.dispose();
 	}
 }
 

@@ -38,25 +38,20 @@ after(async () => {
 	if (home !== undefined) await rm(home, { force: true, recursive: true });
 });
 
-async function json(response: Response): Promise<unknown> {
-	assert.equal(response.status, 200, await response.clone().text());
-	return response.json();
-}
-
 test("orange dev on Bun serves Durable Objects, KV, and Workflows", { skip }, async () => {
 	const project = await copyProject(fixture);
 	try {
 		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", { cli, environment: { HOME: home } });
 		try {
-			assert.equal(await json(await fetch(`${dev.origin}/counter`)), 1, dev.output());
-			assert.equal(await json(await fetch(`${dev.origin}/counter`)), 2, dev.output());
-			assert.equal(await json(await fetch(`${dev.origin}/kv?value=stored`)), "stored", dev.output());
-			const id = await json(await fetch(`${dev.origin}/workflow`));
+			assert.equal(await dev.json("/counter"), 1, dev.output());
+			assert.equal(await dev.json("/counter"), 2, dev.output());
+			assert.equal(await dev.json("/kv?value=stored"), "stored", dev.output());
+			const id = await dev.json("/workflow");
 			assert.equal(typeof id, "string", dev.output());
 			let status: unknown;
 			// A Workflow binding reports completion only through status(), so the test polls it.
 			await waitFor("the Workflow to complete", async () => {
-				status = await json(await fetch(`${dev.origin}/workflow-status?id=${String(id)}`));
+				status = await dev.json(`/workflow-status?id=${String(id)}`);
 				return typeof status === "object" && status !== null && Reflect.get(status, "status") === "complete";
 			});
 			assert.deepEqual(status, { output: "echo hello", status: "complete" }, dev.output());
@@ -74,13 +69,13 @@ test("orange dev on Bun keeps each project's data in that project", { skip }, as
 	try {
 		const firstDev = await startOrangeDev(first.directory, "wrangler.jsonc", { cli, environment: { HOME: home } });
 		try {
-			assert.equal(await json(await fetch(`${firstDev.origin}/kv?value=first`)), "first", firstDev.output());
+			assert.equal(await firstDev.json("/kv?value=first"), "first", firstDev.output());
 		} finally {
 			await firstDev.close();
 		}
 		const secondDev = await startOrangeDev(second.directory, "wrangler.jsonc", { cli, environment: { HOME: home } });
 		try {
-			assert.equal(await json(await fetch(`${secondDev.origin}/kv`)), null, secondDev.output());
+			assert.equal(await secondDev.json("/kv"), null, secondDev.output());
 		} finally {
 			await secondDev.close();
 		}

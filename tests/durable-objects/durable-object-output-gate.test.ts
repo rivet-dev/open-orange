@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
-import { cp, glob, mkdtemp, readFile, rm } from "node:fs/promises";
+import { glob, readFile } from "node:fs/promises";
 import {
 	createServer,
 	type IncomingMessage,
@@ -8,29 +7,19 @@ import {
 	type ServerResponse,
 } from "node:http";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
-
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
-const fixtureDirectory = fileURLToPath(
-	new URL("../fixtures/durable-object-output-gate/", import.meta.url),
-);
+import {
+	copyProject,
+	isRecord,
+	repositoryRoot,
+	startOrangeDev,
+	type RunningOrangeDev,
+} from "../harness/orange-dev.js";
 
 // How long the engine stays stopped while the test checks that the peer saw nothing.
 const stoppedWindowMs = 1_500;
-
-function processIsAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error: unknown) {
-		return isRecord(error) && error.code === "EPERM";
-	}
-}
 
 async function enginePid(projectDirectory: string): Promise<number> {
 	for await (const path of glob(
@@ -45,85 +34,6 @@ async function enginePid(projectDirectory: string): Promise<number> {
 		}
 	}
 	throw new Error("orange dev did not record its Rivet engine process");
-}
-
-async function stopEngine(projectDirectory: string): Promise<void> {
-	let pid: number;
-	try {
-		pid = await enginePid(projectDirectory);
-	} catch {
-		return;
-	}
-	if (!processIsAlive(pid)) return;
-	process.kill(pid, "SIGCONT");
-	process.kill(pid, "SIGTERM");
-	for (let attempt = 0; attempt < 100 && processIsAlive(pid); attempt++) {
-		await delay(10);
-	}
-	if (processIsAlive(pid)) process.kill(pid, "SIGKILL");
-}
-
-async function startOrangeDev(projectDirectory: string): Promise<{
-	child: ChildProcess;
-	origin: string;
-	output(): string;
-}> {
-	const child = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectDirectory, "wrangler.jsonc"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			env: { ...process.env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const ready = Promise.withResolvers<number>();
-	const timeout = setTimeout(() => {
-		ready.reject(new Error(`orange dev readiness timed out:\n${output}`));
-	}, 30_000);
-	const collect = (chunk: unknown): void => {
-		output += String(chunk);
-		const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-		if (match?.[1] !== undefined) ready.resolve(Number(match[1]));
-	};
-	child.stdout?.on("data", collect);
-	child.stderr?.on("data", collect);
-	child.once("exit", (code) => {
-		ready.reject(new Error(`orange dev exited (code ${code}):\n${output}`));
-	});
-	try {
-		const port = await ready.promise;
-		return { child, origin: `http://127.0.0.1:${port}`, output: () => output };
-	} catch (error: unknown) {
-		child.kill("SIGKILL");
-		throw error;
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
-function stopOrangeDev(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-	return new Promise((resolveStop) => {
-		const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
-		child.once("exit", () => {
-			clearTimeout(timeout);
-			resolveStop();
-		});
-		child.kill("SIGINT");
-	});
 }
 
 interface PeerSocket {
@@ -242,12 +152,11 @@ const cases: readonly OutputGateCase[] = [
 ];
 
 test("holds a Durable Object's outgoing fetch, RPC call, and WebSocket messages until its writes are durable", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "open-orange-output-gate-"));
-	const projectDirectory = join(directory, "project");
-	await cp(fixtureDirectory, projectDirectory, { recursive: true });
+	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "durable-object-output-gate"));
+	const projectDirectory = project.directory;
 	const peer = new Peer();
 	await peer.listen();
-	let orange: Awaited<ReturnType<typeof startOrangeDev>> | undefined;
+	let orange: RunningOrangeDev | undefined;
 	let stoppedEngine: number | undefined;
 	try {
 		orange = await startOrangeDev(projectDirectory);
@@ -281,9 +190,11 @@ test("holds a Durable Object's outgoing fetch, RPC call, and WebSocket messages 
 		}
 	} finally {
 		if (stoppedEngine !== undefined) process.kill(stoppedEngine, "SIGCONT");
-		if (orange !== undefined) await stopOrangeDev(orange.child);
-		await stopEngine(projectDirectory);
-		await peer.close();
-		await rm(directory, { force: true, recursive: true });
+		try {
+			await orange?.close();
+		} finally {
+			await peer.close();
+			await project.dispose();
+		}
 	}
 });

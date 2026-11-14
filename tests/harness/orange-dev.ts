@@ -34,6 +34,8 @@ export interface RunningOrangeDev {
 	kill(): Promise<void>;
 	// Resolves with the exit code once orange dev exits on its own or after close().
 	exited: Promise<number | null>;
+	/** Fetches `path` from orange dev, asserts a 200, and returns the parsed JSON body. A failure shows the body and the output. */
+	json(path: string, init?: RequestInit): Promise<unknown>;
 	origin: string;
 	output(): string;
 	pid: number;
@@ -55,7 +57,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function processIsAlive(pid: number): boolean {
+export function processIsAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
@@ -118,6 +120,33 @@ export async function copyProject(sourceDirectory: string): Promise<TemporaryPro
 			}
 		},
 	};
+}
+
+export interface WithOrangeDevOptions extends StartOrangeDevOptions {
+	/** The config file, or files for a multi-Worker session, inside the fixture. */
+	config?: string | readonly string[];
+}
+
+/**
+ * Copies `tests/fixtures/<fixture>`, runs `orange dev` on the copy, and passes it to `run`. It
+ * always stops orange dev and deletes the copy, also when `run` throws.
+ */
+export async function withOrangeDev(
+	fixture: string,
+	run: (dev: RunningOrangeDev) => Promise<void>,
+	options: WithOrangeDevOptions = {},
+): Promise<void> {
+	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", fixture));
+	try {
+		const dev = await startOrangeDev(project.directory, options.config, options);
+		try {
+			await run(dev);
+		} finally {
+			await dev.close();
+		}
+	} finally {
+		await project.dispose();
+	}
 }
 
 // A packaged CLI, run by a JavaScript runtime other than the one running the tests.
@@ -193,6 +222,8 @@ export async function runOrange(
 export interface StartOrangeDevOptions {
 	// Prints RivetKit's info logs, which include each actor lifecycle transition.
 	actorLifecycleLogs?: boolean;
+	/** More `orange dev` flags, such as `--test-scheduled`. */
+	args?: readonly string[];
 	cli?: OrangeCli;
 	environment?: NodeJS.ProcessEnv;
 }
@@ -215,6 +246,7 @@ export async function startOrangeDev(
 			"--host",
 			"0.0.0.0",
 			"--show-interactive-dev-session=false",
+			...(options.args ?? []),
 		],
 		{
 			...options.environment,
@@ -234,7 +266,7 @@ export async function startOrangeDev(
 	});
 	const timeout = setTimeout(() => {
 		readiness.reject(new Error(`orange dev readiness timed out:\n${output()}`));
-	}, 30_000);
+	}, 60_000);
 	child.once("exit", (code, signal) => {
 		readiness.reject(
 			new Error(
@@ -310,6 +342,12 @@ export async function startOrangeDev(
 				}
 			}
 			await exited;
+		},
+		async json(path, init): Promise<unknown> {
+			const response = await fetch(`http://127.0.0.1:${port}${path}`, init);
+			const text = await response.text();
+			assert.equal(response.status, 200, `${path}: ${text}\n${output()}`);
+			return JSON.parse(text);
 		},
 		origin: `http://127.0.0.1:${port}`,
 		output,

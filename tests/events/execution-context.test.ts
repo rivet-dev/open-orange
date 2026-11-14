@@ -4,12 +4,6 @@ import test from "node:test";
 
 import { copyProject, repositoryRoot, startOrangeDev } from "../harness/orange-dev.js";
 
-async function getJson(origin: string, path: string, output: () => string): Promise<unknown> {
-	const response = await fetch(new URL(path, origin));
-	assert.equal(response.status, 200, `${await response.clone().text()}\n${output()}`);
-	return await response.json();
-}
-
 // Expected values are workerd 1.20260903.1's output for the same fixture.
 test("a fetch() whose handler is missing, throws, or returns a non-Response rejects with workerd's remote error", { timeout: 120_000 }, async () => {
 	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "execution-context"));
@@ -20,7 +14,7 @@ test("a fetch() whose handler is missing, throws, or returns a non-Response reje
 			const nonResponse = {
 				error: { isTypeError: true, message: "Incorrect type for Promise: the Promise did not resolve to 'Response'.", name: "TypeError", remote: true },
 			};
-			assert.deepEqual(await getJson(dev.origin, "/no-fetch", dev.output), {
+			assert.deepEqual(await dev.json("/no-fetch"), {
 				entrypoint: noHandler,
 				durableObject: noHandler,
 				nonResponse,
@@ -63,7 +57,7 @@ test("ctx.props is an empty object when the caller passes no props, and holds th
 	try {
 		const dev = await startOrangeDev(project.directory);
 		try {
-			assert.deepEqual(await getJson(dev.origin, "/props", dev.output), {
+			assert.deepEqual(await dev.json("/props"), {
 				request: {},
 				serviceFetch: {},
 				entrypoint: {},
@@ -82,7 +76,7 @@ test("copying every ctx property, as Sentry does, reads ctx.cache as undefined",
 	try {
 		const dev = await startOrangeDev(project.directory);
 		try {
-			assert.deepEqual(await getJson(dev.origin, "/copy-context", dev.output), {
+			assert.deepEqual(await dev.json("/copy-context"), {
 				access: "undefined",
 				cache: "undefined",
 				waitUntil: "function",

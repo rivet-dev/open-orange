@@ -71,12 +71,6 @@ async function sleepActor(dev: RunningOrangeDev, endpoint: string, id: string): 
 	await slept;
 }
 
-async function workerJson(dev: RunningOrangeDev, path: string): Promise<unknown> {
-	const response = await fetch(`${dev.origin}${path}`);
-	assert.equal(response.status, 200, `${await response.clone().text()}\n${dev.output()}`);
-	return response.json();
-}
-
 async function assertGatewayRejected(response: Response): Promise<void> {
 	const body = await response.text();
 	assert.ok(response.status === 401 || response.status === 403, `${response.status} ${body}`);
@@ -102,7 +96,7 @@ test(
 		});
 		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", { actorLifecycleLogs: true });
 		try {
-			assert.deepEqual(await workerJson(dev, "/rpc"), { count: 1 });
+			assert.deepEqual(await dev.json("/rpc"), { count: 1 });
 			const sent = await fetch(`${dev.origin}/send`);
 			assert.equal(sent.status, 200, `${await sent.text()}\n${dev.output()}`);
 			const endpoint = await engineEndpoint(project.directory);
@@ -152,7 +146,7 @@ test(
 				await assertGatewayRejected(
 					await fetch(doFetchUrl(), { headers: { "x-open-orange-internal-durable-object-request": head } }),
 				);
-				assert.deepEqual(await workerJson(dev, "/read"), { count: 1 });
+				assert.deepEqual(await dev.json("/read"), { count: 1 });
 			});
 
 			await t.test("a token without an actor_gateway grant never reaches a Durable Object", async () => {
@@ -165,8 +159,8 @@ test(
 					}),
 				);
 				await assertGatewayRejected(await enqueue(noGatewayToken));
-				assert.deepEqual(await workerJson(dev, "/read"), { count: 1 });
-				assert.equal(((await workerJson(dev, "/backlog")) as { backlogCount: number }).backlogCount, 1);
+				assert.deepEqual(await dev.json("/read"), { count: 1 });
+				assert.equal(((await dev.json("/backlog")) as { backlogCount: number }).backlogCount, 1);
 			});
 
 			await t.test("a token with an actor_gateway grant reaches a Durable Object and an internal Queue actor", async () => {
@@ -178,7 +172,7 @@ test(
 				});
 				assert.equal(fetched.status, 200, await fetched.clone().text());
 				assert.equal(((await fetched.json()) as { count: number }).count, 2);
-				assert.deepEqual(await workerJson(dev, "/read"), { count: 2 });
+				assert.deepEqual(await dev.json("/read"), { count: 2 });
 				const metrics = await fetch(new URL(`/gateway/${queueId}/action/metrics`, endpoint), {
 					body: JSON.stringify({ args: [] }),
 					headers: {
@@ -195,12 +189,12 @@ test(
 
 			await t.test("the Worker reaches its object over fetch, RPC, and WebSocket, before and after it hibernates and sleeps", async () => {
 				const assertWorkerCalls = async (): Promise<void> => {
-					const fetched = (await workerJson(dev, "/fetch")) as {
+					const fetched = (await dev.json("/fetch")) as {
 						count: number;
 						headers: [string, string][];
 					};
 					assertNoCredential(fetched.headers);
-					const rpc = (await workerJson(dev, "/rpc")) as { count: number };
+					const rpc = (await dev.json("/rpc")) as { count: number };
 					assert.equal(rpc.count, fetched.count + 1);
 					const socket = await openWebSocket(`${dev.origin}/ws`);
 					socket.send("headers");

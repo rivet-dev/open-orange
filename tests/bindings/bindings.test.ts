@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
 // Drives KV, D1, Rate Limiting, vars, secrets, and unsupported binding stubs
 // through a real `orange dev` process, Wrangler configuration, and Rivet Engine.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/bindings/worker.js", import.meta.url));
 const rateLimitWorker = fileURLToPath(
 	new URL("../fixtures/ratelimit/worker.js", import.meta.url),
@@ -41,102 +39,29 @@ const devVars = [
 	"STORE_SECRET=store-value",
 ].join("\n");
 
-interface DevServer {
-	origin: string;
-	output(): string;
-	stop(): Promise<void>;
-}
-
-async function startDev(projectRoot: string): Promise<DevServer> {
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			env: { ...process.env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(
-			() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-			60_000,
-		);
-		const onData = (chunk: unknown): void => {
-			output += String(chunk);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return {
-		origin: `http://127.0.0.1:${port}`,
-		output: () => output,
-		stop: () =>
-			new Promise<void>((resolveStop) => {
-				if (child.exitCode !== null || child.signalCode !== null) {
-					resolveStop();
-					return;
-				}
-				const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-				child.once("exit", () => {
-					clearTimeout(timeout);
-					resolveStop();
-				});
-				child.kill("SIGINT");
-			}),
-	};
-}
-
 describe("Worker bindings through orange dev", () => {
 	let projectRoot: string;
-	let server: DevServer;
-
-	async function get(path: string): Promise<unknown> {
-		const response = await fetch(`${server.origin}${path}`);
-		const text = await response.text();
-		assert.equal(response.status, 200, `${path}: ${text}\n${server.output()}`);
-		return JSON.parse(text);
-	}
+	let server: RunningOrangeDev;
 
 	before(async () => {
 		projectRoot = await mkdtemp(join(tmpdir(), "open-orange-bindings-"));
 		await cp(fixtureWorker, join(projectRoot, "worker.js"));
 		await writeFile(join(projectRoot, "wrangler.json"), JSON.stringify(wranglerConfiguration));
 		await writeFile(join(projectRoot, ".dev.vars"), devVars);
-		server = await startDev(projectRoot);
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 	});
 
 	after(async () => {
 		try {
-			await server?.stop();
+			await server?.close();
 		} finally {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
 
 	it("layers .dev.vars over configured vars like wrangler dev", async () => {
-		assert.deepEqual(await get("/vars"), {
+		assert.deepEqual(await server.json("/vars"), {
 			devSecret: "from-dev-vars",
 			json: { nested: [1] },
 			overridden: "from-dev-vars",
@@ -148,7 +73,7 @@ describe("Worker bindings through orange dev", () => {
 	});
 
 	it("loads unsupported bindings as stubs that are listed once at startup and throw on use", async () => {
-		assert.deepEqual(await get("/stubs"), {
+		assert.deepEqual(await server.json("/stubs"), {
 			awaited: true,
 			images: {
 				message: 'Images binding "IMAGES" is not supported by OpenOrange. See the OpenOrange bindings documentation for supported bindings.',
@@ -172,7 +97,7 @@ describe("Worker bindings through orange dev", () => {
 	});
 
 	it("stores KV values of every body type and reads them back in every result type", async () => {
-		assert.deepEqual(await get("/kv/roundtrip"), {
+		assert.deepEqual(await server.json("/kv/roundtrip"), {
 			absent: null,
 			absentWithMetadata: { cacheStatus: null, metadata: null, value: null },
 			bulkJson: {
@@ -190,7 +115,7 @@ describe("Worker bindings through orange dev", () => {
 	});
 
 	it("lists keys in order with prefix, limit, cursor, expiration, and metadata", async () => {
-		const result = await get("/kv/list");
+		const result = await server.json("/kv/list");
 		assert.ok(isRecord(result));
 		assert.deepEqual(result.names, [["list:a", "list:b"], ["list:c", "list:expiring"]]);
 		assert.deepEqual(result.complete, [false, true]);
@@ -204,7 +129,7 @@ describe("Worker bindings through orange dev", () => {
 
 	it("rejects invalid KV calls with workerd's error text", async () => {
 		const error = (message: string, name = "Error") => ({ message, name });
-		assert.deepEqual(await get("/kv/errors"), {
+		assert.deepEqual(await server.json("/kv/errors"), {
 			bulkType: error('KV GET_BULK failed: 400 "arrayBuffer" is not a valid type. Use "json" or "text"'),
 			emptyKey: error("Key name cannot be empty.", "TypeError"),
 			objectValue: error(
@@ -222,19 +147,19 @@ describe("Worker bindings through orange dev", () => {
 	});
 
 	it("shares data between bindings to one namespace ID and isolates other IDs", async () => {
-		assert.deepEqual(await get("/kv/alias"), { alias: "shared", other: null });
+		assert.deepEqual(await server.json("/kv/alias"), { alias: "shared", other: null });
 	});
 
 	it("keeps every write from overlapping requests", async () => {
 		await Promise.all(
-			Array.from({ length: 20 }, (_, index) => get(`/kv/write?key=burst-${index}`)),
+			Array.from({ length: 20 }, (_, index) => server.json(`/kv/write?key=burst-${index}`)),
 		);
-		assert.deepEqual(await get("/kv/count?prefix=burst-"), { count: 20 });
+		assert.deepEqual(await server.json("/kv/count?prefix=burst-"), { count: 20 });
 	});
 
 	it("runs D1 statements with D1 result shapes and metadata", async () => {
-		assert.deepEqual(await get("/d1/setup"), { count: 2 });
-		const result = await get("/d1/crud");
+		assert.deepEqual(await server.json("/d1/setup"), { count: 2 });
+		const result = await server.json("/d1/crud");
 		assert.deepEqual(result, {
 			all: [{ body: "first" }, { body: "second" }],
 			batchChanges: 1,
@@ -256,7 +181,7 @@ describe("Worker bindings through orange dev", () => {
 
 	it("reports D1 failures like wrangler dev and rolls back a failed batch", async () => {
 		const error = (message: string) => ({ message, name: "Error" });
-		assert.deepEqual(await get("/d1/errors"), {
+		assert.deepEqual(await server.json("/d1/errors"), {
 			atomic: error(
 				"D1_ERROR: UNIQUE constraint failed: notes.body: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)",
 			),
@@ -270,23 +195,23 @@ describe("Worker bindings through orange dev", () => {
 
 	it("keeps every D1 insert from overlapping requests", async () => {
 		await Promise.all(
-			Array.from({ length: 20 }, (_, index) => get(`/d1/hit?name=hit-${index}`)),
+			Array.from({ length: 20 }, (_, index) => server.json(`/d1/hit?name=hit-${index}`)),
 		);
-		assert.deepEqual(await get("/d1/count"), { hits: 20, notes: 2 });
+		assert.deepEqual(await server.json("/d1/count"), { hits: 20, notes: 2 });
 	});
 
 	it("persists KV and D1 data across orange dev restarts", async () => {
-		await get("/kv/write?key=persisted");
-		await server.stop();
-		server = await startDev(projectRoot);
-		assert.deepEqual(await get("/kv/read?key=persisted"), { value: "persisted" });
-		assert.deepEqual(await get("/d1/count"), { hits: 20, notes: 2 });
+		await server.json("/kv/write?key=persisted");
+		await server.close();
+		server = await startOrangeDev(projectRoot, "wrangler.json");
+		assert.deepEqual(await server.json("/kv/read?key=persisted"), { value: "persisted" });
+		assert.deepEqual(await server.json("/d1/count"), { hits: 20, notes: 2 });
 	});
 });
 
 describe("Rate Limiting through orange dev", () => {
 	let projectRoot: string;
-	let server: DevServer;
+	let server: RunningOrangeDev;
 
 	const rateLimitConfiguration = {
 		compatibility_date: "2026-09-03",
@@ -312,11 +237,8 @@ describe("Rate Limiting through orange dev", () => {
 
 	async function limit(binding: string, key: string): Promise<boolean> {
 		const path = `/limit?binding=${binding}&key=${encodeURIComponent(key)}`;
-		const response = await fetch(`${server.origin}${path}`);
-		const text = await response.text();
-		assert.equal(response.status, 200, `${path}: ${text}\n${server.output()}`);
-		const outcome: unknown = JSON.parse(text);
-		assert.ok(isRecord(outcome) && typeof outcome.success === "boolean", text);
+		const outcome = await server.json(path);
+		assert.ok(isRecord(outcome) && typeof outcome.success === "boolean", JSON.stringify(outcome));
 		return outcome.success;
 	}
 
@@ -338,13 +260,14 @@ describe("Rate Limiting through orange dev", () => {
 		projectRoot = await mkdtemp(join(tmpdir(), "open-orange-ratelimit-"));
 		await cp(rateLimitWorker, join(projectRoot, "worker.js"));
 		await writeFile(join(projectRoot, "wrangler.json"), JSON.stringify(rateLimitConfiguration));
-		server = await startDev(projectRoot);
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 	});
 
 	after(async () => {
 		try {
-			await server?.stop();
+			await server?.close();
 		} finally {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
@@ -391,8 +314,8 @@ describe("Rate Limiting through orange dev", () => {
 	it("keeps counts across an orange dev restart in the same window", async () => {
 		await windowWithAtLeast(60, 40_000);
 		assert.deepEqual([await limit("MINUTE", "restart"), await limit("MINUTE", "restart")], [true, true]);
-		await server.stop();
-		server = await startDev(projectRoot);
+		await server.close();
+		server = await startOrangeDev(projectRoot, "wrangler.json");
 		assert.equal(await limit("MINUTE", "restart"), false);
 		assert.equal(await limit("MINUTE", "other"), true);
 	});

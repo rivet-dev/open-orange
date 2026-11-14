@@ -1,24 +1,13 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
-import { copyProject, repositoryRoot, startOrangeDev, waitFor, type RunningOrangeDev } from "../harness/orange-dev.js";
+import { waitFor, withOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
 
 const slept = "old=SleepFinalize new=Terminated";
 
-async function withDev(run: (dev: RunningOrangeDev) => Promise<void>): Promise<void> {
-	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "rpc-unawaited"));
-	try {
-		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", { actorLifecycleLogs: true });
-		try {
-			await run(dev);
-		} finally {
-			await dev.close();
-		}
-	} finally {
-		await project.dispose();
-	}
+function withDev(run: (dev: RunningOrangeDev) => Promise<void>): Promise<void> {
+	return withOrangeDev("rpc-unawaited", run, { actorLifecycleLogs: true });
 }
 
 async function send(dev: RunningOrangeDev, route: string, key: string, log = "log"): Promise<void> {
@@ -27,7 +16,7 @@ async function send(dev: RunningOrangeDev, route: string, key: string, log = "lo
 }
 
 async function read(dev: RunningOrangeDev, log = "log"): Promise<{ boot: string; keys: string[] }> {
-	return (await (await fetch(`${dev.origin}/read?log=${log}`)).json()) as { boot: string; keys: string[] };
+	return (await dev.json(`/read?log=${log}`)) as { boot: string; keys: string[] };
 }
 
 // Past the object's 500 ms delay, with a margin.

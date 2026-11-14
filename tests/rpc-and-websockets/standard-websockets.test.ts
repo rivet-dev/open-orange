@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import {
 	collectMessages,
-	copyProject,
 	openWebSocket,
-	repositoryRoot,
-	startOrangeDev,
 	waitFor,
 	withDeadline,
+	withOrangeDev,
 	type ClientWebSocket,
 	type RunningOrangeDev,
 } from "../harness/orange-dev.js";
@@ -19,18 +16,8 @@ import {
 const pastSleepTimeoutMs = 16_000;
 const slept = "old=SleepFinalize new=Terminated";
 
-async function withDev(run: (dev: RunningOrangeDev) => Promise<void>): Promise<void> {
-	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "standard-websockets"));
-	try {
-		const dev = await startOrangeDev(project.directory, "wrangler.jsonc", { actorLifecycleLogs: true });
-		try {
-			await run(dev);
-		} finally {
-			await dev.close();
-		}
-	} finally {
-		await project.dispose();
-	}
+function withDev(run: (dev: RunningOrangeDev) => Promise<void>): Promise<void> {
+	return withOrangeDev("standard-websockets", run, { actorLifecycleLogs: true });
 }
 
 async function get(dev: RunningOrangeDev, path: string): Promise<string> {

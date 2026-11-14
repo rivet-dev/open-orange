@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { minioBucketSettings, minioSkip, startMinio } from "../harness/minio.js";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 import { freePort } from "../harness/free-port.js";
 
 // Drives R2 bindings through a real `orange dev` process and real HTTP. The
@@ -19,85 +17,14 @@ import { freePort } from "../harness/free-port.js";
 // (a real MinIO server). MinIO runs from OPEN_ORANGE_TEST_MINIO_BINARY when
 // set, otherwise as a Docker container; without either, the S3 suite skips.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/r2/worker.js", import.meta.url));
 const chunk = 512 * 1024;
 const mib = 1024 * 1024;
-
-interface DevServer {
-	origin: string;
-	output(): string;
-	stop(): Promise<void>;
-}
 
 // Narrows a parsed JSON response body, so a wrong shape fails the test with the body.
 function record(value: unknown): Record<string, unknown> {
 	assert.ok(isRecord(value), JSON.stringify(value));
 	return value;
-}
-
-function stopChild(child: ChildProcess, signal: NodeJS.Signals): Promise<void> {
-	return new Promise<void>((resolveStop) => {
-		if (child.exitCode !== null || child.signalCode !== null) {
-			resolveStop();
-			return;
-		}
-		const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-		child.once("exit", () => {
-			clearTimeout(timeout);
-			resolveStop();
-		});
-		child.kill(signal);
-	});
-}
-
-async function startDev(projectRoot: string, env: Record<string, string>): Promise<DevServer> {
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{
-			env: { ...process.env, ...env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(
-			() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-			60_000,
-		);
-		const onData = (data: unknown): void => {
-			output += String(data);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return {
-		origin: `http://127.0.0.1:${port}`,
-		output: () => output,
-		stop: () => stopChild(child, "SIGINT"),
-	};
 }
 
 async function createProject(): Promise<string> {
@@ -127,8 +54,8 @@ interface SuiteContext {
 	projectRoot(): string;
 	// Starts a new `orange dev` on the same project after the caller stopped
 	// the current one.
-	restart(): Promise<DevServer>;
-	server(): DevServer;
+	restart(): Promise<RunningOrangeDev>;
+	server(): RunningOrangeDev;
 }
 
 interface Backend {
@@ -145,7 +72,8 @@ const backends: Backend[] = [
 			it("keeps the previous object when orange dev restarts in the middle of a put", async () => {
 				const origin = context.server().origin;
 				assert.equal((await fetch(`${origin}/put?key=restart`, { body: "committed", method: "PUT" })).status, 200);
-				// Send half of a 4 MiB body, then stop the server under the upload.
+				// Send half of a 4 MiB body, then kill the server under the upload. A graceful stop would wait
+				// for the upload, which never ends.
 				const upload = httpRequest(`${origin}/put?key=restart`, {
 					headers: { "content-length": String(4 * mib) },
 					method: "PUT",
@@ -154,7 +82,7 @@ const backends: Backend[] = [
 				await new Promise<void>((resolveWrite) => {
 					upload.write(randomBytes(2 * mib), () => resolveWrite());
 				});
-				await context.server().stop();
+				await context.server().kill();
 				upload.destroy();
 				const restarted = await context.restart();
 				const after = await fetch(`${restarted.origin}/get?key=restart`);
@@ -177,11 +105,13 @@ const backends: Backend[] = [
 		extraTests() {
 			it("fails calls with an R2 internal error that names the endpoint when the S3 store is down", async () => {
 				const projectRoot = await createProject();
-				const down = await startDev(projectRoot, {
-					ORANGE_R2_UPLOADS_S3_ACCESS_KEY_ID: "key",
-					// Nothing listens on a port that was just released.
-					ORANGE_R2_UPLOADS_S3_ENDPOINT: `http://127.0.0.1:${await freePort()}`,
-					ORANGE_R2_UPLOADS_S3_SECRET_ACCESS_KEY: "secret",
+				const down = await startOrangeDev(projectRoot, "wrangler.json", {
+					environment: {
+						ORANGE_R2_UPLOADS_S3_ACCESS_KEY_ID: "key",
+						// Nothing listens on a port that was just released.
+						ORANGE_R2_UPLOADS_S3_ENDPOINT: `http://127.0.0.1:${await freePort()}`,
+						ORANGE_R2_UPLOADS_S3_SECRET_ACCESS_KEY: "secret",
+					},
 				});
 				try {
 					for (const path of ["/put?key=down", "/head?key=down"]) {
@@ -194,8 +124,12 @@ const backends: Backend[] = [
 						);
 					}
 				} finally {
-					await down.stop();
-					await rm(projectRoot, { force: true, recursive: true });
+					try {
+						await down.close();
+					} finally {
+						await stopProjectEngines(projectRoot);
+						await rm(projectRoot, { force: true, recursive: true });
+					}
 				}
 			});
 		},
@@ -212,7 +146,7 @@ const backends: Backend[] = [
 for (const backend of backends) {
 	describe(`R2 bindings through orange dev with ${backend.name}`, { skip: backend.skip }, () => {
 		let projectRoot: string;
-		let server: DevServer;
+		let server: RunningOrangeDev;
 		let env: Record<string, string> = {};
 		let cleanup: () => Promise<void> = async () => undefined;
 
@@ -254,13 +188,14 @@ for (const backend of backends) {
 			cleanup = setup.cleanup;
 			env = setup.env;
 			projectRoot = await createProject();
-			server = await startDev(projectRoot, env);
+			server = await startOrangeDev(projectRoot, "wrangler.json", { environment: env });
 		});
 
 		after(async () => {
 			try {
-				await server?.stop();
+				await server?.close();
 			} finally {
+				await stopProjectEngines(projectRoot);
 				await rm(projectRoot, { force: true, recursive: true });
 				await cleanup();
 			}
@@ -480,7 +415,7 @@ for (const backend of backends) {
 		backend.extraTests({
 			projectRoot: () => projectRoot,
 			restart: async () => {
-				server = await startDev(projectRoot, env);
+				server = await startOrangeDev(projectRoot, "wrangler.json", { environment: env });
 				return server;
 			},
 			server: () => server,

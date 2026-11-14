@@ -319,7 +319,7 @@ test("an object moves on its first request, with its rows, KV values, alarm, and
 			assert.deepEqual(await roomState(orangeDev.origin, "/rooms/lobby"), lobbyBefore);
 			assert.deepEqual(await roomState(orangeDev.origin, `/ids/${unique}`), uniqueBefore);
 			// An RPC call as the first call to an object also waits for the copy.
-			assert.equal(await (await fetch(`${orangeDev.origin}/rpc/rpc-first`)).json(), 7);
+			assert.equal(await orangeDev.json("/rpc/rpc-first"), 7);
 
 			// The old copy refuses app traffic, so a late write cannot land there.
 			const refused = await fetch(`${source.origin}/rooms/lobby/state`);

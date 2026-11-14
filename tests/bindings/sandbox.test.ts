@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { cp, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 import { freePort } from "../harness/free-port.js";
 
 // Drives `@cloudflare/sandbox` through a real `orange dev` process and real
@@ -15,72 +15,15 @@ import { freePort } from "../harness/free-port.js";
 // Daytona, and Freestyle need API keys, so only their configuration errors are
 // covered.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/sandbox/worker.js", import.meta.url));
 const containerFixtureWorker = fileURLToPath(new URL("../fixtures/sandbox/worker-v1.js", import.meta.url));
 
-interface DevServer {
-	origin: string;
-	port: number;
-	stop(): Promise<void>;
+function startSandboxDev(projectRoot: string, environment: Record<string, string> = {}): Promise<RunningOrangeDev> {
+	return startOrangeDev(projectRoot, "wrangler.json", { environment });
 }
 
-function stopChild(child: ChildProcess): Promise<void> {
-	return new Promise<void>((resolveStop) => {
-		if (child.exitCode !== null || child.signalCode !== null) {
-			resolveStop();
-			return;
-		}
-		const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-		child.once("exit", () => {
-			clearTimeout(timeout);
-			resolveStop();
-		});
-		child.kill("SIGINT");
-	});
-}
-
-async function startDev(projectRoot: string, env: Record<string, string> = {}): Promise<DevServer> {
-	const environment: Record<string, string | undefined> = { ...process.env, CI: "1", NO_COLOR: "1", ...env };
-	delete environment.ORANGE_SANDBOX_PROVIDER;
-	delete environment.E2B_API_KEY;
-	Object.assign(environment, env);
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{ env: environment, stdio: ["ignore", "pipe", "pipe"] },
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)), 60_000);
-		const onData = (data: unknown): void => {
-			output += String(data);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return { origin: `http://127.0.0.1:${port}`, port, stop: () => stopChild(child) };
+function devPort(server: RunningOrangeDev): number {
+	return Number(new URL(server.origin).port);
 }
 
 async function createProject(): Promise<string> {
@@ -103,7 +46,7 @@ async function createProject(): Promise<string> {
 	return projectRoot;
 }
 
-async function call(server: DevServer, path: string, init?: RequestInit): Promise<{ status: number; body: Record<string, unknown> }> {
+async function call(server: RunningOrangeDev, path: string, init?: RequestInit): Promise<{ status: number; body: Record<string, unknown> }> {
 	const response = await fetch(`${server.origin}${path}`, init);
 	const body: unknown = await response.json();
 	assert.ok(isRecord(body), JSON.stringify(body));
@@ -111,7 +54,7 @@ async function call(server: DevServer, path: string, init?: RequestInit): Promis
 }
 
 // Reads a route that answers with a JSON array of stream events.
-async function callEvents(server: DevServer, path: string): Promise<Record<string, unknown>[]> {
+async function callEvents(server: RunningOrangeDev, path: string): Promise<Record<string, unknown>[]> {
 	const response = await fetch(`${server.origin}${path}`);
 	const body: unknown = await response.json();
 	assert.ok(Array.isArray(body) && body.every(isRecord), JSON.stringify(body));
@@ -119,10 +62,10 @@ async function callEvents(server: DevServer, path: string): Promise<Record<strin
 }
 
 // Sends a request with a preview host (`<port>-<sandbox name>-<token>.localhost`) to orange dev.
-function preview(server: DevServer, hostPrefix: string, path: string): Promise<{ status: number; body: string }> {
+function preview(server: RunningOrangeDev, hostPrefix: string, path: string): Promise<{ status: number; body: string }> {
 	return new Promise((resolveRequest, rejectRequest) => {
 		const request = httpRequest(
-			{ headers: { host: `${hostPrefix}.localhost:${server.port}` }, host: "127.0.0.1", path, port: server.port },
+			{ headers: { host: `${hostPrefix}.localhost:${devPort(server)}` }, host: "127.0.0.1", path, port: devPort(server) },
 			(response) => {
 				let body = "";
 				response.setEncoding("utf8").on("data", (chunk: string) => (body += chunk));
@@ -154,16 +97,17 @@ function query(values: Record<string, string>): string {
 
 describe("@cloudflare/sandbox on orange dev with the local provider", { timeout: 180_000 }, () => {
 	let projectRoot: string;
-	let server: DevServer;
+	let server: RunningOrangeDev;
 
 	before(async () => {
 		projectRoot = await createProject();
-		server = await startDev(projectRoot, { ORANGE_SANDBOX_TEST_SECRET: "host-only" });
+		server = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_TEST_SECRET: "host-only" });
 	});
 
 	after(async () => {
-		await server?.stop();
+		await server?.close();
 		if (projectRoot !== undefined) {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
@@ -271,7 +215,7 @@ describe("@cloudflare/sandbox on orange dev with the local provider", { timeout:
 		const id = "web-app";
 		await call(server, `/start?${query({ cmd: `node -e "require('http').createServer((q,s)=>s.end('preview '+q.url)).listen(${port},'127.0.0.1')"`, id, pid: "web" })}`);
 		const exposed = await call(server, `/expose?${query({ id, port: String(port) })}`);
-		assert.match(String(exposed.body.url), new RegExp(`^http://${port}-web-app-[a-z0-9_]{16}\\.localhost:${server.port}/$`));
+		assert.match(String(exposed.body.url), new RegExp(`^http://${port}-web-app-[a-z0-9_]{16}\\.localhost:${devPort(server)}/$`));
 		const prefix = previewPrefix(exposed.body.url);
 		const token = prefix.slice(prefix.lastIndexOf("-") + 1);
 		assert.equal((await call(server, `/wait-port?${query({ id, pid: "web", port: String(port) })}`)).body.ready, true);
@@ -312,7 +256,7 @@ describe("@cloudflare/sandbox on orange dev with the local provider", { timeout:
 		const id = "custom";
 		await call(server, `/start?${query({ cmd: `node -e "require('http').createServer((q,s)=>s.end('custom')).listen(${port},'127.0.0.1')"`, id, pid: "web" })}`);
 		const exposed = await call(server, `/expose?${query({ id, port: String(port), token: "my_token_v1" })}`);
-		assert.equal(exposed.body.url, `http://${port}-custom-my_token_v1.localhost:${server.port}/`);
+		assert.equal(exposed.body.url, `http://${port}-custom-my_token_v1.localhost:${devPort(server)}/`);
 		assert.equal((await call(server, `/wait-port?${query({ id, pid: "web", port: String(port) })}`)).body.ready, true);
 		assert.deepEqual(await preview(server, `${port}-custom-my_token_v1`, "/"), { body: "custom", status: 200 });
 
@@ -329,16 +273,17 @@ describe("@cloudflare/sandbox on orange dev with the local provider", { timeout:
 
 describe("@cloudflare/sandbox on orange dev with the agentos provider", { timeout: 180_000 }, () => {
 	let projectRoot: string;
-	let server: DevServer;
+	let server: RunningOrangeDev;
 
 	before(async () => {
 		projectRoot = await createProject();
-		server = await startDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: "agentos", ORANGE_SANDBOX_TEST_SECRET: "host-only" });
+		server = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: "agentos", ORANGE_SANDBOX_TEST_SECRET: "host-only" });
 	});
 
 	after(async () => {
-		await server?.stop();
+		await server?.close();
 		if (projectRoot !== undefined) {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
@@ -409,20 +354,24 @@ for (const { key, name } of remoteProviders) {
 	const apiKey = process.env[`SANDBOX_TEST_${key}`];
 	describe(`@cloudflare/sandbox on orange dev with the ${name} provider`, { skip: apiKey === undefined ? `set SANDBOX_TEST_${key}` : false, timeout: 300_000 }, () => {
 		let projectRoot: string;
-		let server: DevServer;
+		let server: RunningOrangeDev;
 
 		before(async () => {
 			projectRoot = await createProject();
-			server = await startDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: name, [key]: apiKey ?? "" });
+			server = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: name, [key]: apiKey ?? "" });
 		});
 
 		after(async () => {
 			// Delete the provider sandboxes, which cost money while they run.
 			if (server !== undefined) {
 				for (const id of ["remote-files", "remote-port"]) await call(server, `/destroy?${query({ id })}`);
-				await server.stop();
+				await server.close();
 			}
-			if (projectRoot !== undefined) await rm(projectRoot, { force: true, recursive: true });
+			if (projectRoot !== undefined) {
+				await stopProjectEngines(projectRoot);
+				await stopProjectEngines(projectRoot);
+				await rm(projectRoot, { force: true, recursive: true });
+			}
 		});
 
 		it("when a file is written to /workspace, commands run there and see it", async () => {
@@ -436,13 +385,14 @@ for (const { key, name } of remoteProviders) {
 		it("when the API key is wrong, calls fail naming the provider and the variable", async () => {
 			// A second orange dev in the same project would share its Engine, so it gets its own project.
 			const wrongKeyProject = await createProject();
-			const wrongKey = await startDev(wrongKeyProject, { ORANGE_SANDBOX_PROVIDER: name, [key]: "wrong-key-for-orange-tests" });
+			const wrongKey = await startSandboxDev(wrongKeyProject, { ORANGE_SANDBOX_PROVIDER: name, [key]: "wrong-key-for-orange-tests" });
 			try {
 				const response = await call(wrongKey, `/exec?${query({ cmd: "echo hi", id: "remote-wrong-key" })}`);
 				assert.equal(response.status, 500);
 				assert.match(String(response.body.error), new RegExp(`^The ${name} sandbox provider failed: .+\\. Check ${key}, and that orange dev can reach ${name}\\.$`));
 			} finally {
-				await wrongKey.stop();
+				await wrongKey.close();
+				await stopProjectEngines(wrongKeyProject);
 				await rm(wrongKeyProject, { force: true, recursive: true });
 			}
 		});
@@ -492,16 +442,17 @@ async function createContainerProject(): Promise<string> {
 
 describe("ctx.container on orange dev with the local provider", { timeout: 180_000 }, () => {
 	let projectRoot: string;
-	let server: DevServer;
+	let server: RunningOrangeDev;
 
 	before(async () => {
 		projectRoot = await createContainerProject();
-		server = await startDev(projectRoot);
+		server = await startSandboxDev(projectRoot);
 	});
 
 	after(async () => {
-		await server?.stop();
+		await server?.close();
 		if (projectRoot !== undefined) {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
@@ -555,6 +506,7 @@ describe("@cloudflare/sandbox across orange dev restarts and configuration", { t
 
 	after(async () => {
 		for (const projectRoot of projects) {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
@@ -562,22 +514,22 @@ describe("@cloudflare/sandbox across orange dev restarts and configuration", { t
 	it("when orange dev restarts, the same sandbox id reconnects to its files and no sandbox process outlives the old server", async () => {
 		const projectRoot = await createProject();
 		projects.push(projectRoot);
-		const first = await startDev(projectRoot);
+		const first = await startSandboxDev(projectRoot);
 		const marker = `sleep ${30_000 + Math.floor(Math.random() * 10_000)}`;
 		try {
 			await call(first, `/write?${query({ id: "durable", path: "/workspace/state.txt" })}`, { body: "kept", method: "POST" });
 			await call(first, `/start?${query({ cmd: marker, id: "durable", pid: "orphan" })}`);
 			assert.equal(spawnSync("pgrep", ["-f", marker]).status, 0);
 		} finally {
-			await first.stop();
+			await first.close();
 		}
 		assert.equal(spawnSync("pgrep", ["-f", marker]).status, 1, "a sandbox process outlived orange dev");
-		const second = await startDev(projectRoot);
+		const second = await startSandboxDev(projectRoot);
 		try {
 			assert.equal((await call(second, `/read?${query({ id: "durable", path: "/workspace/state.txt" })}`)).body.content, "kept");
 			assert.equal((await call(second, `/exists?${query({ id: "other", path: "/workspace/state.txt" })}`)).body.exists, false);
 		} finally {
-			await second.stop();
+			await second.close();
 		}
 	});
 
@@ -585,14 +537,14 @@ describe("@cloudflare/sandbox across orange dev restarts and configuration", { t
 		const projectRoot = await createProject();
 		projects.push(projectRoot);
 		const sandboxDir = join(projectRoot, "local-sandboxes");
-		const first = await startDev(projectRoot, { ORANGE_SANDBOX_DIR: sandboxDir });
+		const first = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_DIR: sandboxDir });
 		try {
 			await call(first, `/write?${query({ id: "switch", path: "/workspace/a.txt" })}`, { body: "local", method: "POST" });
 		} finally {
-			await first.stop();
+			await first.close();
 		}
 		assert.equal((await readdir(sandboxDir)).length, 1);
-		const second = await startDev(projectRoot, { ORANGE_SANDBOX_DIR: sandboxDir, ORANGE_SANDBOX_PROVIDER: "agentos" });
+		const second = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_DIR: sandboxDir, ORANGE_SANDBOX_PROVIDER: "agentos" });
 		try {
 			const switched = await call(second, `/exec?${query({ cmd: "echo hi", id: "switch" })}`);
 			assert.equal(switched.status, 500);
@@ -601,33 +553,33 @@ describe("@cloudflare/sandbox across orange dev restarts and configuration", { t
 			assert.deepEqual(await readdir(sandboxDir), [], "destroy() left the local sandbox behind");
 			assert.equal((await call(second, `/exec?${query({ cmd: "echo fresh", id: "switch" })}`)).body.stdout, "fresh\n");
 		} finally {
-			await second.stop();
+			await second.close();
 		}
 	});
 
 	it("when a remote provider has no API key, sandbox calls fail with an error naming the missing variable", async () => {
 		const projectRoot = await createProject();
 		projects.push(projectRoot);
-		const server = await startDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: "e2b" });
+		const server = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: "e2b" });
 		try {
 			const response = await call(server, `/exec?${query({ cmd: "echo hi" })}`);
 			assert.equal(response.status, 500);
 			assert.match(String(response.body.error), /ORANGE_SANDBOX_PROVIDER=e2b needs E2B_API_KEY/);
 		} finally {
-			await server.stop();
+			await server.close();
 		}
 	});
 
 	it("when the provider name is unknown, sandbox calls fail with the list of providers", async () => {
 		const projectRoot = await createProject();
 		projects.push(projectRoot);
-		const server = await startDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: "docker" });
+		const server = await startSandboxDev(projectRoot, { ORANGE_SANDBOX_PROVIDER: "docker" });
 		try {
 			const response = await call(server, `/exec?${query({ cmd: "echo hi" })}`);
 			assert.equal(response.status, 500);
 			assert.match(String(response.body.error), /"docker" is not a sandbox provider\. Use one of: local, e2b, daytona, freestyle, agentos/);
 		} finally {
-			await server.stop();
+			await server.close();
 		}
 	});
 });

@@ -1,18 +1,17 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+
+import { isRecord, startOrangeDev, stopProjectEngines, waitFor, type RunningOrangeDev } from "../harness/orange-dev.js";
 
 // Drives cron triggers and Wrangler's scheduled test routes through real
 // `orange dev` processes, Wrangler configuration, and a Rivet Engine. The
 // fixture Worker records each scheduled() run in KV and serves them at /runs.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(
 	new URL("../fixtures/cron-triggers/worker.js", import.meta.url),
 );
@@ -49,12 +48,8 @@ function expectedSteppedWeekdaysRun(after: number): number {
 
 // orange dev prints the cron line right after the ready line, and the two can
 // arrive in separate output chunks, so this polls the collected output.
-async function waitForOutput(server: DevServer, pattern: RegExp): Promise<void> {
-	const deadline = Date.now() + 10_000;
-	while (!pattern.test(server.output())) {
-		if (Date.now() > deadline) assert.fail(`missing ${pattern}:\n${server.output()}`);
-		await delay(50);
-	}
+async function waitForOutput(server: RunningOrangeDev, pattern: RegExp): Promise<void> {
+	await waitFor(`${pattern} in the output`, () => pattern.test(server.output()), 10_000);
 }
 
 // Reads the next run of each cron from the `orange dev` startup line.
@@ -69,12 +64,6 @@ function printedNextRuns(output: string): Map<string, number> {
 interface ScheduledRun {
 	cron: string;
 	scheduledTime: number;
-}
-
-interface DevServer {
-	origin: string;
-	output(): string;
-	stop(): Promise<void>;
 }
 
 async function createProject(crons: readonly string[]): Promise<string> {
@@ -97,71 +86,17 @@ async function writeConfig(projectRoot: string, crons: readonly string[]): Promi
 	);
 }
 
-async function startDev(projectRoot: string, extraArgs: readonly string[] = []): Promise<DevServer> {
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			...extraArgs,
-		],
-		{
-			env: { ...process.env, CI: "1", NO_COLOR: "1" },
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(
-			() => {
-				child.kill("SIGKILL");
-				rejectReady(new Error(`orange dev readiness timed out: ${output}`));
-			},
-			60_000,
-		);
-		const onData = (chunk: unknown): void => {
-			output += String(chunk);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return {
-		origin: `http://127.0.0.1:${port}`,
-		output: () => output,
-		stop: () =>
-			new Promise<void>((resolveStop) => {
-				if (child.exitCode !== null || child.signalCode !== null) {
-					resolveStop();
-					return;
-				}
-				const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-				child.once("exit", () => {
-					clearTimeout(timeout);
-					resolveStop();
-				});
-				child.kill("SIGINT");
-			}),
-	};
+// The tests write their own wrangler.json next to the fixture Worker.
+function startDev(projectRoot: string, args: readonly string[] = []): Promise<RunningOrangeDev> {
+	return startOrangeDev(projectRoot, "wrangler.json", { args });
 }
 
-async function readRuns(server: DevServer): Promise<ScheduledRun[]> {
+async function removeProject(projectRoot: string): Promise<void> {
+	await stopProjectEngines(projectRoot);
+	await rm(projectRoot, { force: true, recursive: true });
+}
+
+async function readRuns(server: RunningOrangeDev): Promise<ScheduledRun[]> {
 	const response = await fetch(`${server.origin}/runs`);
 	const text = await response.text();
 	assert.equal(response.status, 200, `${text}\n${server.output()}`);
@@ -186,7 +121,7 @@ function tickTimes(runs: readonly ScheduledRun[], cron: string, since = 0): numb
 // Cron fires have no caller-visible completion event, so the test polls the
 // runs that scheduled() records until `count` ticks of `cron` have run.
 async function waitForTicks(
-	server: DevServer,
+	server: RunningOrangeDev,
 	cron: string,
 	count: number,
 	since = 0,
@@ -208,7 +143,7 @@ async function waitForTicks(
 describe("cron triggers", { concurrency: true }, () => {
 	describe("through orange dev", { concurrency: true }, () => {
 		let projectRoot: string;
-		let server: DevServer;
+		let server: RunningOrangeDev;
 		let startedAt: number;
 
 		before(async () => {
@@ -225,9 +160,9 @@ describe("cron triggers", { concurrency: true }, () => {
 
 		after(async () => {
 			try {
-				await server?.stop();
+				await server?.close();
 			} finally {
-				await rm(projectRoot, { force: true, recursive: true });
+				await removeProject(projectRoot);
 			}
 		});
 
@@ -295,13 +230,13 @@ describe("cron triggers", { concurrency: true }, () => {
 
 	describe("with ORANGE_CRONS=off", () => {
 		let projectRoot: string;
-		const servers: DevServer[] = [];
+		const servers: RunningOrangeDev[] = [];
 
 		after(async () => {
 			try {
-				await Promise.all(servers.map((server) => server.stop()));
+				await Promise.all(servers.map((server) => server.close()));
 			} finally {
-				await rm(projectRoot, { force: true, recursive: true });
+				await removeProject(projectRoot);
 			}
 		});
 
@@ -309,7 +244,7 @@ describe("cron triggers", { concurrency: true }, () => {
 			projectRoot = await createProject([throwingCron, passingCron]);
 			const earlier = await startDev(projectRoot);
 			servers.push(earlier);
-			await earlier.stop();
+			await earlier.close();
 
 			await writeFile(join(projectRoot, ".dev.vars"), "ORANGE_CRONS=off\n");
 			const startedAt = Date.now();
@@ -325,13 +260,13 @@ describe("cron triggers", { concurrency: true }, () => {
 
 	describe("across restarts and processes", () => {
 		let projectRoot: string;
-		const servers: DevServer[] = [];
+		const servers: RunningOrangeDev[] = [];
 
 		after(async () => {
 			try {
-				await Promise.all(servers.map((server) => server.stop()));
+				await Promise.all(servers.map((server) => server.close()));
 			} finally {
-				await rm(projectRoot, { force: true, recursive: true });
+				await removeProject(projectRoot);
 			}
 		});
 
@@ -339,7 +274,7 @@ describe("cron triggers", { concurrency: true }, () => {
 			projectRoot = await createProject([throwingCron, passingCron]);
 			const first = await startDev(projectRoot);
 			servers.push(first);
-			await first.stop();
+			await first.close();
 			const stoppedAt = Date.now();
 			// Stay stopped until more than a minute after the next tick. Orange still
 			// runs a tick that a restart delayed by less than a minute.
@@ -349,7 +284,7 @@ describe("cron triggers", { concurrency: true }, () => {
 			const restartedAt = Date.now();
 			// A start that fails must not leave the other start running past `after`.
 			const starts = await Promise.allSettled([startDev(projectRoot), startDev(projectRoot)]);
-			const restarted: DevServer[] = [];
+			const restarted: RunningOrangeDev[] = [];
 			for (const start of starts) {
 				if (start.status === "fulfilled") restarted.push(start.value);
 			}
@@ -379,7 +314,7 @@ describe("cron triggers", { concurrency: true }, () => {
 			// When one of two processes on the same storage exits, the other still serves.
 			const [exiting, remaining] = restarted;
 			assert.ok(exiting !== undefined && remaining !== undefined);
-			await exiting.stop();
+			await exiting.close();
 			await readRuns(remaining);
 		});
 	});

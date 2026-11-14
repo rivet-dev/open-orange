@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import test from "node:test";
 
-import { copyProject, repositoryRoot, startOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
+import { withOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
 
 interface Answer {
 	failure: string;
@@ -11,17 +10,11 @@ interface Answer {
 }
 
 async function run(config: string, check: (answer: Answer, dev: RunningOrangeDev) => void): Promise<void> {
-	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "request-clone-signal"));
-	try {
-		const dev = await startOrangeDev(project.directory, config);
-		try {
-			check((await (await fetch(dev.origin)).json()) as Answer, dev);
-		} finally {
-			await dev.close();
-		}
-	} finally {
-		await project.dispose();
-	}
+	await withOrangeDev(
+		"request-clone-signal",
+		async (dev) => check((await (await fetch(dev.origin)).json()) as Answer, dev),
+		{ config },
+	);
 }
 
 const disconnected = "The client has disconnected";

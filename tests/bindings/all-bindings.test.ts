@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -7,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines, waitFor } from "../harness/orange-dev.js";
 
 // One `orange dev` with every binding that Orange backs with its own Rivet
 // Actors: cron, Queues, Workflows, facets, R2, and Rate Limiting, plus Workers
@@ -16,7 +15,6 @@ import { isRecord } from "../harness/orange-dev.js";
 // internal actors share one registry, and handlers that those actors run, such
 // as queue() and a Workflow step, call the other bindings.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/all-bindings/worker.js", import.meta.url));
 
 // Answers every chat completion with the prompt it got.
@@ -60,9 +58,11 @@ async function startMockProvider(): Promise<{ baseUrl: string; close(): Promise<
 describe("every Rivet-backed binding in one orange dev", () => {
 	let projectRoot: string;
 	let provider: Awaited<ReturnType<typeof startMockProvider>>;
-	let origin: string;
-	let output = "";
-	let stop: () => Promise<void> = async () => undefined;
+	let server: RunningOrangeDev | undefined;
+	const running = (): RunningOrangeDev => {
+		assert.ok(server !== undefined, "orange dev is not running");
+		return server;
+	};
 
 	before(async () => {
 		provider = await startMockProvider();
@@ -93,103 +93,45 @@ describe("every Rivet-backed binding in one orange dev", () => {
 			join(projectRoot, ".dev.vars"),
 			`ORANGE_AI_BASE_URL=${provider.baseUrl}\nORANGE_AI_API_KEY=test-key\n`,
 		);
-		const environment = Object.fromEntries(
-			Object.entries(process.env).filter(
-				([name]) => !name.startsWith("ORANGE_") && name !== "OPENROUTER_API_KEY",
-			),
-		);
-		const child = spawn(
-			process.execPath,
-			[
-				"--import",
-				"tsx",
-				cliEntrypoint,
-				"dev",
-				"--config",
-				join(projectRoot, "wrangler.json"),
-				"--port",
-				"0",
-				"--ip",
-				"127.0.0.1",
-				"--show-interactive-dev-session=false",
-			],
-			{ env: { ...environment, CI: "1", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-		);
-		stop = () =>
-			new Promise<void>((resolveStop) => {
-				if (child.exitCode !== null || child.signalCode !== null) {
-					resolveStop();
-					return;
-				}
-				const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-				child.once("exit", () => {
-					clearTimeout(timeout);
-					resolveStop();
-				});
-				child.kill("SIGINT");
-			});
-		origin = await new Promise<string>((resolveReady, rejectReady) => {
-			const timeout = setTimeout(
-				() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-				90_000,
-			);
-			const onData = (part: unknown): void => {
-				output += String(part);
-				const match = /Local\s+(http:\/\/127\.0\.0\.1:\d+)/.exec(output);
-				// The ready block lists the next cron runs once the cron actor synced.
-				if (match?.[1] !== undefined && output.includes("Run one now: curl")) {
-					clearTimeout(timeout);
-					resolveReady(match[1]);
-				}
-			};
-			child.stdout.on("data", onData);
-			child.stderr.on("data", onData);
-			child.once("exit", (code) => {
-				clearTimeout(timeout);
-				rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-			});
-		});
+		server = await startOrangeDev(projectRoot, "wrangler.json");
+		// The ready block lists the next cron runs once the cron actor synced.
+		await waitFor("the cron schedule in the ready block", () => running().output().includes("Run one now: curl"), 90_000);
 	});
 
 	after(async () => {
-		await stop();
+		await server?.close();
 		await provider?.close();
 		if (projectRoot !== undefined) {
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
 
-	async function getJson(path: string): Promise<unknown> {
-		const response = await fetch(`${origin}${path}`);
-		const text = await response.text();
-		assert.equal(response.status, 200, `${path}: ${text}\n${output}`);
-		return JSON.parse(text);
-	}
-
 	it("runs a cron tick through a queue, R2, a Workflow, and Workers AI while facets and Rate Limiting answer", async () => {
-		assert.match(output, /Cron\s+"\* \* \* \* \*" next /);
-		assert.deepEqual(await getJson("/limit?key=caller"), [true, true, false]);
-		assert.equal(await getJson("/facet"), 1);
-		assert.equal(await getJson("/facet"), 2);
+		const dev = running();
+		assert.match(dev.output(), /Cron\s+"\* \* \* \* \*" next /);
+		assert.deepEqual(await dev.json("/limit?key=caller"), [true, true, false]);
+		assert.equal(await dev.json("/facet"), 1);
+		assert.equal(await dev.json("/facet"), 2);
 
 		const scheduledTime = 1_760_000_000_000;
 		const tick = await fetch(
-			`${origin}/cdn-cgi/local/scheduled?cron=${encodeURIComponent("* * * * *")}&time=${scheduledTime}`,
+			`${dev.origin}/cdn-cgi/local/scheduled?cron=${encodeURIComponent("* * * * *")}&time=${scheduledTime}`,
 		);
-		assert.equal(tick.status, 200, `${await tick.text()}\n${output}`);
+		assert.equal(tick.status, 200, `${await tick.text()}\n${dev.output()}`);
 		// The queue consumer and the Workflow run in the background, so the
 		// result appears only after they finish.
 		const deadline = Date.now() + 60_000;
 		let result: unknown = null;
 		while (Date.now() < deadline) {
-			result = await getJson(`/answer?id=${scheduledTime}`);
+			result = await dev.json(`/answer?id=${scheduledTime}`);
 			if (isRecord(result) && ["complete", "errored", "terminated"].includes(String(result.status))) break;
 			await delay(250);
 		}
 		assert.deepEqual(
 			result,
 			{ answer: "answer to what runs at * * * * *?", status: "complete" },
-			output,
+			dev.output(),
 		);
 	});
 });

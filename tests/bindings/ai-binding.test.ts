@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, type RunningOrangeDev, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
 // Drives `env.AI` through a real `orange dev` process against a mock
 // OpenAI-compatible provider that runs as a real HTTP server.
 
-const cliEntrypoint = fileURLToPath(new URL("../../src/bin.ts", import.meta.url));
 const fixtureWorker = fileURLToPath(new URL("../fixtures/ai/worker.js", import.meta.url));
 const apiKey = "test-provider-key";
 
@@ -143,77 +141,7 @@ async function startMockProvider(requiredKey?: string): Promise<MockProvider> {
 	};
 }
 
-interface DevServer {
-	origin: string;
-	output(): string;
-	stop(): Promise<void>;
-}
-
-async function startDev(projectRoot: string): Promise<DevServer> {
-	// The developer's own provider settings must not leak into the run.
-	const environment = Object.fromEntries(
-		Object.entries(process.env).filter(
-			([name]) => !name.startsWith("ORANGE_AI_") && name !== "OPENROUTER_API_KEY",
-		),
-	);
-	const child: ChildProcess = spawn(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			cliEntrypoint,
-			"dev",
-			"--config",
-			join(projectRoot, "wrangler.json"),
-			"--port",
-			"0",
-			"--ip",
-			"127.0.0.1",
-			"--show-interactive-dev-session=false",
-		],
-		{ env: { ...environment, CI: "1", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-	);
-	let output = "";
-	const port = await new Promise<number>((resolveReady, rejectReady) => {
-		const timeout = setTimeout(
-			() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-			60_000,
-		);
-		const onData = (part: unknown): void => {
-			output += String(part);
-			const match = /Local\s+http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-			if (match?.[1] !== undefined) {
-				clearTimeout(timeout);
-				resolveReady(Number(match[1]));
-			}
-		};
-		child.stdout?.on("data", onData);
-		child.stderr?.on("data", onData);
-		child.once("exit", (code) => {
-			clearTimeout(timeout);
-			rejectReady(new Error(`orange dev exited before readiness (code ${code}): ${output}`));
-		});
-	});
-	return {
-		origin: `http://127.0.0.1:${port}`,
-		output: () => output,
-		stop: () =>
-			new Promise<void>((resolveStop) => {
-				if (child.exitCode !== null || child.signalCode !== null) {
-					resolveStop();
-					return;
-				}
-				const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
-				child.once("exit", () => {
-					clearTimeout(timeout);
-					resolveStop();
-				});
-				child.kill("SIGINT");
-			}),
-	};
-}
-
-async function startProject(devVars: string): Promise<{ projectRoot: string; server: DevServer }> {
+async function startProject(devVars: string): Promise<{ projectRoot: string; server: RunningOrangeDev }> {
 	const projectRoot = await mkdtemp(join(tmpdir(), "open-orange-ai-"));
 	await cp(fixtureWorker, join(projectRoot, "worker.js"));
 	await writeFile(
@@ -226,14 +154,10 @@ async function startProject(devVars: string): Promise<{ projectRoot: string; ser
 		}),
 	);
 	await writeFile(join(projectRoot, ".dev.vars"), devVars);
-	return { projectRoot, server: await startDev(projectRoot) };
-}
-
-async function getJson(server: DevServer, path: string): Promise<unknown> {
-	const response = await fetch(`${server.origin}${path}`);
-	const text = await response.text();
-	assert.equal(response.status, 200, `${path}: ${text}\n${server.output()}`);
-	return JSON.parse(text);
+	return {
+		projectRoot,
+		server: await startOrangeDev(projectRoot, "wrangler.json"),
+	};
 }
 
 const upstreamError = (message: string) => ({
@@ -243,8 +167,7 @@ const upstreamError = (message: string) => ({
 describe("Workers AI through orange dev", () => {
 	let provider: MockProvider;
 	let projectRoot: string;
-	let server: DevServer;
-	const get = (path: string): Promise<unknown> => getJson(server, path);
+	let server: RunningOrangeDev;
 
 	before(async () => {
 		provider = await startMockProvider(apiKey);
@@ -259,15 +182,16 @@ describe("Workers AI through orange dev", () => {
 
 	after(async () => {
 		try {
-			await server?.stop();
+			await server?.close();
 		} finally {
 			await provider?.close();
+			await stopProjectEngines(projectRoot);
 			await rm(projectRoot, { force: true, recursive: true });
 		}
 	});
 
 	it("returns text generation in the Workers AI shape from the mapped provider model", async () => {
-		assert.deepEqual(await get("/text"), {
+		assert.deepEqual(await server.json("/text"), {
 			value: {
 				response: "reply from meta-llama/llama-3.1-8b-instruct to hello",
 				tool_calls: [
@@ -286,15 +210,15 @@ describe("Workers AI through orange dev", () => {
 
 	it("rejects with InferenceUpstreamError carrying the provider's 4xx or 5xx message", async () => {
 		assert.deepEqual(
-			await get("/run?model=@cf/test/rate-limited"),
+			await server.json("/run?model=@cf/test/rate-limited"),
 			upstreamError("429: Rate limit exceeded: free-models-per-day"),
 		);
 		assert.deepEqual(
-			await get("/run?model=@cf/test/broken"),
+			await server.json("/run?model=@cf/test/broken"),
 			upstreamError("500: Internal provider failure"),
 		);
 		// With returnRawResponse the Worker gets the failed response instead.
-		assert.deepEqual(await get("/raw?model=@cf/test/rate-limited"), {
+		assert.deepEqual(await server.json("/raw?model=@cf/test/rate-limited"), {
 			body: {
 				errors: [{ code: 429, message: "Rate limit exceeded: free-models-per-day" }],
 				messages: [],
@@ -328,15 +252,15 @@ describe("Workers AI through orange dev", () => {
 			],
 			text: "Hello from mock/text",
 		};
-		assert.deepEqual(await get("/stream?model=@cf/test/text"), expected);
-		assert.deepEqual(await get("/stream-raw?model=@cf/test/text"), {
+		assert.deepEqual(await server.json("/stream?model=@cf/test/text"), expected);
+		assert.deepEqual(await server.json("/stream-raw?model=@cf/test/text"), {
 			contentType: "text/event-stream",
 			...expected,
 		});
 	});
 
 	it("fails the stream when the provider reports an error mid-stream", async () => {
-		assert.deepEqual(await get("/stream-error?model=@cf/test/stream-broken"), {
+		assert.deepEqual(await server.json("/stream-error?model=@cf/test/stream-broken"), {
 			error: {
 				inferenceUpstreamError: false,
 				message: "The AI provider failed during the stream: Provider died mid-stream",
@@ -349,7 +273,7 @@ describe("Workers AI through orange dev", () => {
 		const before = provider.requests.length;
 		for (const model of ["@cf/baai/bge-small-en-v1.5", "@cf/black-forest-labs/flux-1-schnell"]) {
 			assert.deepEqual(
-				await get(`/run?model=${model}`),
+				await server.json(`/run?model=${model}`),
 				upstreamError(
 					`5007: Model ${JSON.stringify(model)} has no OpenOrange mapping. Add it to ORANGE_AI_MODELS.`,
 				),
@@ -360,7 +284,7 @@ describe("Workers AI through orange dev", () => {
 
 	it("returns embeddings from the same model in input order", async () => {
 		const requestsBefore = provider.requests.length;
-		assert.deepEqual(await get("/embeddings"), {
+		assert.deepEqual(await server.json("/embeddings"), {
 			data: [
 				[0.1, 0.2, 0.3],
 				[0.3, 0.4, 0.5],
@@ -374,11 +298,11 @@ describe("Workers AI through orange dev", () => {
 
 	it("serves runs with the gateway option and warns once that gateway features are ignored", async () => {
 		const reply = { response: "reply from mock/text to hello", tool_calls: [], usage: { completion_tokens: 4, prompt_tokens: 6, total_tokens: 10 } };
-		assert.deepEqual(await get("/gateway?model=@cf/test/text"), [reply, reply]);
-		await get("/gateway?model=@cf/test/text");
+		assert.deepEqual(await server.json("/gateway?model=@cf/test/text"), [reply, reply]);
+		await server.json("/gateway?model=@cf/test/text");
 		const notices = server.output().split("\n").filter((line) => line.includes("AI Gateway option is ignored"));
 		assert.equal(notices.length, 1, server.output());
-		assert.deepEqual(await get("/gateway-methods"), {
+		assert.deepEqual(await server.json("/gateway-methods"), {
 			error: {
 				inferenceUpstreamError: false,
 				message:
@@ -390,7 +314,7 @@ describe("Workers AI through orange dev", () => {
 
 	it("keeps each overlapping run's options separate", async () => {
 		const results = await Promise.all(
-			Array.from({ length: 5 }, () => get("/overlap?model=@cf/test/text")),
+			Array.from({ length: 5 }, () => server.json("/overlap?model=@cf/test/text")),
 		);
 		for (const result of results) {
 			assert.deepEqual(result, {
@@ -401,7 +325,7 @@ describe("Workers AI through orange dev", () => {
 	});
 
 	it("lists mapped models, including ORANGE_AI_MODELS overrides, in the Workers AI shape", async () => {
-		const models = await get("/models");
+		const models = await server.json("/models");
 		assert.ok(Array.isArray(models));
 		assert.deepEqual(
 			models.map((model: { name: string; task: { name: string } }) => [model.name, model.task.name]),
@@ -416,12 +340,12 @@ describe("Workers AI through orange dev", () => {
 			["@cf/zai-org/glm-4.7-flash", "z-ai/glm-4.7-flash"],
 			["@cf/test/chat", "mock/text"],
 		] as const) {
-			assert.deepEqual(await get(`/chat?model=${model}`), {
+			assert.deepEqual(await server.json(`/chat?model=${model}`), {
 				value: chatCompletion(providerModel, [{ content: "hello" }], undefined),
 			});
 		}
 		const chunkEvent = (delta: Record<string, unknown>) => ({ choices: [{ delta, index: 0 }] });
-		assert.deepEqual(await get("/chat-stream?model=@cf/zai-org/glm-4.7-flash"), {
+		assert.deepEqual(await server.json("/chat-stream?model=@cf/zai-org/glm-4.7-flash"), {
 			events: [
 				chunkEvent({ content: "", role: "assistant" }),
 				chunkEvent({ content: "Hel" }),
@@ -439,8 +363,8 @@ describe("Workers AI through orange dev", () => {
 
 describe("Workers AI without an API key", () => {
 	let localProvider: MockProvider;
-	let openRouter: { projectRoot: string; server: DevServer };
-	let local: { projectRoot: string; server: DevServer };
+	let openRouter: { projectRoot: string; server: RunningOrangeDev };
+	let local: { projectRoot: string; server: RunningOrangeDev };
 
 	before(async () => {
 		localProvider = await startMockProvider();
@@ -454,13 +378,15 @@ describe("Workers AI without an API key", () => {
 
 	after(async () => {
 		try {
-			await Promise.all([openRouter?.server.stop(), local?.server.stop()]);
+			await Promise.all([openRouter?.server.close(), local?.server.close()]);
 		} finally {
 			await localProvider?.close();
 			await Promise.all(
-				[openRouter, local].map((project) =>
-					project === undefined ? undefined : rm(project.projectRoot, { force: true, recursive: true }),
-				),
+				[openRouter, local].map(async (project) => {
+					if (project === undefined) return;
+					await stopProjectEngines(project.projectRoot);
+					await rm(project.projectRoot, { force: true, recursive: true });
+				}),
 			);
 		}
 	});
@@ -469,7 +395,7 @@ describe("Workers AI without an API key", () => {
 		const message =
 			"Workers AI needs an API key for https://openrouter.ai/api/v1. Set ORANGE_AI_API_KEY or OPENROUTER_API_KEY in .dev.vars or the environment.";
 		assert.deepEqual(
-			await getJson(openRouter.server, "/run?model=@cf/meta/llama-3.1-8b-instruct"),
+			await openRouter.server.json("/run?model=@cf/meta/llama-3.1-8b-instruct"),
 			upstreamError(`10000: ${message}`),
 		);
 		const warnings = openRouter.server
@@ -480,7 +406,7 @@ describe("Workers AI without an API key", () => {
 	});
 
 	it("calls a provider at a configured base URL without a key or a warning", async () => {
-		assert.deepEqual(await getJson(local.server, "/run?model=@cf/meta/llama-3.1-8b-instruct"), {
+		assert.deepEqual(await local.server.json("/run?model=@cf/meta/llama-3.1-8b-instruct"), {
 			value: {
 				response: "reply from meta-llama/llama-3.1-8b-instruct to hello",
 				tool_calls: [],

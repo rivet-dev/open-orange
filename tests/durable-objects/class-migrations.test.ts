@@ -2,14 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
 
-import { copyProject, repositoryRoot, runOrange, startOrangeDev, type RunningOrangeDev } from "../harness/orange-dev.js";
-
-async function json(dev: RunningOrangeDev, path: string): Promise<unknown> {
-	const response = await fetch(new URL(path, dev.origin));
-	const body = await response.text();
-	assert.equal(response.status, 200, `${body}\n${dev.output()}`);
-	return JSON.parse(body);
-}
+import { copyProject, repositoryRoot, runOrange, startOrangeDev } from "../harness/orange-dev.js";
 
 test("a renamed class keeps its objects, and a class made again after its deletion starts empty", { timeout: 240_000 }, async () => {
 	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "class-migrations"));
@@ -17,9 +10,9 @@ test("a renamed class keeps its objects, and a class made again after its deleti
 		const before = await startOrangeDev(project.directory, "wrangler.before.jsonc");
 		let uniqueId: string;
 		try {
-			assert.equal(await json(before, "/named"), 1);
-			assert.equal(await json(before, "/retired"), 1);
-			const unique = (await json(before, "/unique")) as { id: string; value: number };
+			assert.equal(await before.json("/named"), 1);
+			assert.equal(await before.json("/retired"), 1);
+			const unique = (await before.json("/unique")) as { id: string; value: number };
 			uniqueId = unique.id;
 		} finally {
 			await before.close();
@@ -27,17 +20,17 @@ test("a renamed class keeps its objects, and a class made again after its deleti
 
 		const after = await startOrangeDev(project.directory, "wrangler.after.jsonc");
 		try {
-			assert.equal(await json(after, "/named"), 2);
-			assert.equal(await json(after, `/by-id?id=${uniqueId}`), 2);
-			assert.equal(await json(after, "/retired"), "no binding");
+			assert.equal(await after.json("/named"), 2);
+			assert.equal(await after.json(`/by-id?id=${uniqueId}`), 2);
+			assert.equal(await after.json("/retired"), "no binding");
 		} finally {
 			await after.close();
 		}
 
 		const recreated = await startOrangeDev(project.directory, "wrangler.recreated.jsonc");
 		try {
-			assert.equal(await json(recreated, "/retired"), 1);
-			assert.equal(await json(recreated, "/named"), 3);
+			assert.equal(await recreated.json("/retired"), 1);
+			assert.equal(await recreated.json("/named"), 3);
 		} finally {
 			await recreated.close();
 		}
@@ -67,8 +60,8 @@ test("a class moved in with transferred_classes stores objects that survive a re
 			const dev = await startOrangeDev(project.directory, "wrangler.transferred.jsonc");
 			try {
 				for (const value of expected) {
-					assert.equal(await json(dev, "/named"), value);
-					assert.equal(await json(dev, "/retired"), value);
+					assert.equal(await dev.json("/named"), value);
+					assert.equal(await dev.json("/retired"), value);
 				}
 			} finally {
 				await dev.close();

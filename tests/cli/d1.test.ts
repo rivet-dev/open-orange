@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../harness/orange-dev.js";
+import { isRecord, startOrangeDev, stopProjectEngines } from "../harness/orange-dev.js";
 
 // Drives `orange d1` commands and `orange dev` as real processes against one
 // project, so the database the commands write is the one the Worker reads.
@@ -92,6 +92,7 @@ describe("orange d1 against the local database", () => {
 	});
 
 	after(async () => {
+		await stopProjectEngines(projectRoot);
 		await rm(projectRoot, { force: true, recursive: true });
 	});
 
@@ -133,48 +134,11 @@ describe("orange d1 against the local database", () => {
 		assert.equal(again.code, 0, again.stderr);
 		assert.match(again.stdout, /No migrations to apply!/);
 
-		const dev = spawn(
-			process.execPath,
-			[
-				"--import",
-				"tsx",
-				cliEntrypoint,
-				"dev",
-				"--config",
-				join(projectRoot, "wrangler.json"),
-				"--port",
-				"0",
-			],
-			{ env: { ...process.env, CI: "1", NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-		);
-		const exited = new Promise<void>((resolveExit) => dev.once("exit", () => resolveExit()));
+		const dev = await startOrangeDev(projectRoot, "wrangler.json");
 		try {
-			let output = "";
-			const origin = await new Promise<string>((resolveReady, rejectReady) => {
-				const timeout = setTimeout(
-					() => rejectReady(new Error(`orange dev readiness timed out: ${output}`)),
-					60_000,
-				);
-				const onData = (chunk: unknown): void => {
-					output += String(chunk);
-					const match = /Local\s+(http:\/\/127\.0\.0\.1:\d+)/.exec(output);
-					if (match?.[1] !== undefined) {
-						clearTimeout(timeout);
-						resolveReady(match[1]);
-					}
-				};
-				dev.stdout.on("data", onData);
-				dev.stderr.on("data", onData);
-				void exited.then(() => {
-					clearTimeout(timeout);
-					rejectReady(new Error(`orange dev exited before readiness: ${output}`));
-				});
-			});
-			const response = await fetch(origin);
-			assert.deepEqual(await response.json(), ["first", "fixed", "last"]);
+			assert.deepEqual(await dev.json("/"), ["first", "fixed", "last"]);
 		} finally {
-			dev.kill("SIGINT");
-			await exited;
+			await dev.close();
 		}
 	});
 });

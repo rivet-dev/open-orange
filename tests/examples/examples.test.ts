@@ -120,14 +120,9 @@ const scenarios: Record<string, ExampleScenario> = {
 	"durable-object-sqlite-counter": {
 		async exercise(example) {
 			for (const count of [1, 2]) {
-				const response = await fetch(`${example.origin}/?id=corpus`, {
-					method: "POST",
-				});
-				assert.equal(response.status, 200, example.output());
-				assert.deepEqual(await response.json(), { count });
+				assert.deepEqual(await example.json("/?id=corpus", { method: "POST" }), { count });
 			}
-			const response = await fetch(`${example.origin}/?id=corpus`);
-			assert.deepEqual(await response.json(), { count: 2 });
+			assert.deepEqual(await example.json("/?id=corpus"), { count: 2 });
 		},
 	},
 	"durable-object-websocket-hibernation-server": {
@@ -175,22 +170,14 @@ const scenarios: Record<string, ExampleScenario> = {
 	},
 	"workflows-starter": {
 		async exercise(example) {
-			const started = await fetch(`${example.origin}/api/workflow/start`, {
-				method: "POST",
-			});
-			assert.equal(started.status, 200, example.output());
-			const body: unknown = await started.json();
+			const body = await example.json("/api/workflow/start", { method: "POST" });
 			assert.ok(isRecord(body) && typeof body.instanceId === "string", JSON.stringify(body));
 			const instanceId = body.instanceId;
 			// A Workflow instance has no push notification, so the caller polls its status.
 			const statusUntil = async (expected: string): Promise<unknown> => {
 				const deadline = Date.now() + 20_000;
 				for (;;) {
-					const response = await fetch(
-						`${example.origin}/api/workflow/status/${instanceId}`,
-					);
-					assert.equal(response.status, 200, example.output());
-					const status: unknown = await response.json();
+					const status = await example.json(`/api/workflow/status/${instanceId}`);
 					if (isRecord(status) && status.status === expected) return status;
 					assert.ok(
 						Date.now() < deadline,

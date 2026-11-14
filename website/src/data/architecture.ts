@@ -89,15 +89,15 @@ export const BINDING_ROUTES: BindingRoute[] = [
 	{
 		id: 'browser',
 		bindings: [doc('Browser Rendering', 'browser-rendering')],
-		service: 'Your browser, over the DevTools Protocol',
-		detail: `Headless Chrome, or ${examples('browser-rendering')}.`,
-		icons: ['chrome'],
+		service: 'Browserbase, or any DevTools Protocol browser',
+		detail: `Also ${examples('browser-rendering', ['a headless Chrome you run']).replace(/^Browserbase, /, '')}.`,
+		icons: ['browserbase', 'chrome'],
 	},
 	{
 		id: 'hyperdrive',
 		bindings: [doc('Hyperdrive', 'hyperdrive')],
-		service: 'Your Postgres or MySQL database',
-		detail: 'A direct connection with the connection string you already have.',
+		service: 'Your Postgres or MySQL database, in your VPC',
+		detail: 'The Worker runs there too, so it connects directly with your connection string.',
 		icons: ['postgresql', 'mysql'],
 	},
 ];

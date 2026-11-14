@@ -6,7 +6,7 @@ import { packageRoot } from "./generate.js";
 
 export const exampleResultsUsage = `Usage: cloudflare-conformance example-results
 
-Runs tests/runnable-examples.test.ts and saves each scenario's outcome to results/runnable-examples.json.`;
+Runs tests/examples/runnable-examples.test.ts and saves each scenario's outcome to results/runnable-examples.json.`;
 
 /** Reads each subtest's outcome and first error from node:test's TAP output. */
 export function parseExampleTap(tap: string): Record<string, { status: "pass" | "fail"; error?: string }> {
@@ -41,11 +41,11 @@ export async function exampleResults(io: { log(message: string): void }): Promis
 			"--import",
 			"tsx",
 			"--import",
-			"./tests/isolated-env.ts",
+			"./tests/harness/isolated-env.ts",
 			"--test",
 			"--test-timeout=1200000",
 			"--test-reporter=tap",
-			"tests/runnable-examples.test.ts",
+			"tests/examples/runnable-examples.test.ts",
 		],
 		{ cwd: root, stdio: ["ignore", "pipe", "inherit"] },
 	);

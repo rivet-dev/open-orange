@@ -227,7 +227,7 @@ consumer. The first failed append prints the error that names the missing
 
 #### Conformance
 
-- `tests/tail-consumers.test.ts` compares a Worker that tails itself and
+- `tests/events/tail-consumers.test.ts` compares a Worker that tails itself and
   another Worker with workerd 1.20260903.1, including a handler that throws and
   20 overlapping requests. It also covers a consumer that was not running, a
   `tail()` that throws, a runtime that crashes during `tail()`, a missing

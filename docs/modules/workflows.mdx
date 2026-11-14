@@ -242,7 +242,7 @@ instance with `{ name: "CustomError", message: "boom" }`, and a
 
 #### Conformance
 
-`src/runtime/workflows.test.ts` drives a fixture Worker through `orange dev`.
+`tests/bindings/workflows.test.ts` drives a fixture Worker through `orange dev`.
 The expected values are what the same Worker shows under `wrangler dev`, apart
 from the [deviations](#deviations). It covers:
 
@@ -262,11 +262,11 @@ from the [deviations](#deviations). It covers:
 
 The upstream corpus runs Cloudflare's `workflows-starter` template.
 
-- `tests/runnable-examples.test.ts` runs the `workflows` example: retries that
+- `tests/examples/runnable-examples.test.ts` runs the `workflows` example: retries that
   succeed on attempt 3, `NonRetryableError`, a wait timeout, `createBatch()`,
   a taken and an invalid ID, a random ID, and `pause()` and `terminate()` on a
   finished instance.
-- `tests/beyond-cloudflare-quotas.test.ts` creates an instance with a
+- `tests/bindings/beyond-cloudflare-quotas.test.ts` creates an instance with a
   155-character ID and a 300-character step name, and a batch of 150.
 - The `lifecycle` probe runs create, `sendEvent()`, `terminate()`, `pause()`
   and `resume()`, and `restart()` under both Orange and workerd. The

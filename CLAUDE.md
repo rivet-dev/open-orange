@@ -37,7 +37,7 @@
 
 ## Upstream example corpus
 
-- Manually copy upstream examples into `tests/examples/<area>/<id>/`; tests must
+- Manually copy upstream examples into `tests/cloudflare-examples/<area>/<id>/`; tests must
   never fetch mutable examples at runtime.
 - Every example has an `example.json` manifest with exactly one stable `id`, a
   repository-relative `source` entrypoint, a repository-relative
@@ -46,7 +46,7 @@
 - A `known-broken` example must include a concise `reason`. Keep its source
   unchanged so it remains evidence of an OpenOrange gap, and update its
   expectation when the gap is fixed.
-- Run `tsx tests/validate-example-manifests.ts` after adding or changing an
+- Run `tsx scripts/validate-example-manifests.ts` after adding or changing an
   example. The validator checks manifest shape, unique IDs, referenced local
   files, valid reference URLs, and required known-broken reasons; it does not
   fetch or execute examples.
@@ -60,8 +60,25 @@
   proves a feature goes in `tests/fixtures/examples/`. Real proof goes in
   `packages/cloudflare-conformance/real-projects/`.
 - Every example and example fixture needs one end-to-end scenario in
-  `tests/runnable-examples.test.ts`; the test fails for one without a scenario.
-- Upstream copies used as compatibility evidence stay in `tests/examples/`.
+  `tests/examples/runnable-examples.test.ts`; the test fails for one without a scenario.
+- Upstream copies used as compatibility evidence stay in `tests/cloudflare-examples/`.
+
+## Tests
+
+- Unit tests run in-process, start no process, and sit next to their code as
+  `src/**/*.test.ts` or `packages/*/src/**/*.test.ts`. `pnpm test:unit` runs them.
+- A test that starts `orange dev`, `orange serve`, workerd, or another process
+  is an end-to-end test. It goes in `tests/<area>/<name>.test.ts`, where the
+  area is the Cloudflare area it covers. Each folder of `tests/` that holds
+  `*.test.ts` files is one CI job, `e2e / <area>`. A new folder gets its own job.
+- `tests/harness/` holds the shared helpers. Start and stop `orange dev` with
+  `startOrangeDev` from `tests/harness/orange-dev.ts`, and wait with `waitFor`,
+  never a fixed sleep. Sleep only for time the test is about, and say why.
+- `tests/fixtures/` holds the Worker projects that tests run, and
+  `tests/cloudflare-examples/` holds the unchanged Cloudflare copies. Neither
+  holds test files.
+- Run one area with `pnpm test:e2e 'tests/<area>/*.test.ts'`, one file with
+  `pnpm test:e2e tests/<area>/<name>.test.ts`, and everything with `pnpm test`.
 
 ## Module documentation
 

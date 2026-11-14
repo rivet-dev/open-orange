@@ -1,0 +1,7 @@
+{
+  "id": "durable-object-sqlite-counter",
+  "source": "tests/cloudflare-examples/durable-objects/durable-object-sqlite-counter/src/index.ts",
+  "wranglerConfig": "tests/cloudflare-examples/durable-objects/durable-object-sqlite-counter/wrangler.jsonc",
+  "reference": "https://github.com/cloudflare/cloudflare-docs/blob/e65ba8b1fa64a5dc7c5c42a96c455398945cdf5e/src/content/docs/durable-objects/examples/testing-with-durable-objects.mdx#L43-L120",
+  "expectation": "expected-pass"
+}

@@ -143,7 +143,7 @@ These add to the [Compatibility](#compatibility) table.
 - Unit tests in `packages/runtime-node/src/bindings/version-metadata.test.ts`
   check deterministic IDs, an invalid timestamp, and a change to either hash
   input.
-- An end-to-end test in `src/commands/dev.test.ts` runs `orange dev` with a
+- An end-to-end test in `tests/cli/dev.test.ts` runs `orange dev` with a
   `wrangler.toml` and checks the ID format, the build timestamp, the `dev`
   tag, and the same values across requests served by one runtime process.
 - The CLI conformance fixture requires `orange types` to match pinned Wrangler

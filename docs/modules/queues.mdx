@@ -238,18 +238,18 @@ These add to the differences under [Compatibility](#compatibility).
 
 #### Conformance
 
-- `src/runtime/queues.test.ts` drives Queues through a real `orange dev`:
+- `tests/bindings/queues.test.ts` drives Queues through a real `orange dev`:
   retries up to `max_retries` and the dead-letter queue,
   `retry({ delaySeconds })`, batches from concurrent producers, a
   128,000-byte message and one over Cloudflare's 128 KB, send validation
   errors, a crash during `queue()`, and a delayed message across a restart.
-- `tests/beyond-cloudflare-quotas.test.ts` sends a 1 MiB message, a 3-day
+- `tests/bindings/beyond-cloudflare-quotas.test.ts` sends a 1 MiB message, a 3-day
   delay, and a batch of 250, and a send over 32 MiB that fails with Rivet's
   limit.
-- `tests/runnable-examples.test.ts` runs the `queues` example: retries with
+- `tests/examples/runnable-examples.test.ts` runs the `queues` example: retries with
   backoff, the dead-letter queue, message and batch delays, each content type,
   `retryAll()`, and `metrics()`.
-- `src/runtime/multi-worker.test.ts` sends to a queue from one Worker and
+- `tests/bindings/multi-worker.test.ts` sends to a queue from one Worker and
   consumes it in another, and checks that two consumers of one queue fail at
   startup.
 - The `scale-units` probe checks that each queue is one actor.

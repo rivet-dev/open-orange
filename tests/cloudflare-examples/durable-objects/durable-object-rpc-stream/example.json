@@ -1,0 +1,7 @@
+{
+  "id": "durable-object-rpc-stream",
+  "source": "tests/cloudflare-examples/durable-objects/durable-object-rpc-stream/src/index.ts",
+  "wranglerConfig": "tests/cloudflare-examples/durable-objects/durable-object-rpc-stream/wrangler.jsonc",
+  "reference": "https://github.com/IMax153/do-stream-cancel-repro/blob/868c0e0ddbbe1968bec3f5a13cae583790590795/src/index.ts#L1-L56",
+  "expectation": "expected-pass"
+}

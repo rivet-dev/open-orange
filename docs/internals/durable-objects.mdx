@@ -757,7 +757,7 @@ object's SQLite database and 132 KB for the actor. Node.js held 1 KB.
 
 ## Upstream example corpus
 
-Orange keeps seven immutable upstream programs under `tests/examples` covering
+Orange keeps seven immutable upstream programs under `tests/cloudflare-examples` covering
 method RPC, RPC streams, fetch streams, standard WebSockets, hibernatable
 WebSockets, SQLite, and alarms. Six source blocks come from Cloudflare's Durable
 Objects documentation. The RPC stream is the minimal reproduction linked from
@@ -961,7 +961,7 @@ errors for incompatible sockets, attachment graphs, automatic-response
 configuration, text matching, timestamp shape, and binary bypass. It leaves out
 Cloudflare's size and count limits, which OpenOrange does not copy.
 
-`tests/accepted-websockets.test.ts` runs `orange dev` with a real Rivet Engine.
+`tests/rpc-and-websockets/accepted-websockets.test.ts` runs `orange dev` with a real Rivet Engine.
 It checks these outcomes:
 
 - An idle object hibernates under an open socket. The next message reaches a

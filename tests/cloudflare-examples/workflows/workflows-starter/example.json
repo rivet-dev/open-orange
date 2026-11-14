@@ -1,0 +1,7 @@
+{
+  "id": "workflows-starter",
+  "source": "tests/cloudflare-examples/workflows/workflows-starter/worker/index.ts",
+  "wranglerConfig": "tests/cloudflare-examples/workflows/workflows-starter/wrangler.jsonc",
+  "reference": "https://github.com/cloudflare/templates/blob/dfdf14099a81a08cfe1ffc78f8463605670ae513/workflows-starter-template/worker/index.ts#L1-L125",
+  "expectation": "expected-pass"
+}

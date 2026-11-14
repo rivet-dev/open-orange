@@ -341,7 +341,7 @@ These add to the differences under [Compatibility](#compatibility).
 
 #### Conformance
 
-- `tests/orange-email.test.ts` runs `orange dev` against Mailpit in Docker, a
+- `tests/cli/orange-email.test.ts` runs `orange dev` against Mailpit in Docker, a
   real SMTP server. An `EmailMessage` and a message object with Cc, Bcc, and an
   attachment arrive, and a recipient outside `allowed_destination_addresses` is
   refused. Without `ORANGE_EMAIL_SMTP_URL`, `send()` names the setting, and
@@ -349,13 +349,13 @@ These add to the differences under [Compatibility](#compatibility).
   message POSTed to `/cdn-cgi/handler/email` runs `email()`, whose `forward()`
   and `reply()` arrive, a malformed message is refused, and a `forward()` to a
   server that is down fails the POST with `500`.
-- `tests/email-handler.test.ts` POSTs mail to `orange dev` and expects the
+- `tests/events/email-handler.test.ts` POSTs mail to `orange dev` and expects the
   output of `wrangler dev` 4.129.0 for the same fixture: Bcc removed, folded
   headers, `setReject()`, a handler that throws, a missing envelope, and a
   missing `Message-ID`. Without an SMTP server, `forward()` and `reply()` fail.
 - The `email` conformance probe, and the `vmail` and `agentic-inbox` real
   projects, send and receive mail through the binding.
-- `src/commands/doctor.test.ts` checks the `orange doctor` row and settings
+- `tests/cli/doctor.test.ts` checks the `orange doctor` row and settings
   check of a Send Email binding.
 - `SendEmail`, `cloudflare:email`, and the `email` event are not registered in
   the type-conformance checks.

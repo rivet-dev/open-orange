@@ -684,10 +684,10 @@ error that says it is not supported.
 
 #### Conformance
 
-- `src/runtime/durable-object-facets.test.ts` and
-  `src/runtime/durable-object-facet-clone.test.ts` run facets and workerd's
+- `tests/durable-objects/durable-object-facets.test.ts` and
+  `tests/durable-objects/durable-object-facet-clone.test.ts` run facets and workerd's
   facet clone test on a real `orange dev`.
-- `tests/accepted-websockets.test.ts` runs hibernation, the work that keeps an
+- `tests/rpc-and-websockets/accepted-websockets.test.ts` runs hibernation, the work that keeps an
   object awake, and the `held` line on `orange dev` with a real Rivet Engine.
 - The conformance package runs workerd's upstream tests against `orange dev`
   and ports workerd's C++ Durable Object tests for alarms, IDs, the input gate,

@@ -1,7 +1,0 @@
-{
-  "id": "durable-object-websocket-hibernation-server",
-  "source": "tests/examples/durable-objects/durable-object-websocket-hibernation-server/src/index.ts",
-  "wranglerConfig": "tests/examples/durable-objects/durable-object-websocket-hibernation-server/wrangler.jsonc",
-  "reference": "https://github.com/cloudflare/cloudflare-docs/blob/e65ba8b1fa64a5dc7c5c42a96c455398945cdf5e/src/content/docs/durable-objects/examples/websocket-hibernation-server.mdx#L30-L161",
-  "expectation": "expected-pass"
-}

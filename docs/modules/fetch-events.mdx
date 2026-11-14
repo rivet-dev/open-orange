@@ -201,7 +201,7 @@ and a thrown error keeps its name, message, and own properties, such as `code`.
 - Runtime tests cover entrypoint ordering, named exports, environment
   injection, response validation, `waitUntil()` draining, each unsupported
   API, and the dedicated process lifecycle over a real HTTP socket.
-- `tests/execution-context.test.ts` runs Workers under `orange dev` and checks
+- `tests/events/execution-context.test.ts` runs Workers under `orange dev` and checks
   a missing, throwing, or non-`Response` handler, `passThroughOnException()`,
   `ctx.props` with and without `props`, and copying every `ctx` property.
 

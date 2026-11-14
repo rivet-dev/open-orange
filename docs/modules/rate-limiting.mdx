@@ -206,7 +206,7 @@ These add to the differences under [Compatibility](#compatibility).
 
 #### Conformance
 
-- `src/runtime/bindings.test.ts` runs a real `orange dev` with both
+- `tests/bindings/bindings.test.ts` runs a real `orange dev` with both
   configuration forms. It covers the limit per key, separate keys and
   namespaces, a namespace shared by two bindings, the next window, 60
   overlapping calls on two keys, the option errors, and counts that survive a
@@ -217,7 +217,7 @@ These add to the differences under [Compatibility](#compatibility).
   [`tests/fixtures/examples/rate-limiting`](../../tests/fixtures/examples/rate-limiting)
   layers a per-IP limit, a per-user limit with a higher limit for pro users,
   and login throttling with `429` and `Retry-After`.
-  `tests/runnable-examples.test.ts` runs it end to end.
+  `tests/examples/runnable-examples.test.ts` runs it end to end.
 
 ##### Recorded results
 

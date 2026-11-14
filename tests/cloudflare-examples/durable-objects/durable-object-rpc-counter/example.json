@@ -1,0 +1,7 @@
+{
+  "id": "durable-object-rpc-counter",
+  "source": "tests/cloudflare-examples/durable-objects/durable-object-rpc-counter/src/index.js",
+  "wranglerConfig": "tests/cloudflare-examples/durable-objects/durable-object-rpc-counter/wrangler.jsonc",
+  "reference": "https://github.com/cloudflare/cloudflare-docs/blob/e65ba8b1fa64a5dc7c5c42a96c455398945cdf5e/src/content/docs/durable-objects/examples/build-a-counter.mdx#L20-L83",
+  "expectation": "expected-pass"
+}

@@ -112,7 +112,7 @@
 			"orange": "One runtime process per Worker in one orange dev session (orange dev -c a.jsonc -c b.jsonc), with fetch() and RPC over loopback HTTP",
 			"status": "partial",
 			"note": "fetch(), JS RPC, and named entrypoints work. connect() to another Worker works; WebSocket upgrades to another Worker throw. Workers in separate orange dev processes do not find each other.",
-			"evidence": ["docs/modules/multi-worker.mdx", "src/runtime/multi-worker.test.ts"]
+			"evidence": ["docs/modules/multi-worker.mdx", "tests/bindings/multi-worker.test.ts"]
 		},
 		{
 			"product": "Workers for Platforms (dispatch namespaces)",
@@ -138,7 +138,7 @@
 			"orange": "No container runtime. A class listed under containers gets a ctx.container that runs one sandbox per object on ORANGE_SANDBOX_PROVIDER",
 			"status": "partial",
 			"note": "Images are not built or run, and start() takes only a Cloudflare Sandbox image (cloudflare/sandbox). start(), exec(), monitor(), destroy(), signal(), and getTcpPort().fetch() work. start({ entrypoint }), exec({ pty }), exec({ stdin }), the outbound HTTP intercepts, snapshotContainer(), and inspect() throw. ctx.container throws NotSupportedError in a class that containers does not list.",
-			"evidence": ["src/config/load-wrangler.ts", "packages/runtime-node/src/bindings/durable-objects/state.ts", "packages/runtime-node/src/modules/cloudflare-sandbox/container.ts", "src/runtime/sandbox.test.ts", "docs/modules/sandbox.mdx"]
+			"evidence": ["src/config/load-wrangler.ts", "packages/runtime-node/src/bindings/durable-objects/state.ts", "packages/runtime-node/src/modules/cloudflare-sandbox/container.ts", "tests/bindings/sandbox.test.ts", "docs/modules/sandbox.mdx"]
 		},
 		{
 			"product": "Vectorize",

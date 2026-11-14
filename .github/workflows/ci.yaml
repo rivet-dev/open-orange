@@ -11,6 +11,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  areas:
+    name: Areas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      areas: ${{ steps.areas.outputs.areas }}
+    steps:
+      - uses: actions/checkout@v4
+      # Each folder of tests/ that holds *.test.ts files is one e2e area. A test file directly in
+      # tests/ belongs to no area and would never run, so it fails here.
+      - id: areas
+        run: |
+          if ls tests/*.test.ts > /dev/null 2>&1; then
+            echo "::error::Move these into a tests/<area>/ folder: $(ls tests/*.test.ts)"
+            exit 1
+          fi
+          echo "areas=$(ls tests/*/*.test.ts | xargs -n1 dirname | xargs -n1 basename | sort -u | jq -Rnc '[inputs]')" >> "$GITHUB_OUTPUT"
+
   checks:
     name: Checks
     runs-on: ubuntu-24.04
@@ -26,31 +44,20 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm validate:examples
-      - run: pnpm test:packages
-      - name: Check that every test file is in one test area
-        run: pnpm test:area --check
+      - run: pnpm test:unit
       - name: Check the published package contents
         run: npm pack --dry-run
 
-  test:
+  e2e:
     name: e2e / ${{ matrix.area }}
-    # Each job runs the test files of one Cloudflare area (tests/test-areas.ts), so the failing
-    # check names the area. The files start many `orange dev` processes and engines, so the big
-    # areas get more cores.
-    runs-on: ${{ matrix.runner }}
+    needs: areas
+    # The tests start many `orange dev` processes and engines. An 8-core runner starves.
+    runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { area: durable-objects, runner: depot-ubuntu-24.04-16 }
-          - { area: rpc-and-websockets, runner: depot-ubuntu-24.04-16 }
-          - { area: bindings, runner: depot-ubuntu-24.04-16 }
-          - { area: events, runner: depot-ubuntu-24.04-8 }
-          - { area: node-compat, runner: depot-ubuntu-24.04-8 }
-          - { area: cli, runner: depot-ubuntu-24.04-16 }
-          - { area: migrate, runner: depot-ubuntu-24.04-8 }
-          - { area: examples, runner: depot-ubuntu-24.04-8 }
+        area: ${{ fromJSON(needs.areas.outputs.areas) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -59,4 +66,4 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test:area ${{ matrix.area }}
+      - run: pnpm test:e2e 'tests/${{ matrix.area }}/*.test.ts'

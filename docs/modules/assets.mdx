@@ -257,7 +257,7 @@ These add to the differences under [Compatibility](#compatibility) and
 
 #### Conformance
 
-- `src/runtime/assets.test.ts` runs a real `orange dev`. It covers content
+- `tests/bindings/assets.test.ts` runs a real `orange dev`. It covers content
   types, `ETag` and `304`, the HTML redirects, `run_worker_first` patterns,
   `env.ASSETS.fetch()` and its redirects, a file added while `orange dev`
   runs, the single-page app fallback for navigations only, an assets-only
@@ -265,7 +265,7 @@ These add to the differences under [Compatibility](#compatibility) and
   missing directory.
 - The quickstart builds
   [`tests/fixtures/examples/assets-spa`](../../tests/fixtures/examples/assets-spa),
-  and `tests/runnable-examples.test.ts` runs it end to end.
+  and `tests/examples/runnable-examples.test.ts` runs it end to end.
 - The asset Worker and router Worker tests from workers-sdk are not part of
   the conformance corpus.
 - The compatibility matrix lists the `assets` configuration as partial and

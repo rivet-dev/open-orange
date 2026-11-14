@@ -240,7 +240,7 @@ These add to the differences under [Compatibility](#compatibility) and
 
 #### Conformance
 
-- `src/runtime/cache.test.ts` drives the Cache API through a real
+- `tests/bindings/cache.test.ts` drives the Cache API through a real
   `orange dev` over HTTP. It covers hits in one cache only, expiry, delete,
   `no-store`, `private`, and `Set-Cookie`, puts of clones and streamed bodies
   that are not stored, `304`, `206` and `416`, puts of different bodies that
@@ -248,7 +248,7 @@ These add to the differences under [Compatibility](#compatibility) and
 - The runnable example
   [`tests/fixtures/examples/cache-api`](../../tests/fixtures/examples/cache-api)
   is a caching proxy in front of a slow origin, with a named cache, purges,
-  and `ORANGE_CACHE=off`. `tests/runnable-examples.test.ts` runs it end to end.
+  and `ORANGE_CACHE=off`. `tests/examples/runnable-examples.test.ts` runs it end to end.
 - workerd's upstream `cache-test` runs against `orange dev`.
   `putOperations`, `headersOperations`, and `conditionalRequestOperations`
   pass. `matchOperations` and `deleteOperations` fail, because they depend on

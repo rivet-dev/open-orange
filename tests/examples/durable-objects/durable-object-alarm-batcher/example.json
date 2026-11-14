@@ -1,7 +1,0 @@
-{
-  "id": "durable-object-alarm-batcher",
-  "source": "tests/examples/durable-objects/durable-object-alarm-batcher/src/index.js",
-  "wranglerConfig": "tests/examples/durable-objects/durable-object-alarm-batcher/wrangler.jsonc",
-  "reference": "https://github.com/cloudflare/cloudflare-docs/blob/e65ba8b1fa64a5dc7c5c42a96c455398945cdf5e/src/content/docs/durable-objects/examples/alarms-api.mdx#L23-L73",
-  "expectation": "expected-pass"
-}

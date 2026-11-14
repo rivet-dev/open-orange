@@ -235,7 +235,7 @@ under [Compatibility](#compatibility).
 
 The generated event registry check verifies that the `scheduled` execution
 context has exactly the Cloudflare `ExecutionContext` keys. Behavior tests in
-`src/runtime/cron-triggers.test.ts` run real `orange dev` processes over HTTP.
+`tests/events/cron-triggers.test.ts` run real `orange dev` processes over HTTP.
 They check that:
 
 - Each cron runs every minute with its own expression, and a `scheduled()`
@@ -253,9 +253,9 @@ They check that:
 
 The runnable example [`tests/fixtures/examples/cron`](../../tests/fixtures/examples/cron)
 has five jobs, including Cloudflare-only syntax and a job that always fails.
-`tests/runnable-examples.test.ts` runs it end to end.
+`tests/examples/runnable-examples.test.ts` runs it end to end.
 
-`tests/orange-serve.test.ts` checks that `orange serve` has no local cron
+`tests/cli/orange-serve.test.ts` checks that `orange serve` has no local cron
 route, and that it deletes the jobs of a removed configuration after a restart
 on an empty disk. workerd's upstream `http-server-nodejs-test` `testScheduled`
 fails with `The RPC receiver does not implement the method "scheduled"`.

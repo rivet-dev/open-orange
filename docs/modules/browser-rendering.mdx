@@ -226,7 +226,7 @@ library's own message quotes shows as `<redacted>`.
 
 #### Conformance
 
-- `tests/orange-browser.test.ts` runs a Worker under `orange dev` that drives a
+- `tests/cli/orange-browser.test.ts` runs a Worker under `orange dev` that drives a
   real headless Chromium through `@cloudflare/puppeteer`, and checks that
   closing its browser closes only its own pages. It also checks the error
   without a browser endpoint, with the browser down, and when the endpoint
@@ -237,7 +237,7 @@ library's own message quotes shows as `<redacted>`.
   takes a PNG screenshot; that two requests at once each read their own page;
   that `browser.close()` ends the session and the next launch still works; and
   that `connect()` to a session that is in use is refused.
-- `src/commands/doctor.test.ts` checks the `orange doctor` settings check of a
+- `tests/cli/doctor.test.ts` checks the `orange doctor` settings check of a
   Browser Rendering binding, with and without `ORANGE_BROWSER_CDP_URL`.
 - No automated test calls a hosted browser, so the [Browserbase](#browserbase)
   measurements are not part of the conformance run.

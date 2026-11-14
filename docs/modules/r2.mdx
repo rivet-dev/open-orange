@@ -312,7 +312,7 @@ The S3 backend:
 
 #### Conformance
 
-`src/runtime/r2.test.ts` runs the same cases through `orange dev` against both
+`tests/bindings/r2.test.ts` runs the same cases through `orange dev` against both
 backends. The S3 run uses a real MinIO server. The cases cover:
 
 - Byte-equal round trips for 0 B, 1 B, 512 KiB ± 1 B, and 30 MiB, with MD5
@@ -326,8 +326,8 @@ backends. The S3 run uses a real MinIO server. The cases cover:
 
 The default backend also has a test that restarts `orange dev` during a put.
 The S3 backend also has a test for an S3 endpoint that is down.
-`tests/orange-settings.test.ts` checks that an `ORANGE_R2_<BUCKET>_S3_*` value
-in `.dev.vars` moves a bucket to S3. `tests/runnable-examples.test.ts` runs
+`tests/cli/orange-settings.test.ts` checks that an `ORANGE_R2_<BUCKET>_S3_*` value
+in `.dev.vars` moves a bucket to S3. `tests/examples/runnable-examples.test.ts` runs
 [`examples/r2`](../../examples/r2). workerd's upstream `r2-test` passes 0 of 1,
 because it needs a mock R2 server that the conformance runner does not
 configure.

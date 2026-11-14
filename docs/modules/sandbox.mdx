@@ -423,8 +423,8 @@ run only when `SANDBOX_TEST_E2B_API_KEY`, `SANDBOX_TEST_DAYTONA_API_KEY`, or
 - `ctx.container` on the local provider: exit codes and both streams, argv
   items with shell characters, `destroy()`, `Files` with `ENOENT`, and the
   error for an image that is not a Sandbox image. These run in
-  `src/runtime/sandbox.test.ts`.
-- `tests/runnable-examples.test.ts` runs
+  `tests/bindings/sandbox.test.ts`.
+- `tests/examples/runnable-examples.test.ts` runs
   [`examples/sandbox`](../../examples/sandbox), and the `sandbox-v1` fixture
   for the 1.x API, on a real `orange dev`.
 - The Containers claim has no recorded run of its own yet.

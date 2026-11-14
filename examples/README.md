@@ -38,5 +38,5 @@ For editor types, run `pnpm wrangler types`. It writes
 
 ## Tests
 
-`tests/runnable-examples.test.ts` runs every example and example fixture through
+`tests/examples/runnable-examples.test.ts` runs every example and example fixture through
 `open-orange dev` and checks its main flow over real HTTP and WebSockets.

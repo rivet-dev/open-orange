@@ -181,12 +181,12 @@ connection string:
 
 #### Conformance
 
-- `tests/hyperdrive.test.ts` runs a Worker on a real `orange dev`. It checks
+- `tests/bindings/hyperdrive.test.ts` runs a Worker on a real `orange dev`. It checks
   that the environment variable wins over `localConnectionString`, that the
   fields of a percent-encoded MySQL string decode as in Miniflare, the default
   ports, the binding table line, and the Wrangler error when no connection
   string is set.
-- `src/commands/doctor.test.ts` checks that `orange doctor` loads a Hyperdrive
+- `tests/cli/doctor.test.ts` checks that `orange doctor` loads a Hyperdrive
   binding without printing its password.
 - The feature matrix lists the binding as `binding-hyperdrive`. No
   truth-table claim covers Hyperdrive, so this page has no recorded results.

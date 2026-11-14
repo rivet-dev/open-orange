@@ -274,21 +274,21 @@ These add to the [Compatibility](#compatibility) table.
 
 #### Conformance
 
-- `src/runtime/multi-worker.test.ts` runs two Workers through `orange dev` and
+- `tests/bindings/multi-worker.test.ts` runs two Workers through `orange dev` and
   checks service `fetch()`, RPC, error types, shared Durable Object state, and
   missing Workers. It also checks that each Worker gets its own cron ticks,
   that a queue that one Worker produces to reaches the consumer in the other,
   and that two consumers for one queue fail at startup.
-- `tests/session-connect.test.ts` checks `connect()` to another Worker,
+- `tests/rpc-and-websockets/session-connect.test.ts` checks `connect()` to another Worker,
   overlapping connections, and a callee with no handler, a handler that
   throws, or a Worker that is not running.
-- `tests/session-shared-storage.test.ts` checks that D1, KV, and R2 are shared
+- `tests/rpc-and-websockets/session-shared-storage.test.ts` checks that D1, KV, and R2 are shared
   by ID, and that a database with another ID stays separate.
-- `tests/orange-serve.test.ts` runs several Workers on `orange serve` with a
+- `tests/cli/orange-serve.test.ts` runs several Workers on `orange serve` with a
   standalone Engine: routing by `routes`, calls between the Workers, each
   Worker's own cron, a queue across Workers, forwarded hosts, and a refused
   route.
-- `tests/runnable-examples.test.ts` runs `examples/multi-worker` end to end.
+- `tests/examples/runnable-examples.test.ts` runs `examples/multi-worker` end to end.
 
 ##### Recorded results
 

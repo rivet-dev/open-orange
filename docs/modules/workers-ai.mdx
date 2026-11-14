@@ -301,18 +301,18 @@ These add to the differences under [Compatibility](#compatibility).
 
 #### Conformance
 
-- `src/runtime/ai-binding.test.ts` runs a Worker under `orange dev` against a
+- `tests/bindings/ai-binding.test.ts` runs a Worker under `orange dev` against a
   mock provider, which is a real HTTP server. It covers both result shapes,
   tool calls, streaming in both shapes, provider `429` and `500` errors, a
   provider error during a stream, embeddings, the `gateway` option, unmapped
   models, a missing OpenRouter key, a local provider without a key, and
   overlapping calls with different options.
-- `tests/runnable-examples.test.ts` runs
+- `tests/examples/runnable-examples.test.ts` runs
   [`examples/workers-ai`](../../examples/workers-ai) against a mock provider:
   chat, streaming, a tool call, embeddings, an `openai`-shape model,
   `returnRawResponse`, `models()`, a provider error, and a provider that is
   down.
-- `src/commands/doctor.test.ts` checks the binding's row in `orange doctor`.
+- `tests/cli/doctor.test.ts` checks the binding's row in `orange doctor`.
 - The generated `Ai` type is not registered in the type-conformance checks.
 - No test calls a real provider.
 

@@ -205,17 +205,17 @@ These add to the two differences under [Compatibility](#compatibility).
 
 #### Conformance
 
-- `src/runtime/bindings.test.ts` drives KV through a real `orange dev` and
+- `tests/bindings/bindings.test.ts` drives KV through a real `orange dev` and
   Rivet Engine: every value and result type, metadata, bulk reads, listing
   with pagination, error text, shared and separate namespace IDs, overlapping
   writes, and persistence across restarts. The same Worker returns identical
   results under `wrangler dev`.
-- `tests/beyond-cloudflare-quotas.test.ts` writes keys, metadata, values, bulk
+- `tests/bindings/beyond-cloudflare-quotas.test.ts` writes keys, metadata, values, bulk
   reads, lists, and TTLs past Cloudflare's quotas, and a write over 128 MiB
   that fails with Rivet's limit.
-- `tests/session-shared-storage.test.ts` checks that the Workers of one session
+- `tests/rpc-and-websockets/session-shared-storage.test.ts` checks that the Workers of one session
   share a namespace by ID.
-- `tests/runnable-examples.test.ts` runs the `kv` example, including a
+- `tests/examples/runnable-examples.test.ts` runs the `kv` example, including a
   30-second TTL that Cloudflare refuses.
 - workerd's upstream `kv-test` passes 0 of 5. It needs a mock KV server that
   the conformance runner does not configure, and its `deleteBulk` case calls a

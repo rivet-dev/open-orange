@@ -524,15 +524,15 @@ hibernatable WebSocket object that sleeps and wakes, a SQLite-backed object, and
 an alarm-driven object. It also proves object and class isolation, lazy creation,
 restart persistence, shutdown, and failure propagation.
 
-Examples are manually copied under `tests/examples/<area>/<id>/`. Each directory
+Examples are manually copied under `tests/cloudflare-examples/<area>/<id>/`. Each directory
 contains the unchanged example source, its Wrangler configuration, and a small
 `example.json` manifest:
 
 ```json
 {
   "id": "durable-object-rpc-counter",
-  "source": "tests/examples/durable-objects/durable-object-rpc-counter/src/index.js",
-  "wranglerConfig": "tests/examples/durable-objects/durable-object-rpc-counter/wrangler.jsonc",
+  "source": "tests/cloudflare-examples/durable-objects/durable-object-rpc-counter/src/index.js",
+  "wranglerConfig": "tests/cloudflare-examples/durable-objects/durable-object-rpc-counter/wrangler.jsonc",
   "reference": "https://github.com/cloudflare/cloudflare-docs/blob/e65ba8b1fa64a5dc7c5c42a96c455398945cdf5e/src/content/docs/durable-objects/examples/build-a-counter.mdx#L20-L83",
   "expectation": "expected-pass"
 }
@@ -543,7 +543,7 @@ example also includes a `reason`; it remains in the suite as an expected failure
 until its gap is fixed. Source files are byte-for-byte copies of their referenced
 upstream blocks. Their local Wrangler files preserve the relevant binding and
 migration while normalizing the compatibility date and flags to Orange's one
-supported profile. `tsx tests/validate-example-manifests.ts` validates only the
+supported profile. `tsx scripts/validate-example-manifests.ts` validates only the
 strict manifest fields, unique IDs, repository-relative local files, directory
 layout, stable GitHub permalinks, and expectation reasons. It performs no network
 access and does not run the examples. The stable `reference` field is the seed

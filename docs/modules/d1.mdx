@@ -294,16 +294,16 @@ These add to the differences under [Compatibility](#compatibility).
 
 #### Conformance
 
-- `src/commands/d1.test.ts` applies migrations with `orange d1`, including a
+- `tests/cli/d1.test.ts` applies migrations with `orange d1`, including a
   failed migration that rolls back, and reads the result through `orange dev`.
-- `src/runtime/bindings.test.ts` drives D1 through a real `orange dev`: result
+- `tests/bindings/bindings.test.ts` drives D1 through a real `orange dev`: result
   shapes, `meta`, BLOB and boolean bindings, batch rollback, error text,
   sessions, overlapping inserts, and persistence across restarts. The same
   Worker returns identical results under `wrangler dev`.
-- `tests/orange-serve.test.ts` runs `orange d1 migrations apply --remote`
+- `tests/cli/orange-serve.test.ts` runs `orange d1 migrations apply --remote`
   against `orange serve`, and checks that `orange serve` skips
   `preview_database_id`.
-- `tests/session-shared-storage.test.ts` checks that the Workers of one session
+- `tests/rpc-and-websockets/session-shared-storage.test.ts` checks that the Workers of one session
   share a database by ID, and that another ID stays separate.
 - The `sqlite-surface` probe runs `batch()` order, `cos()`, and
   `DELETE ... LIMIT` through the D1 binding, next to its Durable Object SQL

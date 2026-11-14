@@ -1251,7 +1251,7 @@ test("a large Worker under orange serve keeps its deployment's memory small", { 
 	await writeFile(join(project.directory, "big.js"), functions.join("\n"));
 	await writeFile(
 		join(project.directory, "worker.js"),
-		'import * as big from "../big.js";\nexport default { fetch() { return Response.json({ functions: Object.keys(big).length }); } };\n',
+		'import * as big from "./big.js";\nexport default { fetch() { return Response.json({ functions: Object.keys(big).length }); } };\n',
 	);
 	const serve = await startServe(project.directory, engine.endpoint, port);
 	try {

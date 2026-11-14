@@ -12,24 +12,29 @@
 
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join, posix, resolve } from "node:path";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, posix, resolve, sep } from "node:path";
 import { PassThrough } from "node:stream";
 
 import type { AgentOs } from "@rivet-dev/agentos-core";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
-import type { WorkerChild, WorkerHost, WorkerLoaderBackend } from "./loader.js";
+import type { WorkerChild, WorkerFile, WorkerHost, WorkerLoaderBackend } from "./loader.js";
 
 // Where the child and runtime modules live inside each VM.
 const runtimeRoot = "/open-orange/runtime";
 const workersRoot = "/open-orange/workers";
+// The Worker's modules as written. A VM serves one Worker, so the path is the same in every VM.
+const bundleRoot = "/open-orange/bundle";
 const exitWaitMs = 5_000;
 
 type NetworkMode = "deny" | "network";
 
 interface BootedVm {
+	// The host directory that the VM mounts read-only at `bundleRoot`.
+	bundleDirectory: string;
 	moduleRewrites: Record<string, string>;
 	vm: AgentOs;
 }
@@ -52,15 +57,42 @@ function bootError(error: unknown): Error {
 // agentOS writes one file into the VM as one message to its sidecar. In a test with agentOS 0.4.1,
 // a 15 MiB file wrote and a 16.5 MiB file crashed the sidecar, which then failed every Dynamic
 // Worker of the session. A larger file fails here with the limit instead. The VM filesystem
-// itself holds 64 MiB by default.
+// itself holds 64 MiB by default. The bundle is mounted from the host, so it does not use this.
 const agentOsFileMessageBytes = 16 * 1024 * 1024;
 
-function assertFitsAgentOsFileMessage(path: string, content: string | Uint8Array): void {
+function assertFitsAgentOsFileMessage(file: WorkerFile): void {
+	const { content } = file;
 	const bytes = typeof content === "string" ? Buffer.byteLength(content) : content.byteLength;
 	if (bytes <= agentOsFileMessageBytes) return;
 	throw new RangeError(
-		`Dynamic Worker file ${posix.basename(path)} is ${bytes} bytes. agentOS writes one file into its VM as one message of at most ${agentOsFileMessageBytes} bytes (16 MiB). Split the module.`,
+		`Dynamic Worker file ${file.module ?? posix.basename(file.path)} is ${bytes} bytes. agentOS writes one file into its VM as one message of at most ${agentOsFileMessageBytes} bytes (16 MiB). Split the module.`,
 	);
+}
+
+// Writes `files` into the host directory behind a VM's bundle mount.
+async function writeHostFiles(directory: string, files: readonly WorkerFile[]): Promise<void> {
+	for (const file of files) {
+		const hostPath = resolve(directory, file.path);
+		if (!hostPath.startsWith(`${directory}${sep}`)) {
+			throw new TypeError(`Dynamic Worker file ${file.path} is outside its directory.`);
+		}
+		await mkdir(dirname(hostPath), { recursive: true });
+		await writeFile(hostPath, file.content);
+	}
+}
+
+// The VM's user must read the directory, so it is 0755, inside a 0700 parent
+// that keeps other host users out.
+async function createHostDirectory(): Promise<string> {
+	const parent = await mkdtemp(join(tmpdir(), "open-orange-dynamic-worker-"));
+	const directory = join(parent, "bundle");
+	await mkdir(directory);
+	await chmod(directory, 0o755);
+	return directory;
+}
+
+async function removeHostDirectory(directory: string): Promise<void> {
+	await rm(dirname(directory), { force: true, recursive: true });
 }
 
 type VmChild = WorkerChild & { exited: Promise<void> };
@@ -240,15 +272,18 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		spawn: () => Promise<VmChild>,
 		loaded: () => void,
 	): WorkerHost {
-		const { moduleRewrites, vm } = booted;
+		const { bundleDirectory, moduleRewrites, vm } = booted;
 		return {
+			bundleRoot,
 			loaded,
 			moduleRewrites,
 			remove,
 			root,
 			spawn,
+			// The bytes reach the VM through its bundle mount, so no file is one sidecar message.
+			writeBundle: (files) => writeHostFiles(bundleDirectory, files),
 			async writeFiles(files): Promise<void> {
-				for (const file of files) assertFitsAgentOsFileMessage(file.path, file.content);
+				for (const file of files) assertFitsAgentOsFileMessage(file);
 				const results = await vm.filesystem.writeFiles(
 					files.map((file) => ({ content: file.content, path: file.path })),
 				);
@@ -304,12 +339,13 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 					this.#vms.delete(owned);
 					// A VM that failed to boot has nothing to dispose, and its boot error reaches the
 					// caller that booted it.
-					const vm = await booted.then(({ vm: value }) => value).catch(() => undefined);
-					await vm?.dispose().catch((error: unknown) => {
+					const value = await booted.catch(() => undefined);
+					await value?.vm.dispose().catch((error: unknown) => {
 						this.#options.onDiagnostic(
 							`OpenOrange cannot dispose the agentOS VM of a dynamic Worker: ${errorMessage(error)}`,
 						);
 					});
+					if (value !== undefined) await removeHostDirectory(value.bundleDirectory);
 				})();
 				return disposed;
 			},
@@ -331,13 +367,24 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			}),
 		);
 		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos-core");
-		// The guest reads Orange's runtime from the host, read-only, so a VM
-		// boots without a copy of it. The mount shows only the bundle directory.
-		const vm = await AgentOs.create({
-			mounts: [hostDirMount(runtimeRoot, bundlePath, { readOnly: true })],
-			permissions: { network: mode === "network" ? "allow" : "deny" },
-		});
-		return { moduleRewrites, vm };
+		const bundleDirectory = await createHostDirectory();
+		try {
+			// The guest reads Orange's runtime from the host, read-only, so a VM
+			// boots without a copy of it. The mount shows only the bundle directory.
+			// The Worker's bundle is mounted at boot too: agentOS fails the running
+			// child's wait() while a later mount() is in flight.
+			const vm = await AgentOs.create({
+				mounts: [
+					hostDirMount(runtimeRoot, bundlePath, { readOnly: true }),
+					hostDirMount(bundleRoot, bundleDirectory, { readOnly: true }),
+				],
+				permissions: { network: mode === "network" ? "allow" : "deny" },
+			});
+			return { bundleDirectory, moduleRewrites, vm };
+		} catch (error: unknown) {
+			await removeHostDirectory(bundleDirectory);
+			throw error;
+		}
 	}
 
 	async #close(): Promise<void> {

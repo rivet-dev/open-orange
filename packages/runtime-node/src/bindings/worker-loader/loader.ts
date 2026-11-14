@@ -26,6 +26,8 @@ import { errorMessage, isRecord } from "../unknown-values.js";
 export interface WorkerFile {
 	content: string | Uint8Array;
 	path: string;
+	// The module that the file holds, for errors.
+	module?: string;
 }
 
 // A running dynamic Worker process. Stdin and stdout carry the framed RPC
@@ -41,9 +43,13 @@ export interface WorkerChild {
 // The agentOS VM that hosts one dynamic Worker.
 export interface WorkerHost {
 	readonly root: string;
+	// Where the modules as written are, read-only. node:fs reads it as `/bundle`.
+	readonly bundleRoot: string;
 	// Where the dynamic Worker imports each runtime module from.
 	readonly moduleRewrites: Readonly<Record<string, string>>;
 	writeFiles(files: readonly WorkerFile[]): Promise<void>;
+	// Puts `files`, with paths relative to `bundleRoot`, in the bundle.
+	writeBundle(files: readonly WorkerFile[]): Promise<void>;
 	spawn(): Promise<WorkerChild>;
 	// Runs once the dynamic Worker has loaded or failed to load.
 	loaded(): void;
@@ -379,17 +385,19 @@ class DynamicWorker {
 		try {
 			const prepared = await this.#getCode();
 			host = await this.#options.backend.open(prepared.outbound === "network");
-			const bundleRoot = posix.join(host.root, "bundle");
+			const { bundleRoot } = host;
 			const moduleRoot = posix.join(host.root, "modules");
-			const files: WorkerFile[] = prepared.modules.map((module) => ({
-				content: module.content,
-				path: posix.join(bundleRoot, module.name),
-			}));
-			const linked = await linkModules(prepared.modules, prepared.mainModule, host.moduleRewrites);
-			for (const [file, source] of linked.files) {
-				files.push({ content: source, path: posix.join(moduleRoot, file) });
-			}
-			await host.writeFiles(files);
+			await host.writeBundle(
+				prepared.modules.map((module) => ({ content: module.content, module: module.name, path: module.name })),
+			);
+			const linked = await linkModules(prepared.modules, prepared.mainModule, host.moduleRewrites, bundleRoot);
+			await host.writeFiles(
+				[...linked.files].map(([file, source]) => ({
+					content: source,
+					module: linked.moduleNames[file],
+					path: posix.join(moduleRoot, file),
+				})),
+			);
 			const envelope = encodeLoaderValue({
 				bundleRoot,
 				env: prepared.env,

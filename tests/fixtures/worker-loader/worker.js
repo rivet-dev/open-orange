@@ -219,6 +219,34 @@ async function settle(promise) {
 	}
 }
 
+// A Wasm module that exports its memory, which starts with `data` in one data segment.
+function wasmWithData(data) {
+	const leb = (value) => {
+		const out = [];
+		do {
+			let byte = value & 0x7f;
+			value >>>= 7;
+			if (value !== 0) byte |= 0x80;
+			out.push(byte);
+		} while (value !== 0);
+		return out;
+	};
+	const memory = [0x01, 0x00, ...leb(Math.ceil(data.length / 65536))];
+	const head = [
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x05, ...leb(memory.length), ...memory,
+		0x07, 0x07, 0x01, 0x03, 0x6d, 0x65, 0x6d, 0x02, 0x00,
+	];
+	const segment = [0x01, 0x00, 0x41, 0x00, 0x0b, ...leb(data.length)];
+	const section = [0x0b, ...leb(segment.length + data.length)];
+	const out = new Uint8Array(head.length + section.length + segment.length + data.length);
+	out.set(head);
+	out.set(section, head.length);
+	out.set(segment, head.length + section.length);
+	out.set(data, head.length + section.length + segment.length);
+	return out;
+}
+
 const routes = {
 	async basic(env, ctx) {
 		const worker = env.LOADER.get("basic", () => ({
@@ -612,6 +640,34 @@ const routes = {
 			},
 		});
 		return worker.getEntrypoint().read(null);
+	},
+	// Wasm and data modules past agentOS's 16 MiB file message, in two Workers.
+	async "large-modules"(env) {
+		const size = 20 * 1024 * 1024;
+		const data = new Uint8Array(size).fill(1);
+		data[size - 1] = 7;
+		const load = () =>
+			env.LOADER.load({
+				compatibilityDate: "2026-09-03",
+				mainModule: "main.js",
+				modules: {
+					"main.js": `
+						import wasm from "./big.wasm";
+						import data from "./big.bin";
+						export default {
+							async read() {
+								const { exports } = await WebAssembly.instantiate(wasm);
+								const memory = new Uint8Array(exports.mem.buffer);
+								const bytes = new Uint8Array(data);
+								return { data: [bytes.length, bytes[${size - 1}]], wasm: [memory[0], memory[${size - 1}]] };
+							},
+						};
+					`,
+					"big.wasm": { wasm: wasmWithData(data) },
+					"big.bin": { data },
+				},
+			}).getEntrypoint().read(null);
+		return [await load(), await load()];
 	},
 	async values(env) {
 		const worker = env.LOADER.load({

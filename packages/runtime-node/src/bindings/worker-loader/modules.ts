@@ -66,28 +66,42 @@ function throwingSource(message: string): string {
 	return `const error = new Error(${text});\nerror.stack = "Error: " + ${text};\nthrow error;\n`;
 }
 
-function base64(bytes: Uint8Array): string {
-	return Buffer.from(bytes).toString("base64");
-}
+// agentOS answers one read with one message of at most 16 MiB, with the bytes in base64. A 4 MiB
+// read stays under it, so a data or Wasm module of any size loads.
+const bytesReadChunk = 4 * 1024 * 1024;
 
-function bytesSource(bytes: Uint8Array): string {
-	return `const text = atob(${JSON.stringify(base64(bytes))});\nconst bytes = new Uint8Array(text.length);\nfor (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);\n`;
+// Reads the module's bytes from its file in the bundle. The bytes never become JavaScript source.
+function bytesSource(path: string, name: string): string {
+	return `import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+const fd = openSync(${JSON.stringify(path)}, "r");
+let bytes;
+try {
+	bytes = new Uint8Array(fstatSync(fd).size);
+	for (let offset = 0; offset < bytes.length; ) {
+		const read = readSync(fd, bytes, offset, Math.min(${bytesReadChunk}, bytes.length - offset), offset);
+		if (read === 0) throw new Error(${JSON.stringify(`Dynamic Worker module ${name} ended early`)});
+		offset += read;
+	}
+} finally {
+	closeSync(fd);
+}
+`;
 }
 
 // Text, data, JSON, and Wasm modules have a default export, as in workerd.
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/worker-loader.c%2B%2B#L273-L330
-function valueModuleSource(module: DynamicModule): string {
+function valueModuleSource(module: DynamicModule, bundleRoot: string): string {
 	const text = typeof module.content === "string" ? module.content : "";
-	const bytes = typeof module.content === "string" ? new Uint8Array() : module.content;
+	const bundleFile = posix.join(bundleRoot, module.name);
 	switch (module.type) {
 		case "text":
 			return `export default ${JSON.stringify(text)};\n`;
 		case "json":
 			return `export default JSON.parse(${JSON.stringify(text)});\n`;
 		case "data":
-			return `${bytesSource(bytes)}export default bytes.buffer;\n`;
+			return `${bytesSource(bundleFile, module.name)}export default bytes.buffer;\n`;
 		case "wasm":
-			return `${bytesSource(bytes)}export default new WebAssembly.Module(bytes);\n`;
+			return `${bytesSource(bundleFile, module.name)}export default new WebAssembly.Module(bytes);\n`;
 		case "cjs":
 		case "esm":
 			throw new Error(`Module "${module.name}" is not a value module`);
@@ -231,6 +245,8 @@ export async function linkModules(
 	modules: readonly DynamicModule[],
 	mainModule: string,
 	rewrites: Readonly<Record<string, string>>,
+	// Where the modules as written are, so data and Wasm modules read their bytes there.
+	bundleRoot: string,
 ): Promise<LinkedModules> {
 	const names = new Set(modules.map((module) => module.name));
 	const byName = new Map(modules.map((module) => [module.name, module]));
@@ -277,7 +293,7 @@ export async function linkModules(
 		}
 		const entry = scanned.get(module.name);
 		if (entry === undefined) {
-			files.set(file, valueModuleSource(module));
+			files.set(file, valueModuleSource(module, bundleRoot));
 			continue;
 		}
 		let source = "";

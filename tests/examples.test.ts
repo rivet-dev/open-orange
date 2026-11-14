@@ -139,6 +139,7 @@ const scenarios: Record<string, ExampleScenario> = {
 				assert.deepEqual(await withDeadline(automatic, "automatic response"), [
 					"pong",
 				]);
+				// Stay idle past the 10-second window so the object hibernates.
 				await delay(11_000);
 				const messages = collectMessages(socket, 2);
 				socket.send("hello");

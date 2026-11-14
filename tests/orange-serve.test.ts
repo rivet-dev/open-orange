@@ -15,6 +15,7 @@ import { minioBucketSettings, minioSkip, s3Client, startMinio } from "./minio.js
 import { mailpitSkip, startMailpit } from "./mailpit.js";
 import { signForwardedHost } from "../src/serve/front.js";
 import { collectMessages, copyProject, openWebSocket, repositoryRoot, startOrangeDev, withDeadline, type ClientWebSocket } from "./orange-dev.js";
+import { freePort } from "./free-port.js";
 
 // The Engine binary that the pinned RivetKit spawns for `orange dev`. It is a
 // RivetKit dependency, not a root one, so it resolves from RivetKit's package.
@@ -22,15 +23,6 @@ const requireFromRivetKit = createRequire(createRequire(import.meta.url).resolve
 const { getEnginePath } = requireFromRivetKit("@rivetkit/engine-cli") as { getEnginePath(): string };
 const cliEntrypoint = join(repositoryRoot, "src", "bin.ts");
 const adminToken = "orange-serve-test";
-
-async function freePort(): Promise<number> {
-	const server = createServer();
-	await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-	const address = server.address();
-	await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-	assert.ok(address !== null && typeof address !== "string");
-	return address.port;
-}
 
 function collectOutput(child: ChildProcess): () => string {
 	let output = "";

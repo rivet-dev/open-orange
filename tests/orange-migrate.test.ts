@@ -17,6 +17,7 @@ import {
 	type RunningOrangeDev,
 	startOrangeDev as startDev,
 	type TemporaryProject,
+	waitFor,
 	withDeadline,
 } from "./orange-dev.js";
 import { type CloudflareSource, describeSource, migratorToken, startCloudflareSource } from "./migrate-source.js";
@@ -270,6 +271,7 @@ async function post(origin: string, path: string, body?: string): Promise<void> 
 // Answers once the object runs again, because a restart fails the calls in flight.
 async function restartRoom(origin: string, path: string): Promise<RoomState> {
 	await post(origin, `${path}/restart`);
+	// The fixture aborts 50 ms after it answers. Wait past that, so /state reaches the new instance.
 	await delay(200);
 	const deadline = Date.now() + 30_000;
 	for (;;) {
@@ -547,7 +549,8 @@ test("a moved object with an open WebSocket keeps serving after it hibernates", 
 				return String((await withDeadline(reply, `reply to ${message}\n${orangeDev.output().slice(-3_000)}`, 20_000))[0]);
 			};
 			assert.equal(await ask("first on Orange"), "3");
-			// Past the 10-second idle timeout, so the object's instance is dropped and the socket stays.
+			// Past the 10-second idle timeout (`sleepTimeout` in the Durable Object registry), so the
+			// object's instance is dropped and the socket stays.
 			await delay(16_000);
 			assert.equal(await ask("after hibernation"), "4");
 			await closeWebSocket(socket);
@@ -1099,7 +1102,7 @@ test("cutover moves a live app with no failed request and no lost write, and the
 					await delay(20);
 				}
 			})();
-			await delay(500);
+			await waitFor("a live write through Cloudflare before cutover", () => acknowledged.length + failures.length > 0);
 
 			door.pointAt(orangeDev.origin);
 			const cutoverAt = Date.now();
@@ -1130,7 +1133,8 @@ test("cutover moves a live app with no failed request and no lost write, and the
 			assert.match(confirmPass.output, new RegExp(`^Room: 0 moved, 0 failed, already moved: ${ids.length}\\.$`, "m"));
 
 			await staleWriter;
-			await delay(500);
+			const attemptsBeforeStop = acknowledged.length + failures.length;
+			await waitFor("a live write after the backfill", () => acknowledged.length + failures.length > attemptsBeforeStop);
 			running = false;
 			await Promise.all([liveWriter, liveReader]);
 
@@ -1223,7 +1227,7 @@ test("a copy far longer than the idle limit serves its first request, and a cras
 			// Orange dies with part of the copy written. The object has not left Cloudflare yet.
 			const exportsBefore = proxy.exportRequests();
 			void fetch(`${firstDev.origin}/rooms/crash/state`).catch(() => undefined);
-			while (proxy.exportRequests() < exportsBefore + 3) await delay(100);
+			await waitFor("three export pages of the crash object", () => proxy.exportRequests() >= exportsBefore + 3, 60_000);
 			await firstDev.kill();
 			firstDevKilled = true;
 			assert.equal((await fetch(`${source.origin}/rooms/crash/state`)).status, 200);
@@ -1257,7 +1261,7 @@ test("an unfinished copy with the migration turned off fails its calls and retur
 		// Orange dies with some pages of the copy written.
 		const copying = await startOrangeDev(destination.directory);
 		void fetch(`${copying.origin}/rooms/big/state`).catch(() => undefined);
-		while (proxy.exportRequests() < 3) await delay(100);
+		await waitFor("three export pages of the big object", () => proxy.exportRequests() >= 3, 60_000);
 		await copying.kill();
 
 		await rm(join(destination.directory, ".dev.vars"));

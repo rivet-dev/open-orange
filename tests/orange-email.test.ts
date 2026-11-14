@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { freePort, mailpitSkip, startMailpit } from "./mailpit.js";
+import { freePort } from "./free-port.js";
+import { mailpitSkip, startMailpit } from "./mailpit.js";
 import { copyProject, repositoryRoot, startOrangeDev } from "./orange-dev.js";
 
 const sendEmailFixture = join(repositoryRoot, "tests", "fixtures", "send-email");

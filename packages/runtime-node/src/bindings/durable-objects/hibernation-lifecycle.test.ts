@@ -19,6 +19,7 @@ test(
 		});
 		lifecycle.eventSettled();
 		await requested;
+		// Past a second idle deadline, so a repeated request would show.
 		await delay(20);
 		assert.equal(sleepRequests, 1);
 		lifecycle.dispose();
@@ -31,30 +32,36 @@ test("requests sleep immediately after an event timeout", async () => {
 	lifecycle.bind(() => sleepRequests++);
 	lifecycle.eventTimedOut();
 	assert.equal(sleepRequests, 1);
+	// Past the 50 ms idle deadline, so a second request would show.
 	await delay(60);
 	assert.equal(sleepRequests, 1);
 	lifecycle.dispose();
 });
 
-test("does not sleep while a standard WebSocket keeps the actor awake", async () => {
+test("does not sleep while a standard WebSocket keeps the actor awake", { timeout: 1_000 }, async () => {
 	let sleepRequests = 0;
 	let releaseStandardSocket: (() => void) | undefined;
 	const standardSocket = new Promise<void>((resolve) => {
 		releaseStandardSocket = resolve;
 	});
+	const requested = Promise.withResolvers<void>();
 	const lifecycle = new DurableObjectHibernationLifecycle(20);
-	lifecycle.bind(() => sleepRequests++);
+	lifecycle.bind(() => {
+		sleepRequests++;
+		requested.resolve();
+	});
 	lifecycle.preventSleepUntil(standardSocket, "standard-websocket");
 	await delay(30);
 	assert.equal(sleepRequests, 0);
 	releaseStandardSocket?.();
-	await delay(30);
+	await requested.promise;
 	assert.equal(sleepRequests, 1);
 	lifecycle.dispose();
 });
 
-test("does not sleep while a Durable Object event is in flight", async () => {
+test("does not sleep while a Durable Object event is in flight", { timeout: 1_000 }, async () => {
 	let sleepRequests = 0;
+	const requested = Promise.withResolvers<void>();
 	const lifecycle = new DurableObjectHibernationLifecycle(20);
 	const controller = new DurableObjectStateController(
 		{},
@@ -63,14 +70,17 @@ test("does not sleep while a Durable Object event is in flight", async () => {
 		lifecycle,
 	);
 	await controller.finishConstruction();
-	lifecycle.bind(() => sleepRequests++);
+	lifecycle.bind(() => {
+		sleepRequests++;
+		requested.resolve();
+	});
 	const release = Promise.withResolvers<void>();
 	const event = controller.runEvent(() => release.promise);
 	await delay(40);
 	assert.equal(sleepRequests, 0);
 	release.resolve();
 	await event;
-	await delay(40);
+	await requested.promise;
 	assert.equal(sleepRequests, 1);
 	lifecycle.dispose();
 });

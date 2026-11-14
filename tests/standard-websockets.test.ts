@@ -9,6 +9,7 @@ import {
 	openWebSocket,
 	repositoryRoot,
 	startOrangeDev,
+	waitFor,
 	withDeadline,
 	type ClientWebSocket,
 	type RunningOrangeDev,
@@ -44,11 +45,7 @@ function closeOf(socket: ClientWebSocket): Promise<number> {
 
 // Waits until each room has had time to sleep, then asks each one. Asking wakes a room that slept.
 async function assertSlept(dev: RunningOrangeDev, rooms: Readonly<Record<string, string>>): Promise<void> {
-	const deadline = Date.now() + 60_000;
-	while (dev.output().split(slept).length - 1 < Object.keys(rooms).length) {
-		assert.ok(Date.now() < deadline, "a room did not sleep");
-		await delay(250);
-	}
+	await waitFor("each room to sleep", () => dev.output().split(slept).length - 1 >= Object.keys(rooms).length, 60_000);
 	for (const [room, boot] of Object.entries(rooms)) {
 		assert.notEqual(await get(dev, `/boot?room=${room}`), boot, `room ${room} did not sleep`);
 	}

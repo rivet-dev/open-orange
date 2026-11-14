@@ -330,6 +330,7 @@ test("overlapping calls with different props each see only their own props", asy
 		async (_request, env, ctx) => {
 			const tenantStub = callable(Reflect.get(ctx.exports, "Tenant"));
 			const stubs = ["a", "b", "c"].map((tenant) => tenantStub({ props: { tenant } }));
+			// Staggered delays make the calls overlap and finish in reverse order.
 			const rpc = await Promise.all(
 				stubs.map((stub, index) => method(stub, "whoAmI")(15 - index * 5)),
 			);

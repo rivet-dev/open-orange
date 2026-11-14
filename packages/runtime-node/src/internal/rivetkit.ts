@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { fetch as undiciFetch, type RequestInit } from "undici";
 
@@ -750,14 +751,35 @@ function parseEngineActor(actor: unknown): EngineActor {
 	};
 }
 
+// The Engine's depot answers `unavailable` or `overloaded` while it cannot open a volume yet, and
+// opens it again after a backoff of up to 5 s. Both callers read or put an actor to sleep, so they
+// can send the same request again.
+// https://github.com/rivet-dev/rivet/blob/e5ed3911ebff8ddc35c08b3f6c6eb3f795d042f9/engine/packages/depot-worker/src/command/volume_host.rs#L400-L407
+// https://github.com/rivet-dev/rivet/blob/e5ed3911ebff8ddc35c08b3f6c6eb3f795d042f9/engine/packages/depot-worker/src/command/volume_host.rs#L474-L494
+const engineStorageRetryMs = 20_000;
+
 async function requestEngineApi(url: URL, init: RequestInit): Promise<unknown> {
-	const response = await undiciFetch(url, init);
-	if (!response.ok) {
-		throw new Error(
-			`Rivet Engine request ${init.method ?? "GET"} ${url.pathname} failed with status ${response.status}: ${await response.text()}`,
-		);
+	const deadline = Date.now() + engineStorageRetryMs;
+	for (let attempt = 0; ; attempt++) {
+		const response = await undiciFetch(url, init);
+		if (response.ok) return response.json();
+		const text = await response.text();
+		if (!isTransientEngineStorageError(text) || Date.now() > deadline) {
+			throw new Error(
+				`Rivet Engine request ${init.method ?? "GET"} ${url.pathname} failed with status ${response.status}: ${text}`,
+			);
+		}
+		await delay(Math.min(100 * 2 ** attempt, 2_000));
 	}
-	return response.json();
+}
+
+function isTransientEngineStorageError(body: string): boolean {
+	try {
+		const error: unknown = JSON.parse(body);
+		return isRecord(error) && error.group === "depot" && (error.code === "unavailable" || error.code === "overloaded");
+	} catch {
+		return false;
+	}
 }
 
 export function createRivetActorClient(

@@ -18,6 +18,7 @@ import {
 	startOrangeDev,
 	stopProjectEngines,
 	type RunningOrangeDev,
+	waitFor,
 } from "../../tests/orange-dev.js";
 import { resolveDeploymentStorage } from "./deployment.js";
 
@@ -122,11 +123,7 @@ describe("Workflow bindings through orange dev", () => {
 
 	// A gated step counts its body before it waits, so a count of 1 means the step is running.
 	async function stepStarted(id: string, step: string): Promise<void> {
-		const deadline = Date.now() + 20_000;
-		while ((await count(id, step)) === 0) {
-			assert.ok(Date.now() < deadline, `${id}/${step} never started`);
-			await delay(100);
-		}
+		await waitFor(`${id}/${step} to start`, async () => (await count(id, step)) !== 0, 20_000);
 	}
 
 	async function engineEndpoint(): Promise<string> {
@@ -224,6 +221,7 @@ describe("Workflow bindings through orange dev", () => {
 				{ kind: "do", name: "after", returns: "now" },
 			]);
 			await stepStarted("pause-sleep", "before");
+			// No status marks the move into the sleep step; give the workflow time to enter it.
 			await delay(1_000);
 			assert.equal(await value("/pause?id=pause-sleep"), null);
 			const pausedBy = Date.now();

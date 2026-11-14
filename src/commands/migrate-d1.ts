@@ -274,11 +274,11 @@ export async function moveD1(options: MoveD1Options, io: MoveD1Io): Promise<numb
 		}
 	};
 
-	// 1. Preflight. Nothing changes.
-	const state = await cloudflare("state");
+	// 1. Preflight. Nothing changes, so its reads retry like every later step.
+	const state = await retrying("Reading the move's state on Cloudflare", () => cloudflare("state"));
 	if (state.state === "moved") {
 		// A run that switched Cloudflare and stopped before Orange finished. The copy is checked and whole.
-		const target = await orange("status");
+		const target = await retrying("Reading Orange's status", () => orange("status"));
 		if (target.state === "importing") {
 			await finishOrange();
 			io.log(`✓ Finished the copy of ${binding} on Orange. Cloudflare sends every query for it to ${state.url}.`);
@@ -292,12 +292,12 @@ export async function moveD1(options: MoveD1Options, io: MoveD1Io): Promise<numb
 			`Another \`orange migrate d1\` is moving ${binding}, and holds its write freeze until ${new Date(state.until * 1000).toISOString()}. Wait for it to end. If it was killed, its freeze opens by itself then. Nothing changed.`,
 		);
 	}
-	const schema: SourceSchema = await cloudflare("schema");
+	const schema: SourceSchema = await retrying("Reading Cloudflare's schema", () => cloudflare("schema"));
 	const virtual = schema.tables.filter((table) => table.virtual).map((table) => table.name);
 	if (virtual.length > 0) {
 		throw new ExpectedFailure(`D1's export can't include virtual tables: ${virtual.join(", ")}. Drop them on Cloudflare, move the database, and create them again on Orange. Nothing changed.`);
 	}
-	const target = await orange("status");
+	const target = await retrying("Reading Orange's status", () => orange("status"));
 	if (target.state === "none" && target.objects > 0 && !options.replace) {
 		throw new ExpectedFailure(`${binding} already has ${target.objects} tables, indexes, views, or triggers on Orange, so Orange won't overwrite them. Pass --replace to replace them. Nothing changed.`);
 	}

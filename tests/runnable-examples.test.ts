@@ -19,6 +19,7 @@ import {
 	startOrangeDev,
 	withDeadline,
 } from "./orange-dev.js";
+import { freePort } from "./free-port.js";
 
 // `examples/` holds what a user would copy. The fixtures prove one feature each. Both run the same way.
 const exampleParents = [
@@ -941,7 +942,7 @@ const scenarios: Record<string, (projectDirectory: string) => Promise<void>> = {
 				assert.deepEqual(((await json(git)) as { files: string[] }).files, ["README.md"]);
 			}
 
-			const port = 20_000 + Math.floor(Math.random() * 20_000);
+			const port = await freePort();
 			const { previewUrl } = (await json(await fetch(`${ada}/server?port=${port}`, { method: "POST" }), 201)) as {
 				previewUrl: string;
 			};

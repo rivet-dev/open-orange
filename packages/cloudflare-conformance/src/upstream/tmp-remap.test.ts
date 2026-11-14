@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,9 @@ test("the host safety net blocks changes the test file could make and lets other
 		const host = { tmp: join(root, "tmp"), home: join(root, "home"), repository: join(root, "repo") };
 		for (const directory of Object.values(host)) await mkdir(directory);
 		await mkdir(join(host.home, "dev"));
+		// Linux stamps mtimes from a coarse clock, so on a fast host a write right after mkdir can
+		// keep the same mtime. An old mtime makes the later write a visible change.
+		await utimes(join(host.home, "dev"), 0, 0);
 		await writeFile(join(host.home, ".profile"), "");
 		const vocabulary = pathVocabulary([
 			`mkdtempSync('/tmp/testdir-'); symlinkSync('/', '/tmp/link-root'); readFileSync("/dev/null");`,
@@ -32,7 +35,10 @@ test("the host safety net blocks changes the test file could make and lets other
 			`added ${join(host.tmp, "testdir-Ab12Cd")} (directory)`,
 			`changed ${join(host.home, ".profile")}: mode 100644 -> 100600`,
 		]);
-		assert.equal(changes.unattributed.length, 2);
+		assert.deepEqual(changes.unattributed.sort(), [
+			`added ${join(host.tmp, "other-tool-install.log")} (file)`,
+			`changed ${join(host.home, "dev")}: mtimeMs 0 -> ${(await stat(join(host.home, "dev"))).mtimeMs}`,
+		]);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

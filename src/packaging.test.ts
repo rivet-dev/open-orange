@@ -15,7 +15,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { PINNED_RIVETKIT_VERSION } from "../packages/runtime-node/src/internal/rivetkit-build.js";
-import { isRecord, stopProjectEngines } from "../tests/orange-dev.js";
+import { isRecord, stopProjectEngines, waitFor } from "../tests/orange-dev.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = new URL("../", import.meta.url).pathname;
@@ -322,13 +322,14 @@ async function readJson(origin: string, path: string): Promise<unknown> {
 }
 
 async function waitForAlarm(origin: string): Promise<void> {
-	const deadline = Date.now() + 10_000;
-	while (Date.now() < deadline) {
-		const status = await readJson(origin, "/alarm-status");
-		if (isRecord(status) && status.fired === true) return;
-		await delay(20);
-	}
-	throw new Error("Packed Durable Object alarm did not fire");
+	await waitFor(
+		"the packed Durable Object alarm to fire",
+		async () => {
+			const status = await readJson(origin, "/alarm-status");
+			return isRecord(status) && status.fired === true;
+		},
+		10_000,
+	);
 }
 
 test("installs both packed CLI aliases and runs Durable Object smoke tests", async () => {
@@ -528,6 +529,7 @@ export default {
 			assert.equal(firstGeneration.mode, "hibernatable");
 			assert.equal(firstGeneration.message, "before-sleep");
 			assert.equal(typeof firstGeneration.generation, "number");
+			// Stay idle past the 10-second hibernation timeout; a message before then restarts it.
 			await delay(11_000);
 			const afterSleep = socketEvent(hibernatable, "message");
 			hibernatable.send("after-sleep");

@@ -1007,7 +1007,7 @@
 				{
 					"kind": "code",
 					"path": "packages/runtime-node/src/bindings/service.test.ts",
-					"lines": "316-354"
+					"lines": "316-355"
 				},
 				{
 					"kind": "test",
@@ -1109,7 +1109,7 @@
 				{
 					"kind": "code",
 					"path": "packages/runtime-node/src/bindings/service.test.ts",
-					"lines": "355"
+					"lines": "356"
 				},
 				{
 					"kind": "test",
@@ -1492,12 +1492,12 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/workflows.test.ts",
-					"lines": "56-579"
+					"lines": "57-577"
 				},
 				{
 					"kind": "code",
 					"path": "tests/examples.test.ts",
-					"lines": "175-215"
+					"lines": "176-216"
 				}
 			]
 		},
@@ -1533,7 +1533,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/queues.test.ts",
-					"lines": "139-337"
+					"lines": "139-338"
 				},
 				{
 					"kind": "test",
@@ -1584,7 +1584,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/r2.test.ts",
-					"lines": "224-501"
+					"lines": "212-489"
 				},
 				{
 					"kind": "test",
@@ -2568,7 +2568,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/queues.test.ts",
-					"lines": "139-337"
+					"lines": "139-338"
 				},
 				{
 					"kind": "code",
@@ -3739,7 +3739,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/workflows.test.ts",
-					"lines": "450-515"
+					"lines": "448-513"
 				}
 			]
 		},
@@ -11012,7 +11012,7 @@
 				{
 					"kind": "code",
 					"path": "tests/accepted-websockets.test.ts",
-					"lines": "146-210"
+					"lines": "154-222"
 				}
 			]
 		},
@@ -11184,7 +11184,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/sandbox.test.ts",
-					"lines": "505-564"
+					"lines": "494-553"
 				}
 			]
 		},
@@ -11421,17 +11421,17 @@
 				{
 					"kind": "code",
 					"path": "tests/accepted-websockets.test.ts",
-					"lines": "81-122"
+					"lines": "88-129"
 				},
 				{
 					"kind": "code",
 					"path": "tests/accepted-websockets.test.ts",
-					"lines": "146-189"
+					"lines": "154-201"
 				},
 				{
 					"kind": "code",
 					"path": "tests/accepted-websockets.test.ts",
-					"lines": "285-336"
+					"lines": "300-354"
 				},
 				{
 					"kind": "test",
@@ -14525,7 +14525,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/sandbox.test.ts",
-					"lines": "505-564"
+					"lines": "494-553"
 				}
 			]
 		},
@@ -14551,7 +14551,7 @@
 				{
 					"kind": "code",
 					"path": "src/runtime/sandbox.test.ts",
-					"lines": "1-27"
+					"lines": "1-28"
 				}
 			]
 		},

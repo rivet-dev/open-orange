@@ -211,7 +211,11 @@ test("expires, rejects duplicate claims, and releases retained externals", async
 	const continuations = new DurableObjectRpcContinuationStore({ ttlMs: 10 });
 	const expiredTarget = new DisposableTarget();
 	continuations.retain(encodeRpcValue(expiredTarget));
-	await new Promise<void>((resolve) => setTimeout(resolve, 30));
+	// The store releases an expired continuation on its own timer, which runs late on a loaded host.
+	const deadline = Date.now() + 5_000;
+	while (expiredTarget.disposals === 0 && Date.now() < deadline) {
+		await new Promise<void>((resolve) => setTimeout(resolve, 5));
+	}
 	assert.equal(continuations.size, 0);
 	assert.equal(expiredTarget.disposals, 1);
 

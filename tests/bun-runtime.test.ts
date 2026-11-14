@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import test, { after, before } from "node:test";
 
 import { buildPackage } from "../src/build/build-package.js";
-import { copyProject, type OrangeCli, repositoryRoot, startOrangeDev } from "./orange-dev.js";
+import { copyProject, type OrangeCli, repositoryRoot, startOrangeDev, waitFor } from "./orange-dev.js";
 
 const fixture = join(repositoryRoot, "tests", "fixtures", "bun-runtime");
 
@@ -56,11 +55,10 @@ test("orange dev on Bun serves Durable Objects, KV, and Workflows", { skip }, as
 			assert.equal(typeof id, "string", dev.output());
 			let status: unknown;
 			// A Workflow binding reports completion only through status(), so the test polls it.
-			for (let attempt = 0; attempt < 100; attempt += 1) {
+			await waitFor("the Workflow to complete", async () => {
 				status = await json(await fetch(`${dev.origin}/workflow-status?id=${String(id)}`));
-				if (typeof status === "object" && status !== null && Reflect.get(status, "status") === "complete") break;
-				await delay(100);
-			}
+				return typeof status === "object" && status !== null && Reflect.get(status, "status") === "complete";
+			});
 			assert.deepEqual(status, { output: "echo hello", status: "complete" }, dev.output());
 		} finally {
 			await dev.close();

@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
-import { copyProject, repositoryRoot, startOrangeDev, withDeadline } from "./orange-dev.js";
+import { copyProject, repositoryRoot, startOrangeDev, waitFor } from "./orange-dev.js";
 
 const slept = "old=SleepFinalize new=Terminated";
 
@@ -19,24 +18,13 @@ test("an RPC session lasts as long as the event that opened it", { timeout: 180_
 		};
 		const waitForSleep = async (): Promise<void> => {
 			const from = dev.output().length;
-			await withDeadline(
-				(async () => {
-					while (!dev.output().includes(slept, from)) await delay(250);
-				})(),
-				"the object's sleep",
-				60_000,
-			);
+			await waitFor("the object's sleep", () => dev.output().includes(slept, from), 60_000);
 		};
 		try {
 			// The session ends with the event, not the response, so waitUntil() work can still call it.
 			const boot = await text("/boot");
 			assert.equal(await text("/wait-until"), "sent");
-			await withDeadline(
-				(async () => {
-					while ((await text("/recorded")) !== boot) await delay(250);
-				})(),
-				"waitUntil() using the session",
-			);
+			await waitFor("waitUntil() using the session", async () => (await text("/recorded")) === boot, 20_000);
 
 			// A WorkerEntrypoint gives the session to its caller, whose event then owns it.
 			assert.equal(await text("/relayed"), boot, dev.output());
@@ -58,11 +46,9 @@ test("an RPC session lasts as long as the event that opened it", { timeout: 180_
 			// the caller "b" and the target "c" all sleep. A session still open keeps "c" awake.
 			const sleptBefore = dev.output().split(slept).length;
 			assert.match(await text("/dynamic-worker"), /^[0-9a-f-]{36}$/, dev.output());
-			await withDeadline(
-				(async () => {
-					while (dev.output().split(slept).length < sleptBefore + 3) await delay(250);
-				})(),
+			await waitFor(
 				"every object's sleep after the Dynamic Worker disposed its session",
+				() => dev.output().split(slept).length >= sleptBefore + 3,
 				60_000,
 			);
 

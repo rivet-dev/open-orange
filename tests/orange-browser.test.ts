@@ -7,7 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { freePort } from "./mailpit.js";
+import { freePort } from "./free-port.js";
 import { copyProject, repositoryRoot, startOrangeDev, type TemporaryProject, withDeadline } from "./orange-dev.js";
 
 // A real headless Chromium: OPEN_ORANGE_TEST_CHROMIUM, or the headless shell that Playwright installs.

@@ -215,6 +215,93 @@ test("a pool that goes down during the rollout fails with its reason and the rol
 	);
 });
 
+const crashLoop = { fault: "user", message: "Build `bld_broken` failed: App keeps exiting.", state: "degraded" } as const;
+
+// What Rivet Cloud reports for the pool when the deploy is over, as any API client reads it.
+async function readPool(cloud: RivetCloudDouble, pool: string): Promise<unknown> {
+	const response = await fetch(`${cloud.url}/v2/clusters/${cluster}/regions/iad/runner-pools/${pool}`, {
+		headers: { authorization: `Bearer ${token}` },
+	});
+	const { build_id, status } = (await response.json()) as { build_id: string; status: { replicas: unknown; state: string } };
+	return { build_id, replicas: status.replicas, state: status.state };
+}
+
+test("a deploy prints success only after the new build rolled out, even when the first read still shows the old ready pool", async () => {
+	await withDeploy(
+		{ builds: { bld_new: "ready", bld_old: "ready" }, pools: { "iad/default": existingPool }, staleReads: 1 },
+		async (cloud, project, env) => {
+			const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--build", "bld_new"], env);
+			assert.equal(code, 0, output);
+			assert.match(output, /✓ Deployed .* to pool default in iad/);
+			assert.deepEqual(await readPool(cloud, "default"), {
+				build_id: "bld_new",
+				replicas: { desired: 2, ready: 2, updated: 2 },
+				state: "ready",
+			});
+		},
+	);
+});
+
+test("a deploy whose Worker keeps crashing fails, even when the first read still shows the old ready pool", async () => {
+	await withDeploy(
+		{ builds: { bld_broken: "ready", bld_old: "ready" }, poolOutcome: crashLoop, pools: { "iad/default": existingPool }, staleReads: 1 },
+		async (cloud, project, env) => {
+			const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--build", "bld_broken"], env);
+			assert.equal(code, 1, output);
+			assert.doesNotMatch(output, /Deployed/);
+			assert.match(output, /Pool default in region iad is degraded \(user fault\): Build `bld_broken` failed: App keeps exiting\./);
+			assert.match(output, /Roll back with: orange deploy --cluster acme --region iad --pool default --build bld_old/);
+		},
+	);
+});
+
+test("a rollback from a degraded pool succeeds, even when the first read still shows the old degraded status", async () => {
+	await withDeploy(
+		{
+			builds: { bld_broken: "ready", bld_old: "ready" },
+			pools: { "iad/default": { ...existingPool, build_id: "bld_broken" } },
+			poolStatus: crashLoop,
+			staleReads: 1,
+		},
+		async (cloud, project, env) => {
+			const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--build", "bld_old"], env);
+			assert.equal(code, 0, output);
+			assert.doesNotMatch(output, /degraded|Roll back with/);
+			assert.match(output, /✓ Deployed .* to pool default in iad/);
+		},
+	);
+});
+
+test("a failed rollout on a degraded pool never suggests rolling back to the broken build", async () => {
+	await withDeploy(
+		{
+			builds: { bld_broken: "ready", bld_new: "ready" },
+			poolOutcome: { fault: "user", message: "Runners exit right after they start.", state: "down" },
+			pools: { "iad/default": { ...existingPool, build_id: "bld_broken" } },
+			poolStatus: crashLoop,
+		},
+		async (cloud, project, env) => {
+			const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--build", "bld_new"], env);
+			assert.equal(code, 1, output);
+			assert.match(output, /Pool default in region iad is down \(user fault\): Runners exit right after they start\./);
+			assert.doesNotMatch(output, /Roll back with/);
+		},
+	);
+});
+
+test("redeploying the build a ready pool already runs succeeds at once, even when Rivet Cloud never reports a new status", async () => {
+	await withDeploy(
+		{ builds: { bld_old: "ready" }, pools: { "iad/default": existingPool }, staleReads: 1_000 },
+		async (cloud, project, env) => {
+			const started = Date.now();
+			const { code, output } = await orangeDeploy(project, ["--cloud-api", cloud.url, "--build", "bld_old"], env);
+			assert.equal(code, 0, output);
+			assert.match(output, /✓ Deployed .* to pool default in iad/);
+			assert.ok(Date.now() - started < 30_000, `the deploy waited ${Date.now() - started} ms`);
+		},
+	);
+});
+
 test("--dry-run writes a credential-free runner image and calls no API", async () => {
 	await withDeploy({}, async (cloud, project) => {
 		await writeFile(join(project.directory, ".dev.vars"), "API_KEY=dev-secret-value\n");

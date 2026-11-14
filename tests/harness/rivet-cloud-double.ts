@@ -19,6 +19,8 @@ export interface CloudPool {
 	node_count: number;
 }
 
+export type PoolOutcome = "ready" | { fault: "platform" | "user"; message: string; state: "degraded" | "down" };
+
 export interface RivetCloudDoubleOptions {
 	cluster: string;
 	// Builds that exist before the deploy, by ID, with their status.
@@ -28,7 +30,11 @@ export interface RivetCloudDoubleOptions {
 	// Pools that exist before the deploy, keyed `<region>/<pool>`.
 	pools?: Record<string, CloudPool>;
 	// What a rolled-out pool becomes after one `updating` read. Default `ready`.
-	poolOutcome?: "ready" | { fault: "platform" | "user"; message: string; state: "degraded" | "down" };
+	poolOutcome?: PoolOutcome;
+	// The status of the pools that exist before the deploy. Default `ready`.
+	poolStatus?: PoolOutcome;
+	// Reads right after a PUT that still return the status from before it, as Rivet Cloud can. Default 0.
+	staleReads?: number;
 	regions: string[];
 	token: string;
 	// `token` is a cluster token, which Rivet Cloud lets update a pool but not create one.
@@ -81,6 +87,7 @@ interface BuildRecord {
 interface PoolState {
 	reads: number;
 	rolling: boolean;
+	since: number;
 }
 
 export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): Promise<RivetCloudDouble> {
@@ -142,29 +149,44 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 		upload_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
 	});
 	const regionPublicUrl = (region: string): string => `https://${region}.${options.cluster}.rivet.test`;
-	// A rolled-out pool reads as `updating` once, then as its outcome.
-	const poolView = (key: string, pool: CloudPool, read: boolean): Record<string, unknown> => {
-		const [region = "", name = ""] = key.split("/");
-		const state = poolStates.get(key);
-		const desired = pool.node_count;
-		let status: Record<string, unknown> = {
+	const outcomeStatus = (outcome: PoolOutcome, desired: number, since: number): Record<string, unknown> => {
+		const ready = {
 			action_needed: false,
 			fault: null,
 			message: null,
 			replicas: { desired, ready: desired, updated: desired },
 			state: "ready",
-			state_since: 0,
+			state_since: since,
 			waiting_on: null,
 		};
+		if (outcome === "ready") return ready;
+		return {
+			...ready,
+			action_needed: true,
+			fault: outcome.fault,
+			message: outcome.message,
+			replicas: { desired, ready: 0, updated: 0 },
+			state: outcome.state,
+		};
+	};
+	// A rolled-out pool reads as its old status `staleReads` times, as `updating` once, then as its outcome.
+	const poolView = (key: string, pool: CloudPool, read: boolean): Record<string, unknown> => {
+		const [region = "", name = ""] = key.split("/");
+		const state = poolStates.get(key);
+		const desired = pool.node_count;
+		const before = outcomeStatus(options.poolStatus ?? "ready", desired, 0);
+		let status = state === undefined ? before : outcomeStatus("ready", desired, state.since);
 		if (state?.rolling === true) {
 			if (read) state.reads += 1;
-			const outcome = options.poolOutcome ?? "ready";
-			if (state.reads <= 1) {
-				status = { ...status, replicas: { desired, ready: desired, updated: 0 }, state: "updating", waiting_on: "runners" };
-			} else if (outcome !== "ready") {
-				status = { ...status, action_needed: true, fault: outcome.fault, message: outcome.message, replicas: { desired, ready: 0, updated: 0 }, state: outcome.state };
+			const stale = options.staleReads ?? 0;
+			if (state.reads <= stale) {
+				status = before;
+			} else if (state.reads <= stale + 1) {
+				status = { ...status, replicas: { desired, ready: desired, updated: 0 }, state: "updating", state_since: state.since, waiting_on: "runners" };
 			} else {
-				state.rolling = false;
+				if (state.reads === stale + 2) state.since = Date.now();
+				status = outcomeStatus(options.poolOutcome ?? "ready", desired, state.since);
+				if (options.poolOutcome === undefined || options.poolOutcome === "ready") state.rolling = false;
 			}
 		}
 		return {
@@ -386,7 +408,7 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 					node_count: (body.node_count as number | undefined) ?? existing?.node_count ?? 1,
 				};
 				pools.set(key, pool);
-				poolStates.set(key, { reads: 0, rolling: true });
+				poolStates.set(key, { reads: 0, rolling: true, since: Date.now() });
 				send(response, 200, poolView(key, pool, false));
 				return;
 			}

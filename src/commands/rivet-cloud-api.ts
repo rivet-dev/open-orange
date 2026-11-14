@@ -52,10 +52,14 @@ const poolSchema = z.object({
 	env: z.record(z.string(), envValueSchema).optional(),
 	endpoints: z.object({ public: z.string().nullable() }),
 	status: z.object({
+		// The user must act on `message`, such as fixing the deployed build.
+		action_needed: z.boolean().optional(),
 		fault: z.string().nullable(),
 		message: z.string().nullable(),
 		replicas: z.object({ desired: z.number(), ready: z.number(), updated: z.number() }).nullable(),
 		state: z.string(),
+		// When the pool entered `state`, in milliseconds since the epoch. Null while Rivet Cloud has not observed it.
+		state_since: z.number().nullable().optional(),
 	}),
 });
 export type RivetPool = z.infer<typeof poolSchema>;

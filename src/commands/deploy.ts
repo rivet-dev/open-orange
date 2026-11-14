@@ -278,8 +278,10 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 	}
 	// A secret's new value rolls every pool that names it, as `rivet cluster secret set` does, so
 	// this waits until the build is ready and the pool rolls to it next.
+	let secretChanged = false;
 	for (const [secret, value] of change?.uploads ?? []) {
 		const result = await cloud.rolloutSecret(secret, value);
+		secretChanged ||= result.changed;
 		io.log(`${result.changed ? "Rolled out" : "Unchanged:"} secret ${secret} (version ${result.latest_version})`);
 	}
 	if (sendEnvironment && next.unpinned.length > 0) {
@@ -295,8 +297,17 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 		...(target.machineType === undefined ? {} : { machine_type: target.machineType }),
 		...(target.nodeCount === undefined ? {} : { node_count: target.nodeCount }),
 	});
-	const pool = await waitForRollout(cloud, theme, region.region, target.pool, () =>
-		rollbackHint(cluster, region.region, target.pool, previous?.build_id ?? undefined, buildId),
+	// Only a build the pool ran as `ready` is safe to roll back to.
+	const lastReadyBuild = previous?.status.state === "ready" ? (previous.build_id ?? undefined) : undefined;
+	// With nothing to roll, the pool's status from before the PUT already describes this build.
+	const unchanged =
+		previous?.build_id === buildId &&
+		!sendEnvironment &&
+		!secretChanged &&
+		target.machineType === undefined &&
+		target.nodeCount === undefined;
+	const pool = await waitForRollout(cloud, theme, region.region, target.pool, buildId, unchanged ? undefined : previous, () =>
+		rollbackHint(cluster, region.region, target.pool, lastReadyBuild, buildId),
 	);
 	io.log(`${theme.fg("green", "✓")} Deployed ${reference} to pool ${target.pool} in ${region.region}`);
 	io.log(`  ${"Build".padEnd(8)}${buildId}`);
@@ -440,22 +451,41 @@ function buildNotReady(build: RivetBuild, cluster: string | undefined): Error {
 	return new ExpectedFailure(`Build ${build.build_id}${where} is ${build.status}, and only a ready build can be rolled out. Wait until it is ready, then deploy it again.`);
 }
 
+// A read that still returns the status from before the PUT matches it exactly.
+function sameStatus(a: RivetPool["status"], b: RivetPool["status"]): boolean {
+	return a.state === b.state && a.state_since === b.state_since && JSON.stringify(a.replicas) === JSON.stringify(b.replicas);
+}
+
+// Waits as `rivet deploy` does (engine/packages/cli/src/commands/deploy/cluster.rs). Rivet Cloud
+// can still return the status from before the PUT, so a status counts only once the pool was seen
+// rolling or its status changed. Only Rivet Cloud's own values are compared, never the local clock.
 async function waitForRollout(
 	cloud: RivetCloudClient,
 	theme: Theme,
 	region: string,
 	poolName: string,
+	buildId: string,
+	// The pool before the PUT, or undefined when its status cannot be stale.
+	before: RivetPool | undefined,
 	hint: () => string,
 ): Promise<RivetPool> {
 	const deadline = Date.now() + rolloutTimeoutMs;
 	const spinner = startSpinner(process.stderr, theme, `Waiting for pool ${poolName} to roll out…`);
+	let rolling = false;
 	try {
 		for (;;) {
 			const pool = await cloud.getPool(region, poolName);
 			if (pool === undefined) throw new Error(`Pool ${poolName} in region ${region} disappeared during the rollout.`);
+			if (pool.build_id !== buildId) {
+				throw new ExpectedFailure(`Pool ${poolName} in region ${region} moved to build ${pool.build_id ?? "none"} during the rollout, so this deploy stopped.`);
+			}
 			const { replicas, state } = pool.status;
-			if (state === "ready" && replicas !== null && replicas.updated === replicas.desired) return pool;
-			if (state === "degraded" || state === "down") {
+			if (state !== "ready" && state !== "degraded" && state !== "down") rolling = true;
+			const current = before === undefined || rolling || !sameStatus(pool.status, before.status);
+			const rolledOut = state === "ready" && replicas !== null && replicas.updated >= replicas.desired && replicas.ready >= replicas.desired;
+			if (current && rolledOut) return pool;
+			// As in `rivet deploy`, a pool that is degraded or down only fails the deploy when the user must act.
+			if (current && (state === "degraded" || state === "down") && pool.status.action_needed !== false) {
 				const fault = pool.status.fault === null ? "" : ` (${pool.status.fault} fault)`;
 				// A Worker that crashes on start is the user's to fix, not a bug in Orange.
 				throw new (pool.status.fault === "user" ? ExpectedFailure : Error)(

@@ -163,7 +163,13 @@ import {
 	type ServiceBindingOptions,
 } from "./runtime.js";
 
+let runtimeMessageSink: ((message: RuntimeChildMessage) => void) | undefined;
+
 function send(message: RuntimeChildMessage): void {
+	if (runtimeMessageSink !== undefined) {
+		runtimeMessageSink(message);
+		return;
+	}
 	if (process.send !== undefined && process.connected) {
 		process.send(message);
 	}
@@ -177,9 +183,14 @@ function errorDetails(error: unknown): { message: string; stack?: string } {
 			typeof group === "string" && typeof code === "string"
 				? ` [${group}/${code}]`
 				: "";
-		const cause = error.cause instanceof Error
-			? `\nCaused by: ${error.cause.stack ?? error.cause.message}`
-			: "";
+		let cause = "";
+		let current = error.cause;
+		const seen = new Set<Error>([error]);
+		for (let depth = 0; depth < 4 && current instanceof Error && !seen.has(current); depth++) {
+			seen.add(current);
+			cause += `\nCaused by: ${(current.stack ?? current.message).slice(0, 4096)}`;
+			current = current.cause;
+		}
 		return {
 			message: `${error.message}${classification}`,
 			...(error.stack === undefined
@@ -1407,7 +1418,13 @@ function endFetchEventWhenSocketCloses(
 	void Promise.all([closed, waitUntil]).then(end);
 }
 
-export async function runRuntimeProcess(): Promise<void> {
+export interface RuntimeTransport {
+	send(message: RuntimeChildMessage): void;
+	subscribe(listener: (message: unknown) => void): void;
+}
+
+export async function runRuntimeProcess(transport?: RuntimeTransport): Promise<void> {
+	runtimeMessageSink = transport?.send;
 	let runtime: Awaited<ReturnType<typeof startRuntime>> | undefined;
 	let latestSessionWorkers: RuntimeSessionWorker[] | undefined;
 	let resolveCompletion: (() => void) | undefined;
@@ -1437,7 +1454,7 @@ export async function runRuntimeProcess(): Promise<void> {
 		resolveCompletion?.();
 	}
 
-	process.on("message", (rawMessage: unknown) => {
+	const receive = (rawMessage: unknown) => {
 		void (async () => {
 			const message = parseRuntimeParentMessage(rawMessage);
 			if (message.type === "session-workers") {
@@ -1462,7 +1479,9 @@ export async function runRuntimeProcess(): Promise<void> {
 			process.exitCode = 1;
 			resolveCompletion?.();
 		});
-	});
+	};
+	if (transport === undefined) process.on("message", receive);
+	else transport.subscribe(receive);
 	process.once("SIGINT", () => void stop("SIGINT"));
 	process.once("SIGTERM", () => void stop("SIGTERM"));
 	// The IPC channel closes when the parent dies, so the runtime stops with it.

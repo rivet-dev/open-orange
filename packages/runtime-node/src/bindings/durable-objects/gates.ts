@@ -4,6 +4,9 @@ import type {
 	RivetSqliteBindings,
 	RivetSqliteDatabase,
 	RivetSqliteExecuteResult,
+	RivetSqliteStatement,
+	RivetSqliteWriteAdmission,
+	RivetSynchronousSqliteExecutor,
 	RivetSynchronousSqliteTransaction,
 } from "../../internal/rivetkit.js";
 import type { OutputGate } from "../../internal/output-gate.js";
@@ -42,7 +45,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	readonly #database: RivetSqliteDatabase;
 	readonly #onBroken: (error: Error) => void;
 	#broken: Error | undefined;
-	#turn: RivetSynchronousSqliteTransaction | undefined;
+	#turn: RivetSynchronousSqliteTransaction | RivetSqliteWriteAdmission | undefined;
 	// Output gate state. Workerd locks the gate for a transaction once it has a write that was
 	// not made with `allowUnconfirmed`, until that transaction's commit is durable.
 	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/io/actor-sqlite.c%2B%2B#L392-L420
@@ -71,6 +74,29 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		} finally {
 			this.#unconfirmedDepth -= 1;
 		}
+	}
+
+	/** Only void writes may return admission; SQL results still use the remote transaction. */
+	tryAdmitUnconfirmedWrites(prepare: () => RivetSqliteStatement[]): boolean {
+		this.#assertNotBroken();
+		if (this.#explicitTransaction !== undefined) return false;
+		let turn = this.#turn;
+		if (turn !== undefined && !("admitWriteBatch" in turn)) return false;
+		if (turn === undefined && (this.#unconfirmedDepth === 0 || this.#database.beginWriteAdmission === undefined)) return false;
+		const statements = prepare();
+		if (statements.length === 0) return true;
+		if (turn === undefined) {
+			const admitted = this.#database.beginWriteAdmission?.(undefined, turnTransactionName);
+			if (admitted === undefined) return false;
+			turn = admitted;
+			this.#installTurn(admitted);
+			// Unconfirmed failures must reset the object even when no caller waits for durability.
+			void admitted.whenSettled().catch((error: unknown) => { this.breakObject(error); });
+		}
+		if (!("admitWriteBatch" in turn)) return false;
+		turn.admitWriteBatch(statements);
+		this.#noteTurnWrite();
+		return true;
 	}
 
 	/**
@@ -260,14 +286,23 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		this.#turnConfirmed = false;
 		this.#turnCommitted = undefined;
 		try {
-			turn.commitSync();
+			if ("commitDeferred" in turn) {
+				turn.commitDeferred();
+				// Admission is not commit success; boundary observers wait for the real outcome.
+				void turn.whenSettled().then(
+					() => this.#settleCommitBoundaryWaiters(waiters, true),
+					() => this.#settleCommitBoundaryWaiters(waiters, false),
+				);
+			} else {
+				turn.commitSync();
+			}
 		} catch (error: unknown) {
 			this.#settleCommitBoundaryWaiters(waiters, false);
 			const broken = this.breakObject(error);
 			committed?.reject(broken);
 			throw broken;
 		}
-		this.#settleCommitBoundaryWaiters(waiters, true);
+		if (!("commitDeferred" in turn)) this.#settleCommitBoundaryWaiters(waiters, true);
 		if (confirmed) this.#holdOutputUntilDurable(this.#turnStartTicket);
 		committed?.resolve(this.#outputTicket);
 	}
@@ -293,7 +328,12 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		this.#turnConfirmed = false;
 		this.#turnCommitted = undefined;
 		try {
-			turn?.rollbackSync();
+			if (turn !== undefined && "commitDeferred" in turn) {
+				// Rollback is queued now; its promise reports the real remote outcome.
+				void turn.rollback().catch(() => {});
+			} else {
+				turn?.rollbackSync();
+			}
 		} catch {
 			// The object is resetting; its next generation loads only durable state.
 		}
@@ -428,13 +468,18 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		if (this.#unconfirmedDepth === 0) this.#turnConfirmed = true;
 	}
 
-	#currentTurn(): RivetSynchronousSqliteTransaction {
+	#currentTurn(): RivetSynchronousSqliteExecutor {
 		this.#assertNotBroken();
 		if (this.#turn !== undefined) return this.#turn;
 		const turn = this.#database.beginTransactionSync(
 			undefined,
 			turnTransactionName,
 		);
+		this.#installTurn(turn);
+		return turn;
+	}
+
+	#installTurn(turn: RivetSynchronousSqliteTransaction | RivetSqliteWriteAdmission): void {
 		this.#turn = turn;
 		this.#turnStartTicket = this.#database.commitTicket();
 		// Workerd commits the implicit transaction on the next event-loop turn, after JavaScript
@@ -448,7 +493,6 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 				// commitTurn already broke the object; gated outputs observe it.
 			}
 		});
-		return turn;
 	}
 }
 

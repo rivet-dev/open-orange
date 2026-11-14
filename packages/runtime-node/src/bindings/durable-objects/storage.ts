@@ -30,7 +30,7 @@ import {
 } from "./alarm-storage.js";
 import type { DurableObjectInputGate, DurableObjectTurnDatabase } from "./gates.js";
 import { findStatementlessSql, firstCompleteStatementLength } from "./sql-complete.js";
-import { createSyncKvStorage, DurableObjectKvStore } from "./sync-kv.js";
+import { createSyncKvStorage, DurableObjectKvStore, prepareDurableObjectPuts } from "./sync-kv.js";
 import { sqlStatementError } from "./sqlite-errors.js";
 import { errorMessage } from "../unknown-values.js";
 
@@ -998,6 +998,11 @@ class DurableObjectStorageImplementation implements DurableObjectStorage {
 			: write();
 	}
 
+	#admitPuts(entries: readonly (readonly [string, unknown])[]): boolean {
+		if (this.#activeFrame() !== undefined || this.#activeTransaction !== undefined || this.#syncTransactionDepth > 0) return false;
+		return this.#database.tryAdmitUnconfirmedWrites(() => prepareDurableObjectPuts(entries));
+	}
+
 	// SQLite-backed workerd runs storage operations synchronously and returns resolved promises,
 	// so an un-awaited write keeps program order with later synchronous calls.
 	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/actor-state.c%2B%2B#L58-L66
@@ -1069,9 +1074,10 @@ class DurableObjectStorageImplementation implements DurableObjectStorage {
 			if (valueOrOptions === undefined) {
 				throw new TypeError("put() called with undefined value.");
 			}
-			this.#write(options, () =>
-				this.#kvStore.put(singleStorageKey(keyOrEntries), valueOrOptions),
-			);
+			this.#write(options, () => {
+				const key = singleStorageKey(keyOrEntries);
+				if (!this.#admitPuts([[key, valueOrOptions]])) this.#kvStore.put(key, valueOrOptions);
+			});
 		});
 	}
 
@@ -1082,11 +1088,12 @@ class DurableObjectStorageImplementation implements DurableObjectStorage {
 		return this.#run(() => {
 			assertStorageOptions(options);
 			const entries = storageEntries(values);
-			this.#write(options, () =>
+			this.#write(options, () => {
+				if (this.#admitPuts(entries)) return;
 				this.transactionSync(() => {
 					for (const [key, value] of entries) this.#kvStore.put(key, value);
-				}),
-			);
+				});
+			});
 		});
 	}
 
@@ -1461,9 +1468,7 @@ export const durableObjectDatabaseProvider: RivetDatabaseProvider = {
 	async createClient(
 		context: RivetDatabaseProviderContext,
 	): Promise<RivetSqliteDatabase> {
-		const database = await context.nativeDatabaseProvider?.open(
-			context.actorId,
-		);
+		const database = await context.nativeDatabaseProvider?.open(context.actorId);
 		if (database === undefined) {
 			throw new Error(
 				"The pinned RivetKit runtime did not provide native SQLite",

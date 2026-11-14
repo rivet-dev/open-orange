@@ -1,5 +1,5 @@
 // `Uint8Array` hex and base64 methods from tc39/proposal-arraybuffer-base64. workerd has them, and
-// Node 24 does not. A later Node with native methods keeps its own: `defineMissingMethods` skips them.
+// Node 24 does not. Native methods are retained when their read counts match workerd.
 // Node's `--js-base-64` flag is not an option: on Node 24 its `toHex()` returns wrong bytes for
 // subarrays and pooled Buffers.
 //
@@ -305,7 +305,18 @@ function decodeHexInto(target: Uint8Array, string: string, maxLength: number): D
 
 function defineMissingMethods(target: object, methods: object): void {
 	for (const [name, value] of Object.entries(methods)) {
-		if (typeof Reflect.get(target, name) === "function") continue;
+		const native = Reflect.get(target, name);
+        if (typeof native === "function") {
+            if (target !== Uint8Array.prototype || name !== "setFromBase64") continue;
+            // Native V8 versions differ on consuming trailing whitespace after
+            // the destination fills. Preserve workerd's consumed-character count.
+            try {
+                const result = apply(native, new Uint8Array(3), [" A Q I D "]) as DecodeResult;
+                if (result.read === 8 && result.written === 3) continue;
+            } catch {
+                // An incompatible native method uses the same portable decoder.
+            }
+        }
 		Reflect.defineProperty(target, name, { configurable: true, value, writable: true });
 	}
 }

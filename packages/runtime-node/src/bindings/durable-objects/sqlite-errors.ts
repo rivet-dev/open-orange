@@ -1,15 +1,18 @@
 import { errorMessage } from "../unknown-values.js";
 
+function sqliteStatementDetails(error: unknown): object | undefined {
+	if (!isObject(error) || Reflect.get(error, "group") !== "sqlite") return undefined;
+	const metadata = Reflect.get(error, "metadata");
+	if (!isObject(metadata)) return undefined;
+	if (Reflect.get(error, "code") === "statement_failed") return metadata;
+	// Remote transports retain their public error and add typed SQLite details.
+	const statement = Reflect.get(metadata, "statement");
+	return isObject(statement) ? statement : undefined;
+}
+
 function sqliteResultCode(error: unknown): number | undefined {
-	if (
-		typeof error !== "object" ||
-		error === null ||
-		Reflect.get(error, "group") !== "sqlite" ||
-		Reflect.get(error, "code") !== "statement_failed"
-	) {
-		return undefined;
-	}
-	const code = Reflect.get(Reflect.get(error, "metadata") ?? {}, "code");
+	const details = sqliteStatementDetails(error);
+	const code = details === undefined ? undefined : Reflect.get(details, "code");
 	return typeof code === "number" ? code : undefined;
 }
 
@@ -43,15 +46,8 @@ const SQLITE_FULL = 13;
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/sql.c%2B%2B#L152-L154
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/util/sqlite.c%2B%2B#L173-L186
 export function sqlStatementError(error: unknown): unknown {
-	if (
-		typeof error !== "object" ||
-		error === null ||
-		Reflect.get(error, "group") !== "sqlite" ||
-		Reflect.get(error, "code") !== "statement_failed"
-	) {
-		return error;
-	}
-	const metadata: unknown = Reflect.get(error, "metadata");
+	const metadata = sqliteStatementDetails(error);
+	if (metadata === undefined) return error;
 	const reportedMessage = isObject(metadata) ? Reflect.get(metadata, "message") : undefined;
 	const offset = isObject(metadata) ? Reflect.get(metadata, "offset") : undefined;
 	const message = typeof reportedMessage === "string" ? reportedMessage : errorMessage(error);

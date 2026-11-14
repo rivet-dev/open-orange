@@ -7,6 +7,10 @@ import {
 } from "../../internal/websocket-drain.js";
 
 const notificationTimeoutMilliseconds = 1_000;
+// 1006 cannot appear in a close frame. This private code carries the existing
+// upgrade token so only its actor endpoint decodes an abnormal client close.
+const disconnectTransportCode = 4000;
+const disconnectTransportPrefix = "open-orange:peer-disconnect:";
 
 export interface DurableObjectWebSocketClientClose {
 	code: number;
@@ -54,14 +58,17 @@ class DurableObjectClientWebSocketTransport implements WebSocketTransport {
 	) => Promise<void>;
 	readonly #closeListeners = new Map<TransportListener, TransportListener>();
 	readonly #transport: RivetWebSocket;
+	readonly #upgradeToken: string | undefined;
 	#closing = false;
 
 	constructor(
 		transport: RivetWebSocket,
 		notifyClose: (close?: DurableObjectWebSocketClientClose) => Promise<void>,
+		upgradeToken?: string,
 	) {
 		this.#transport = transport;
 		this.#notifyClose = notifyClose;
+		this.#upgradeToken = upgradeToken;
 	}
 
 	get binaryType(): "arraybuffer" | "blob" {
@@ -108,8 +115,22 @@ class DurableObjectClientWebSocketTransport implements WebSocketTransport {
 	}
 
 	terminate(): void {
-		// A 1006 status cannot be placed in a WebSocket close frame. Notify the
-		// actor through private HTTP before closing Rivet's raw transport so the
+		if (this.#closing) return;
+		if (this.#upgradeToken !== undefined) {
+			const reason = disconnectTransportPrefix + this.#upgradeToken;
+			if (
+				reason.length <= 123 &&
+				new TextEncoder().encode(reason).byteLength <= 123
+			) {
+				this.#closing = true;
+				if (this.#transport.readyState < 2) {
+					this.#transport.close(disconnectTransportCode, reason);
+				}
+				return;
+			}
+		}
+		// Legacy endpoints and oversized metadata retain the existing HTTP path.
+		// Notify the actor before closing Rivet's raw transport so the
 		// user endpoint observes Cloudflare's synthetic abnormal-close event.
 		this.#notifyThenClose();
 	}
@@ -141,8 +162,13 @@ class DurableObjectClientWebSocketTransport implements WebSocketTransport {
 export function createDurableObjectClientWebSocketTransport(
 	transport: RivetWebSocket,
 	notifyClose: (close?: DurableObjectWebSocketClientClose) => Promise<void>,
+	upgradeToken?: string,
 ): WebSocketTransport {
-	return new DurableObjectClientWebSocketTransport(transport, notifyClose);
+	return new DurableObjectClientWebSocketTransport(
+		transport,
+		notifyClose,
+		upgradeToken,
+	);
 }
 
 type TransportListener = (event: unknown) => void | Promise<void>;
@@ -159,12 +185,23 @@ export class DurableObjectActorWebSocketTransport implements WebSocketTransport 
 	readonly #transport: RivetWebSocket;
 	#closeDispatched = false;
 
-	constructor(transport: RivetWebSocket) {
+	constructor(transport: RivetWebSocket, upgradeToken?: string) {
 		this.#transport = transport;
 		const { promise, resolve } = Promise.withResolvers<void>();
 		this.closed = promise;
 		this.#resolveClosed = resolve;
-		transport.addEventListener("close", (event) => this.#dispatchClose(event));
+		transport.addEventListener("close", (event) => {
+			if (
+				upgradeToken !== undefined &&
+				typeof event === "object" &&
+			event !== null &&
+				Reflect.get(event, "code") === disconnectTransportCode &&
+				Reflect.get(event, "reason") === disconnectTransportPrefix + upgradeToken
+			) {
+				return this.receiveDisconnect();
+			}
+			return this.#dispatchClose(event);
+		});
 	}
 
 	get binaryType(): "arraybuffer" | "blob" {

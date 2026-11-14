@@ -70,12 +70,19 @@ async function startChromium(): Promise<{ endpoint: string; stop(): Promise<void
 	return {
 		endpoint,
 		async stop() {
-			if (child.exitCode === null) {
-				const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
-				child.kill("SIGKILL");
-				await exited;
+			if (child.exitCode === null && child.signalCode === null) {
+				// Let the owned browser retire its profile writers before removing
+				// their files. SIGKILL of only the parent leaves children writing.
+				const closed = new Promise((resolveClose) => child.once("close", resolveClose));
+				child.kill("SIGTERM");
+				try {
+					await withDeadline(closed, "Chromium graceful close", 5_000);
+				} catch {
+					if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+					await withDeadline(closed, "Chromium forced close", 5_000);
+				}
 			}
-			await rm(profile, { force: true, recursive: true });
+			await rm(profile, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
 		},
 	};
 }

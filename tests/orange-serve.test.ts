@@ -14,6 +14,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { minioBucketSettings, minioSkip, s3Client, startMinio } from "./minio.js";
 import { mailpitSkip, startMailpit } from "./mailpit.js";
 import { signForwardedHost } from "../src/serve/front.js";
+import { comparisonEngineBinary } from "./runtime-comparison/engine.js";
 import { collectMessages, copyProject, openWebSocket, repositoryRoot, startOrangeDev, withDeadline, type ClientWebSocket } from "./orange-dev.js";
 
 // The Engine binary that the pinned RivetKit spawns for `orange dev`. It is a
@@ -74,7 +75,7 @@ async function startStandaloneEngine(): Promise<StandaloneEngine> {
 			},
 		}),
 	);
-	const child = spawn(getEnginePath(), ["--config", configPath], {
+	const child = spawn(await comparisonEngineBinary(getEnginePath()), ["--config", configPath], {
 		cwd: directory,
 		env: {
 			...process.env,

@@ -43,7 +43,9 @@ const safeInteger = 9_007_199_254_740_991;
 export const snapshotChunkBytes = 512 * 1024;
 // A page holds about this many bytes of row values, so a page of large rows stays small.
 const pageTargetBytes = 1024 * 1024;
-const firstPageRows = 64;
+// Sample one row before sizing pages: 64 hex-encoded 256 KiB blobs already
+// exceed the remote SQLite result limit before the adaptive estimate can run.
+const firstPageRows = 1;
 const maximumPageRows = 4096;
 
 function quoteIdentifier(name: string): string {

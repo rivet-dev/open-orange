@@ -38,5 +38,8 @@ export function calledByWorker(method: Function): boolean {
 	const file = Array.isArray(sites)
 		? (sites as NodeJS.CallSite[]).map((site) => site.getFileName()).find((name) => name != null)
 		: undefined;
-	return typeof file === "string" && workerFilePrefixes.some((prefix) => file.startsWith(prefix));
+	// CJS and embedded V8 report absolute filenames; Node ESM reports file URLs.
+	// Normalize both forms before testing the existing Worker directory boundary.
+	const url = typeof file === "string" && file.startsWith("/") ? pathToFileURL(file).href : file;
+	return typeof url === "string" && workerFilePrefixes.some((prefix) => url.startsWith(prefix));
 }

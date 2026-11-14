@@ -144,7 +144,11 @@ export async function fetchDurableObjectStub(
 	}
 	const head = readDurableObjectResponseHead(response);
 	if (head === undefined) return response;
-	return new Response(response.body, {
+	const noBody = request.method === "HEAD" || [204, 205, 304].includes(response.status);
+	// Some transports expose an empty stream for a body-less HTTP response.
+	// Release that transport before reconstructing the strict Worker response.
+	if (noBody && response.body !== null) await response.body.cancel();
+	return new Response(noBody ? null : response.body, {
 		headers: head.headers,
 		status: response.status,
 		statusText: head.statusText,

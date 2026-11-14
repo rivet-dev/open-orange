@@ -3,10 +3,12 @@ import Logo from './Logo.astro';
 import { NAV, SITE } from '@/data/site';
 
 const linkClass = 'text-ink-soft transition-colors hover:text-ink motion-reduce:transition-none';
+// Docs pages are wider (container-docs); the nav and footer line up with them.
+const container = Astro.url.pathname.startsWith('/docs/') ? 'container-docs' : 'container-x';
 ---
 
 <footer class="border-t border-line">
-	<div class="container-x grid gap-12 py-16 md:grid-cols-[1.6fr_1fr_1fr_1fr]">
+	<div class:list={[container, 'grid gap-12 py-16 md:grid-cols-[1.6fr_1fr_1fr_1fr]']}>
 		<div>
 			<a href="/" class="flex items-center gap-2.5 text-[15px] font-semibold tracking-[-0.01em]">
 				<Logo size={26} />
@@ -51,7 +53,7 @@ const linkClass = 'text-ink-soft transition-colors hover:text-ink motion-reduce:
 		</div>
 	</div>
 	<div class="border-t border-line">
-		<div class="container-x flex flex-col gap-2 py-5 text-[13px] text-ink-faint sm:flex-row sm:items-center sm:justify-between">
+		<div class:list={[container, 'flex flex-col gap-2 py-5 text-[13px] text-ink-faint sm:flex-row sm:items-center sm:justify-between']}>
 			<span>© {new Date().getFullYear()} Rivet Gaming, Inc. · Apache 2.0</span>
 			<span class="flex flex-wrap gap-x-5 gap-y-1">
 				<a href={`${SITE.rivet}/privacy/`} class={linkClass}>Privacy</a>

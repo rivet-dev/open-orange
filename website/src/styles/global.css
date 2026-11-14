@@ -122,6 +122,11 @@ body {
 @utility container-x {
 	@apply mx-auto w-full max-w-6xl px-6;
 }
+/* Docs pages hold a sidebar, the page and "On this page", so they get more of a
+   wide screen. The nav and footer follow them there. */
+@utility container-docs {
+	@apply mx-auto w-full max-w-[88rem] px-6 lg:px-8;
+}
 @utility section {
 	@apply py-20 md:py-32;
 }

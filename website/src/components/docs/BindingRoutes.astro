@@ -11,28 +11,27 @@ import { SERVICE_ICONS } from '@/data/service-icons';
 	<ul class="card divide-y divide-line">
 		{BINDING_ROUTES.map((route) => (
 			<li class="grid gap-x-5 gap-y-2 px-4 py-4 sm:px-5 md:grid-cols-[minmax(0,0.9fr)_1rem_minmax(0,1.3fr)] md:items-start">
-				<ul class="flex flex-wrap gap-1.5">
+				<!-- Below md the bindings are a line of quiet links over the service, not chips. -->
+				<ul class="flex flex-wrap gap-x-1.5 gap-y-0.5 text-[13px] text-ink-faint">
 					{route.bindings.map((b) => (
 						<li>
-							<a href={b.href} class="inline-flex items-center rounded-md border border-line bg-paper-mid px-2 py-0.5 text-[13px] font-medium text-ink no-underline transition-colors hover:border-ink-faint motion-reduce:transition-none">{b.label}</a>
+							<a href={b.href} class="max-md:[li:not(:last-child)>&]:after:content-[','] font-medium text-ink-soft no-underline transition-colors hover:text-ink motion-reduce:transition-none md:inline-flex md:items-center md:rounded-md md:border md:border-line md:bg-paper-mid md:px-2 md:py-0.5 md:text-ink md:hover:border-ink-faint">{b.label}</a>
 						</li>
 					))}
 				</ul>
 				<span class="hidden pt-1 text-ink-faint md:block" aria-hidden="true">→</span>
-				<div class="flex items-start gap-3">
-					<span class="pt-1 text-ink-faint md:hidden" aria-hidden="true">→</span>
-					<!-- A fixed slot, two icons wide, so every service name lines up. -->
-					<ul class="flex w-[3.75rem] shrink-0 flex-wrap gap-1" aria-hidden="true">
+				<!-- Below md: the service name with its icons at the right, then the detail.
+				     From md: a fixed slot two icons wide, so every service name lines up. -->
+				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 md:grid-cols-[3.75rem_minmax(0,1fr)] md:items-start">
+					<ul class="col-start-2 row-start-1 flex gap-1 md:col-start-1 md:row-span-2 md:w-[3.75rem] md:flex-wrap" aria-hidden="true">
 						{route.icons.map((id) => (
 							<li title={SERVICE_ICONS[id].name} class="grid size-7 place-items-center rounded-lg border border-line bg-surface text-ink" style={SERVICE_ICONS[id].color ? `color: ${SERVICE_ICONS[id].color}` : undefined}>
 								<span class="block size-4 [&>svg]:size-full" set:html={SERVICE_ICONS[id].svg} />
 							</li>
 						))}
 					</ul>
-					<div class="min-w-0 pt-1">
-						<p class="text-[15px] font-semibold leading-snug text-ink">{route.service}</p>
-						<p class="mt-1 text-[13.5px] leading-snug text-ink-soft">{route.detail}</p>
-					</div>
+					<p class="col-start-1 row-start-1 min-w-0 text-balance text-[15px] font-semibold leading-snug text-ink md:col-start-2 md:pt-1">{route.service}</p>
+					<p class="col-span-2 text-pretty text-[13.5px] leading-snug text-ink-soft md:col-span-1 md:col-start-2">{route.detail}</p>
 				</div>
 			</li>
 		))}

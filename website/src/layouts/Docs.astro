@@ -51,8 +51,8 @@ const trail = [
 	type="article"
 	structuredData={[breadcrumbs(trail)]}
 >
-	<div class="container-x">
-		<div class:list={['lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:gap-12', !wide && 'xl:grid-cols-[13.5rem_minmax(0,1fr)_11.5rem]']}>
+	<div class="container-docs">
+		<div class:list={['lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:gap-12 xl:gap-16', !wide && 'xl:grid-cols-[13.5rem_minmax(0,1fr)_12rem]']}>
 			<aside class="hidden lg:block">
 				<div data-docs-sidebar class="sticky top-[72px] max-h-[calc(100vh-72px)] overflow-y-auto pb-12 pt-10 [scrollbar-width:thin]">
 					<Sidebar groups={groups} current={href} />

@@ -68,4 +68,24 @@ const slug =
 		margin-top: 0.875rem;
 		margin-bottom: 0.875rem;
 	}
+	/* No rail on a phone (Steps.astro): the number sits beside the title, and
+	   the body takes the full width. */
+	@media (max-width: 639px) {
+		.step {
+			display: grid;
+			grid-template-columns: 1.75rem minmax(0, 1fr);
+			column-gap: 0.75rem;
+			align-items: center;
+		}
+		.step::before {
+			position: static;
+		}
+		.step-title {
+			margin: 0;
+		}
+		.step-body {
+			grid-column: 1 / -1;
+			margin-top: 0.75rem;
+		}
+	}
 </style>

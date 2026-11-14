@@ -8,7 +8,7 @@ description: Use caches.default and caches.open() on OpenOrange, where each cach
 <BindingStatus
   binding="cache-api"
   works="`caches.default`, `caches.open()`, `put()`, `match()`, and `delete()`, with workerd's checks and Miniflare's freshness rules"
-  differs="One cache for each name, not one per data center, and entries stay until they expire. `Vary` is ignored when matching."
+  differs="One cache for each name, not one per data center, and entries stay until they expire."
   missing="`cache.add()`, `cache.addAll()`, and the edge cache that `fetch()` options such as `cf.cacheTtl` control"
 />
 
@@ -103,17 +103,14 @@ again.
 | `delete()` | Supported | Returns `true` only when it removed a live entry. |
 | `ignoreMethod` | Supported | |
 | `request.cf.cacheKey` in Cache API calls | Supported | Replaces the URL as the key. |
-| `Vary` | Partial | Ignored for matching. `Vary: *` makes `put()` throw. |
+| `Vary` | Supported | Not read by `match()`, as on Cloudflare. `Vary: *` makes `put()` throw. |
 | A `Range` with several ranges | Partial | Gets the whole body with `200`. |
 | `cache.add()` and `cache.addAll()` | Not supported | Not defined. |
 | `ctx.cache` | Not supported | `undefined`, as in local workerd. |
 | `fetch()` with `cf.cacheTtl`, `cf.cacheEverything`, `cf.cacheKey`, or `cf.cacheTags` | Not supported | The subrequest goes to the origin. |
 
-Two differences reach most projects:
+One difference reaches most projects:
 
-- **`Vary` is ignored when matching.** Responses that vary by a request header
-  share one entry, so put what varies into the key, for example the URL or
-  `request.cf.cacheKey`.
 - **`fetch()` cache options do nothing.** On Cloudflare, `cf.cacheTtl` and
   `cf.cacheEverything` control the zone's edge cache, which is separate from
   the Cache API. Orange has no edge cache, so the subrequest always goes to
@@ -182,6 +179,10 @@ throws a `TypeError`:
   any entry with an `ETag`. `If-Modified-Since` matches a stored
   `Last-Modified` at or before it.
 - A stored `204`, `205`, or `304` entry returns no body.
+- `match()` does not read `Vary`, as on Cloudflare and in `wrangler dev`. A
+  response stored with `Vary: Accept-Language` answers a request with any
+  `Accept-Language`, and a key holds one entry. To keep variants apart, put
+  what varies into the key, for example the URL or `request.cf.cacheKey`.
 - `match()` and `delete()` treat a request that is not `GET` as a miss, and
   return `undefined` or `false`, unless `ignoreMethod: true`. A Worker can
   answer `HEAD` from the `GET` entry with `ignoreMethod: true`.
@@ -242,9 +243,10 @@ These add to the differences under [Compatibility](#compatibility) and
 
 - `src/runtime/cache.test.ts` drives the Cache API through a real
   `orange dev` over HTTP. It covers hits in one cache only, expiry, delete,
-  `no-store`, `private`, and `Set-Cookie`, puts of clones and streamed bodies
-  that are not stored, `304`, `206` and `416`, puts of different bodies that
-  race on one URL, workerd's `TypeError`s, a restart, and `ORANGE_CACHE=off`.
+  `no-store`, `private`, and `Set-Cookie`, `Vary`, puts of clones and
+  streamed bodies that are not stored, `304`, `206` and `416`, puts of
+  different bodies that race on one URL, workerd's `TypeError`s, a restart,
+  and `ORANGE_CACHE=off`.
 - The runnable example
   [`tests/fixtures/examples/cache-api`](../../tests/fixtures/examples/cache-api)
   is a caching proxy in front of a slow origin, with a named cache, purges,

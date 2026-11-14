@@ -1,7 +1,8 @@
 // Drives the Cache API for src/runtime/cache.test.ts. Each route maps one
 // HTTP request to one cache call so the test observes results over real HTTP.
 // Request headers named x-res-<name> become headers of the response that put()
-// stores, and x-req-<name> become headers of the request that match() sends.
+// stores, and x-req-<name> become headers of the request that put() or match()
+// sends.
 
 function prefixedHeaders(headers, prefix) {
 	const result = new Headers();
@@ -23,7 +24,7 @@ export default {
 				case "/put": {
 					const status = Number(url.searchParams.get("status") ?? "200");
 					await cache.put(
-						new Request(key, { method }),
+						new Request(key, { headers: prefixedHeaders(request.headers, "x-req-"), method }),
 						new Response(request.body, {
 							headers: prefixedHeaders(request.headers, "x-res-"),
 							status,

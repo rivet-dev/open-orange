@@ -113,10 +113,11 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 		body: Uint8Array | string,
 		headers: Record<string, string>,
 		extra: Record<string, string> = {},
+		requestHeaders: Record<string, string> = {},
 	): Promise<Response> =>
 		await fetch(`${origin()}/put?${query({ url, ...extra })}`, {
 			body,
-			headers: prefixed("x-res-", headers),
+			headers: { ...prefixed("x-res-", headers), ...prefixed("x-req-", requestHeaders) },
 			method: "POST",
 		});
 	const match = async (
@@ -244,6 +245,25 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 		const changed = await match(url, { "if-none-match": '"v2"' });
 		assert.equal(changed.status, 200);
 		assert.equal(await changed.text(), "validated");
+	});
+
+	it("when the response has Vary, match still answers a request with other values of those headers, as on Cloudflare", async () => {
+		const url = "https://example.com/vary";
+		const varied = { ...fresh, vary: "Accept-Language" };
+		await put(url, "english", varied, {}, { "accept-language": "en" });
+		const others: Record<string, string>[] = [{ "accept-language": "en" }, { "accept-language": "fr" }, {}];
+		for (const headers of others) {
+			const hit = await match(url, headers);
+			assert.equal(hit.headers.get("cf-cache-status"), "HIT", JSON.stringify(headers));
+			assert.equal(hit.headers.get("vary"), "Accept-Language");
+			assert.equal(await hit.text(), "english");
+		}
+		// A key holds one entry, so a put for another value replaces it.
+		await put(url, "french", varied, {}, { "accept-language": "fr" });
+		for (const headers of others) {
+			const hit = await match(url, headers);
+			assert.equal(await hit.text(), "french", JSON.stringify(headers));
+		}
 	});
 
 	it("when the request has a Range, match returns 206 with exactly those bytes, and 416 past the end", async () => {

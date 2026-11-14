@@ -288,6 +288,11 @@ export class Cache {
 		if (options?.ignoreMethod !== true && request.method !== "GET") return undefined;
 		const backend = openBackend?.(this.#cacheName);
 		if (backend === undefined) return undefined;
+		// The key alone picks the entry. Like Cloudflare's cache and Miniflare,
+		// match() does not read Vary, so a response stored with
+		// `Vary: Accept-Language` answers a request with any Accept-Language.
+		// Measured on Cloudflare, in a Pages Function on pages.dev, and on
+		// wrangler dev 4.129.0, on 2026-11-13.
 		const entry = await backend.match(cacheKey(request));
 		return entry === undefined ? undefined : matchResponse(request, entry);
 	}

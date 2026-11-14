@@ -36,6 +36,8 @@ export interface RivetCloudDoubleOptions {
 	// Cloud storage refuses the upload with this S3-style error.
 	// `html` answers as the storage front end does, with a page instead of the XML error.
 	uploadRejection?: { code: string; message: string; status: number } | { html: string; status: number };
+	// How the browser answers a device sign-in after one pending poll. Default `approve`.
+	signIn?: "approve" | "deny";
 }
 
 export interface ReceivedUpload {
@@ -247,6 +249,7 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 		if (method === "POST" && url.pathname === "/api/auth/device/token") {
 			tokenPolls += 1;
 			if (tokenPolls === 1) send(response, 400, { error: "authorization_pending" });
+			else if (options.signIn === "deny") send(response, 400, { error: "access_denied" });
 			else send(response, 200, tokenResponse());
 			return;
 		}

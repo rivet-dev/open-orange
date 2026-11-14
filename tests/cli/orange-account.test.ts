@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { copyProject, repositoryRoot, withDeadline } from "../harness/orange-dev.js";
-import { type RivetCloudDouble, startRivetCloudDouble } from "../harness/rivet-cloud-double.js";
+import { type RivetCloudDouble, type RivetCloudDoubleOptions, startRivetCloudDouble } from "../harness/rivet-cloud-double.js";
 
 const cliEntrypoint = join(repositoryRoot, "src", "bin.ts");
 const cluster = "acme";
@@ -22,12 +22,13 @@ interface Account {
 	writeSession(session: { accessToken: string; expiresAt: number; refreshToken: string }): Promise<void>;
 }
 
-async function withAccount(body: (account: Account) => Promise<void>): Promise<void> {
+async function withAccount(body: (account: Account) => Promise<void>, options: Partial<RivetCloudDoubleOptions> = {}): Promise<void> {
 	const cloud = await startRivetCloudDouble({
 		builds: { bld_ready: "ready" },
 		cluster,
 		regions: ["iad"],
 		token: "ci-token-value",
+		...options,
 	});
 	const project = await copyProject(join(repositoryRoot, "examples", "hello-durable-object"));
 	const home = await mkdtemp(join(tmpdir(), "open-orange-account-"));
@@ -140,6 +141,19 @@ test("orange link points at orange mcp only until an agent configuration names t
 	});
 });
 
+test("orange login tells the user how to retry when the browser denies sign-in, and saves no session", { timeout: 120_000 }, async () => {
+	await withAccount(
+		async ({ cloud, credentialsPath, orange }) => {
+			const login = await orange(["login", "--no-browser", "--cloud-api", cloud.url]);
+			assert.equal(login.code, 1, login.output);
+			assert.match(login.output, /Sign-in was denied in the browser\. Run `orange login` again and approve the request\./);
+			assert.doesNotMatch(login.output, /Report it/);
+			await assert.rejects(readFile(credentialsPath, "utf8"));
+		},
+		{ signIn: "deny" },
+	);
+});
+
 test("a session that `rivet login` wrote refreshes when it has expired, and the new tokens are saved", { timeout: 120_000 }, async () => {
 	await withAccount(async ({ cloud, credentialsPath, orange, writeSession }) => {
 		const { refreshToken } = cloud.issueSession();
@@ -176,6 +190,16 @@ test("a session the server no longer accepts fails the deploy, asks for a new si
 		const whoami = await orange(["whoami", "--cloud-api", cloud.url]);
 		assert.equal(whoami.code, 1, whoami.output);
 		assert.match(whoami.output, /Not signed in/);
+	});
+});
+
+test("orange whoami with a session the server no longer refreshes says it expired instead of naming the user", { timeout: 120_000 }, async () => {
+	await withAccount(async ({ cloud, orange, writeSession }) => {
+		await writeSession({ accessToken: "expired", expiresAt: Date.now() - 1_000, refreshToken: "revoked" });
+		const whoami = await orange(["whoami", "--cloud-api", cloud.url]);
+		assert.equal(whoami.code, 1, whoami.output);
+		assert.match(whoami.output, /session expired\. Run `orange login` again/);
+		assert.doesNotMatch(whoami.output, /ada@example\.com|Looks like a bug/);
 	});
 });
 

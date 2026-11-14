@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { parseEnv } from "node:util";
 
+import { ExpectedFailure } from "../cli/issue-report.js";
 import { workerSecretsVariable, workerVarsVariable } from "../config/load-wrangler.js";
 import type { RunnerEnvValue } from "./rivet-cloud-api.js";
 
@@ -65,14 +66,14 @@ export async function readEnvironmentChange(
 	const sources = new Map<string, string>();
 	const claim = (name: string, source: string): void => {
 		const earlier = sources.get(name);
-		if (earlier !== undefined) throw new Error(`${name} is set by both ${earlier} and ${source}. Set it once. Nothing was deployed.`);
+		if (earlier !== undefined) throw new ExpectedFailure(`${name} is set by both ${earlier} and ${source}. Set it once. Nothing was deployed.`);
 		sources.set(name, source);
 		checkName(name, source, otherBindings);
 	};
 	const vars = new Map<string, string>();
 	for (const flag of flags.vars) {
 		const colon = flag.indexOf(":");
-		if (colon <= 0) throw new Error(`--var ${JSON.stringify(flag)} needs the form NAME:value, as in wrangler deploy --var.`);
+		if (colon <= 0) throw new ExpectedFailure(`--var ${JSON.stringify(flag)} needs the form NAME:value, as in wrangler deploy --var.`);
 		const name = flag.slice(0, colon);
 		claim(name, `--var ${name}`);
 		vars.set(name, checkValue(name, flag.slice(colon + 1), Infinity));
@@ -82,7 +83,7 @@ export async function readEnvironmentChange(
 		const [name = "", secret = name] = flag.split("=", 2);
 		claim(name, `--secret ${name}`);
 		if (!secretNamePattern.test(secret) || secret.length > maxSecretNameLength) {
-			throw new Error(`--secret ${flag}: ${JSON.stringify(secret)} is not a secret name. Use letters, digits, _ and -, up to 64 characters. Nothing was deployed.`);
+			throw new ExpectedFailure(`--secret ${flag}: ${JSON.stringify(secret)} is not a secret name. Use letters, digits, _ and -, up to 64 characters. Nothing was deployed.`);
 		}
 		secrets.set(name, secret);
 	}
@@ -92,11 +93,11 @@ export async function readEnvironmentChange(
 			claim(name, path);
 			// As `rivet cluster secret set` refuses one without --allow-empty: an empty value is a mistake far
 			// more often than a wish.
-			if (value === "") throw new Error(`${path}: ${name} is empty. Give it a value, or remove the line. Nothing was deployed.`);
+			if (value === "") throw new ExpectedFailure(`${path}: ${name} is empty. Give it a value, or remove the line. Nothing was deployed.`);
 			// The secret is named like its variable, as `rivet deploy --secret KEY` expects, so `rivet cluster
 			// secret set KEY` changes what this Worker reads.
 			if (name.length > maxSecretNameLength) {
-				throw new Error(`${path}: ${name} is ${name.length} characters, and a Rivet cluster secret's name holds at most ${maxSecretNameLength}. Nothing was deployed.`);
+				throw new ExpectedFailure(`${path}: ${name} is ${name.length} characters, and a Rivet cluster secret's name holds at most ${maxSecretNameLength}. Nothing was deployed.`);
 			}
 			secrets.set(name, name);
 			uploads.set(name, checkValue(name, value, maxSecretBytes));
@@ -158,14 +159,14 @@ export function samePoolEnvironment(
 function checkPoolSize(env: Readonly<Record<string, RunnerEnvValue>>): void {
 	const entries = Object.entries(env);
 	if (entries.length > maxVariables) {
-		throw new Error(`The pool would have ${entries.length} variables, and a Rivet runner pool takes at most ${maxVariables}. Nothing was deployed.`);
+		throw new ExpectedFailure(`The pool would have ${entries.length} variables, and a Rivet runner pool takes at most ${maxVariables}. Nothing was deployed.`);
 	}
 	const bytes = entries.reduce(
 		(total, [name, value]) => total + byteLength(name) + byteLength("string" in value ? value.string : value.secret.name),
 		0,
 	);
 	if (bytes > maxEnvironmentBytes) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`The pool's variable names and values would take ${bytes} bytes, and a Rivet runner pool takes at most ${maxEnvironmentBytes}. Move large values to R2 or KV. Nothing was deployed.`,
 		);
 	}
@@ -173,25 +174,25 @@ function checkPoolSize(env: Readonly<Record<string, RunnerEnvValue>>): void {
 
 function checkName(name: string, source: string, otherBindings: ReadonlySet<string>): void {
 	if (!namePattern.test(name) || byteLength(name) > maxNameBytes) {
-		throw new Error(`${source}: ${JSON.stringify(name)} is not a valid variable name. Use letters, digits and _, not starting with a digit. Nothing was deployed.`);
+		throw new ExpectedFailure(`${source}: ${JSON.stringify(name)} is not a valid variable name. Use letters, digits and _, not starting with a digit. Nothing was deployed.`);
 	}
 	if (isReserved(name)) {
-		throw new Error(`${source}: Rivet or Orange sets ${name} on every runner, so a Worker cannot set it. Nothing was deployed.`);
+		throw new ExpectedFailure(`${source}: Rivet or Orange sets ${name} on every runner, so a Worker cannot set it. Nothing was deployed.`);
 	}
 	if (otherBindings.has(name)) {
-		throw new Error(`${source}: ${name} is already a binding in the Wrangler configuration. Rename the variable. Nothing was deployed.`);
+		throw new ExpectedFailure(`${source}: ${name} is already a binding in the Wrangler configuration. Rename the variable. Nothing was deployed.`);
 	}
 }
 
 function checkValue(name: string, value: string, maxBytes: number): string {
 	if (controlCharacter.test(value)) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`${name} has a line break or another control character, and Rivet runner variables and secrets are one line. Encode it, for example with \`base64 -w0 key.pem\`, and decode it in the Worker with atob(env.${name}). Nothing was deployed.`,
 		);
 	}
 	const bytes = byteLength(value);
 	if (bytes > maxBytes) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`${name} is ${bytes} bytes, and a Rivet cluster secret holds at most ${maxBytes}. Keep large material in R2 or KV and put the key to it in the secret. Nothing was deployed.`,
 		);
 	}
@@ -204,7 +205,12 @@ async function readSecretsFile(path: string): Promise<Record<string, string>> {
 	try {
 		text = await readFile(path, "utf8");
 	} catch (error: unknown) {
-		throw new Error(`--secrets-file ${path} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+		const code = (error as NodeJS.ErrnoException).code;
+		const problem =
+			code === "ENOENT" ? "does not exist" : code === "EISDIR" ? "is a directory" : code === "EACCES" ? "is not readable" : undefined;
+		// An unknown read failure is not a user fault, so it keeps the bug report.
+		if (problem === undefined) throw error;
+		throw new ExpectedFailure(`--secrets-file ${path} ${problem}. Pass the path to a .env or JSON file. Nothing was deployed.`);
 	}
 	let json: unknown;
 	try {
@@ -213,10 +219,10 @@ async function readSecretsFile(path: string): Promise<Record<string, string>> {
 		return Object.fromEntries(Object.entries(parseEnv(text)).filter((entry): entry is [string, string] => entry[1] !== undefined));
 	}
 	if (typeof json !== "object" || json === null || Array.isArray(json)) {
-		throw new Error(`--secrets-file ${path} holds JSON that is not an object of names to text values.`);
+		throw new ExpectedFailure(`--secrets-file ${path} holds JSON that is not an object of names to text values.`);
 	}
 	for (const [name, value] of Object.entries(json)) {
-		if (typeof value !== "string") throw new Error(`--secrets-file ${path}: ${name} is not text. Secret values are strings.`);
+		if (typeof value !== "string") throw new ExpectedFailure(`--secrets-file ${path}: ${name} is not text. Secret values are strings.`);
 	}
 	return json as Record<string, string>;
 }

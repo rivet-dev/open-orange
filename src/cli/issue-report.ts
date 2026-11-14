@@ -93,6 +93,16 @@ export function renderIssueLine(url: string, stream: NodeJS.WriteStream): string
  */
 export class ExpectedFailure extends Error {}
 
+/**
+ * The exit code for a command that failed with `error`: 1 for an ExpectedFailure, 2 for an unknown
+ * or malformed option, which node:util parseArgs refuses, and 1 with a bug report for the rest.
+ */
+export function failureExitCode(error: unknown): number {
+	if (error instanceof ExpectedFailure) return exitWithOutcome(1);
+	const code = error instanceof Error && "code" in error ? String(error.code) : "";
+	return code.startsWith("ERR_PARSE_ARGS_") ? 2 : 1;
+}
+
 let outcomeExitCode: number | undefined;
 
 /**

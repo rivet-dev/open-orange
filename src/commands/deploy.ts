@@ -9,12 +9,12 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, parseEnv } from "node:util";
 
 import { type AdditionalModuleSearch, findAdditionalModules } from "../build/additional-modules.js";
-import { bundleWorker, type ModuleRule } from "../build/bundle-worker.js";
+import { bundleWorker, isUserBuildFailure, type ModuleRule } from "../build/bundle-worker.js";
 import { withoutRootDependencies } from "../build/image-lockfile.js";
 import { runCustomBuild } from "./dev.js";
 import { customBuildDoneVariable } from "./serve.js";
 import { unresolvedRuntimeModules } from "../build/rewrite-module-imports.js";
-import { ExpectedFailure, exitWithOutcome } from "../cli/issue-report.js";
+import { ExpectedFailure, failureExitCode } from "../cli/issue-report.js";
 import { startSpinner } from "../cli/spinner.js";
 import { createTheme, type Theme } from "../cli/theme.js";
 import { loadWranglerConfiguration } from "../config/load-wrangler.js";
@@ -135,7 +135,7 @@ export async function runDeployCommand(
 		return await executeDeployCommand(args, io);
 	} catch (error: unknown) {
 		io.error(error instanceof Error ? error.message : String(error));
-		return error instanceof ExpectedFailure ? exitWithOutcome(1) : 1;
+		return failureExitCode(error);
 	}
 }
 
@@ -143,7 +143,7 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 	const { values } = parseArgs({ args: args.slice(1), options: deployOptions, strict: true });
 	// Other deploy CLIs set a variable with `--env KEY=VAL`, so a user may pass one here.
 	if (values.env?.includes("=") === true) {
-		throw new Error(
+		throw new ExpectedFailure(
 			"-e, --env selects a Wrangler environment, not a variable. Set a variable with --var NAME:value.",
 		);
 	}
@@ -151,19 +151,19 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 	if (existingBuild !== undefined) {
 		const conflicting = (["outdir", "image", "tag"] as const).filter((flag) => values[flag] !== undefined);
 		if (conflicting.length > 0) {
-			throw new Error(
+			throw new ExpectedFailure(
 				`--build rolls out an existing build, so it takes no ${conflicting.map((flag) => `--${flag}`).join(" or ")}. Pass only one of them.`,
 			);
 		}
 	}
 	if ((values.config?.length ?? 0) > 1) {
-		throw new Error(
+		throw new ExpectedFailure(
 			"orange deploy supports one Worker for now. Pass a single --config and deploy each Worker on its own.",
 		);
 	}
 	const nodeCount = values["node-count"] === undefined ? undefined : Number(values["node-count"]);
 	if (nodeCount !== undefined && (!Number.isInteger(nodeCount) || nodeCount < 1)) {
-		throw new Error(`--node-count must be a whole number of at least 1, not ${values["node-count"]}`);
+		throw new ExpectedFailure(`--node-count must be a whole number of at least 1, not ${values["node-count"]}`);
 	}
 	const link = findLink();
 	const apiUrl = values["cloud-api"] ?? defaultCloudApi;
@@ -191,19 +191,19 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 		...(values.env === undefined ? {} : { environment: values.env }),
 	});
 	if (config.assets !== undefined && !isInside(config.projectRoot, config.assets.directory)) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`orange deploy copies the project directory only, so assets must be inside it: ${config.assets.directory}`,
 		);
 	}
 	const image = values.image ?? (config.workerName ?? "orange-worker").toLowerCase();
 	if (!imagePattern.test(image)) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`${values.image === undefined ? "The Worker name" : "--image"} ${JSON.stringify(image)} is not a valid image name. Pass --image with lowercase letters, digits, and . _ - separators.`,
 		);
 	}
 	const tag = values.tag ?? utcTimestamp(new Date());
 	if (!tagPattern.test(tag)) {
-		throw new Error(`--tag ${JSON.stringify(tag)} is not a valid image tag. Use letters, digits, _ . and -, up to 128 characters.`);
+		throw new ExpectedFailure(`--tag ${JSON.stringify(tag)} is not a valid image tag. Use letters, digits, _ . and -, up to 128 characters.`);
 	}
 	const reference = `${image}:${tag}`;
 	const flags = { secrets: values.secret ?? [], secretsFiles: values["secrets-file"] ?? [], vars: values.var ?? [] };
@@ -265,7 +265,7 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 		buildId = await buildAndUpload(io, theme, cloud, build, reference);
 	} else {
 		const build = await cloud.getBuild(existingBuild);
-		if (build.status !== "ready") throw new Error(buildNotReady(build, cluster));
+		if (build.status !== "ready") throw buildNotReady(build, cluster);
 		buildId = build.build_id;
 	}
 
@@ -311,13 +311,13 @@ async function checkSecrets(cloud: RivetCloudClient, cluster: string, change: En
 	const missing = [...change.secrets].filter(([, secret]) => !existing.has(secret) && !change.uploads.has(secret));
 	if (missing.length > 0) {
 		const [name, secret] = missing[0] as [string, string];
-		throw new Error(
+		throw new ExpectedFailure(
 			`Cluster ${cluster} has no secret ${secret} for ${name}. Set it with \`rivet cluster secret set ${secret}\`, or pass it in --secrets-file. Nothing was deployed.`,
 		);
 	}
 	const added = [...change.uploads.keys()].filter((secret) => !existing.has(secret)).length;
 	if (existing.size + added > maxClusterSecrets) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`Cluster ${cluster} holds ${existing.size} secrets, this deploy adds ${added}, and a cluster holds at most ${maxClusterSecrets}. Delete unused secrets with \`rivet cluster secret delete\`. Nothing was deployed.`,
 		);
 	}
@@ -340,10 +340,10 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 function requireCredentials(target: DeployTarget): { auth: CloudAuth; cluster: string } {
 	if (target.cluster === undefined) {
-		throw new Error("orange deploy needs a cluster. Pass --cluster <name>, set RIVET_CLUSTER, or run `orange link --cluster <name>`.");
+		throw new ExpectedFailure("orange deploy needs a cluster. Pass --cluster <name>, set RIVET_CLUSTER, or run `orange link --cluster <name>`.");
 	}
 	if (target.auth === undefined) {
-		throw new Error("orange deploy needs Rivet Cloud credentials. Run `orange login`, or set RIVET_CLOUD_TOKEN or pass --token for CI.");
+		throw new ExpectedFailure("orange deploy needs Rivet Cloud credentials. Run `orange login`, or set RIVET_CLOUD_TOKEN or pass --token for CI.");
 	}
 	return { auth: target.auth, cluster: target.cluster };
 }
@@ -353,16 +353,16 @@ function resolveRegion(regions: readonly RivetRegion[], cluster: string, request
 	if (requested !== undefined) {
 		const region = regions.find((candidate) => candidate.region === requested);
 		if (region === undefined) {
-			throw new Error(`Cluster ${cluster} has no region ${requested}. Its regions: ${names || "none"}.`);
+			throw new ExpectedFailure(`Cluster ${cluster} has no region ${requested}. Its regions: ${names || "none"}.`);
 		}
 		return region;
 	}
 	const [only, ...others] = regions;
 	if (only === undefined) {
-		throw new Error(`Cluster ${cluster} has no regions. Enable a region on the cluster, then deploy again.`);
+		throw new ExpectedFailure(`Cluster ${cluster} has no regions. Enable a region on the cluster, then deploy again.`);
 	}
 	if (others.length > 0) {
-		throw new Error(`Cluster ${cluster} has several regions: ${names}. Pass --region <region>.`);
+		throw new ExpectedFailure(`Cluster ${cluster} has several regions: ${names}. Pass --region <region>.`);
 	}
 	return only;
 }
@@ -384,7 +384,7 @@ async function buildAndUpload(
 		await docker("docker image save", ["image", "save", "-o", tarball, reference]);
 		const { size } = await stat(tarball);
 		if (size > maxImageBytes) {
-			throw new Error(`The image is ${formatBytes(size)}, and Rivet clusters take images up to 5 GiB. Make the image smaller.`);
+			throw new ExpectedFailure(`The image is ${formatBytes(size)}, and Rivet clusters take images up to 5 GiB. Make the image smaller.`);
 		}
 		const md5 = await md5Base64(tarball);
 		const created = await cloud.createBuild({ content_length: size, content_md5: md5, image: reference });
@@ -408,7 +408,7 @@ async function waitForBuild(cloud: RivetCloudClient, theme: Theme, buildId: stri
 			const build = await cloud.getBuild(buildId);
 			if (build.status === "ready") return;
 			if (build.status === "failed" || build.status === "expired" || build.status === "deleting") {
-				throw new Error(buildNotReady(build, undefined));
+				throw buildNotReady(build, undefined);
 			}
 			if (Date.now() > deadline) {
 				throw new Error(
@@ -423,20 +423,21 @@ async function waitForBuild(cloud: RivetCloudClient, theme: Theme, buildId: stri
 	}
 }
 
-function buildNotReady(build: RivetBuild, cluster: string | undefined): string {
+function buildNotReady(build: RivetBuild, cluster: string | undefined): Error {
 	const failure = build.failure;
 	if (build.status === "failed" && failure !== null) {
-		const next =
-			failure.fault === "user"
-				? "Fix the image and deploy again."
-				: `This is a Rivet Cloud fault. Deploy again, or contact Rivet support with build ID ${build.build_id}.`;
-		return `Build ${build.build_id} failed with ${failure.code}: ${sentence(failure.message)} ${next}`;
+		if (failure.fault !== "user") {
+			return new Error(
+				`Build ${build.build_id} failed with ${failure.code}: ${sentence(failure.message)} This is a Rivet Cloud fault. Deploy again, or contact Rivet support with build ID ${build.build_id}.`,
+			);
+		}
+		return new ExpectedFailure(`Build ${build.build_id} failed with ${failure.code}: ${sentence(failure.message)} Fix the image and deploy again.`);
 	}
 	if (build.status === "expired") {
-		return `Build ${build.build_id} expired before its upload completed. Deploy again.`;
+		return new ExpectedFailure(`Build ${build.build_id} expired before its upload completed. Deploy again.`);
 	}
 	const where = cluster === undefined ? "" : ` on cluster ${cluster}`;
-	return `Build ${build.build_id}${where} is ${build.status}, and only a ready build can be rolled out.`;
+	return new ExpectedFailure(`Build ${build.build_id}${where} is ${build.status}, and only a ready build can be rolled out. Wait until it is ready, then deploy it again.`);
 }
 
 async function waitForRollout(
@@ -456,7 +457,8 @@ async function waitForRollout(
 			if (state === "ready" && replicas !== null && replicas.updated === replicas.desired) return pool;
 			if (state === "degraded" || state === "down") {
 				const fault = pool.status.fault === null ? "" : ` (${pool.status.fault} fault)`;
-				throw new Error(
+				// A Worker that crashes on start is the user's to fix, not a bug in Orange.
+				throw new (pool.status.fault === "user" ? ExpectedFailure : Error)(
 					`Pool ${poolName} in region ${region} is ${state}${fault}: ${sentence(pool.status.message ?? "Rivet Cloud gave no reason")}${hint()}`,
 				);
 			}
@@ -568,7 +570,7 @@ async function docker(label: string, args: readonly string[]): Promise<void> {
 		code = await run("docker", args, process.cwd(), "stderr");
 	} catch (error: unknown) {
 		if (error instanceof Error && Reflect.get(error, "code") === "ENOENT") {
-			throw new Error("orange deploy needs Docker to build the image. Install Docker, or pass --build <id> to roll out a build that exists.");
+			throw new ExpectedFailure("orange deploy needs Docker to build the image. Install Docker, or pass --build <id> to roll out a build that exists.");
 		}
 		throw error;
 	}
@@ -627,7 +629,7 @@ async function writeBuildContext(
 			)
 		: [];
 	if (foreign.length > 0) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`--outdir ${directory} holds files that orange deploy did not write: ${foreign.join(", ")}. Pass an empty or new directory.`,
 		);
 	}
@@ -683,6 +685,9 @@ async function writeBuildContext(
 			moduleRules: worker.moduleRules,
 			outputPath,
 			packagesOnly: true,
+		}).catch((error: unknown) => {
+			// esbuild names the file and line, such as a syntax error in the Worker.
+			throw isUserBuildFailure(error) ? new ExpectedFailure(error.message) : error;
 		});
 		for (const warning of bundle.warnings) worker.warn(`! ${warning}`);
 		// The bundle keeps `@cloudflare/sandbox` as an import, which `orange serve` resolves.

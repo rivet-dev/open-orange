@@ -94,6 +94,8 @@ test("orange deploy refuses a variable or secret Rivet would not take, before it
 			[["--var", "RIVET_USER_DATA_BUCKET:key-body-value"], /Rivet or Orange sets RIVET_USER_DATA_BUCKET on every runner/],
 			[["--var", "CACHE:key-body-value"], /CACHE is already a binding in the Wrangler configuration/],
 			[["--secret", "API_KEY=-bad"], /"-bad" is not a secret name/],
+			[["--secrets-file", join(outdir, "missing.env")], /--secrets-file .*missing\.env does not exist\. Pass the path to a \.env or JSON file/],
+			[["--secrets-file", project.directory], /--secrets-file .* is a directory\. Pass the path to a \.env or JSON file/],
 		] as const) {
 			const refused = await dryRun(project, [...args, "--outdir", outdir]);
 			assert.equal(refused.code, 1, refused.output);

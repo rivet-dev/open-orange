@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -84,10 +85,44 @@ test("a failed command links to a prefilled issue that holds the error but no se
 });
 
 test("a usage error is the user's input, not a bug, so it prints no issues link", { timeout: 60_000 }, async () => {
-	for (const args of [["d1", "not-a-subcommand"], ["not-a-command"], ["migrate", "prepare", "--no-such-flag"]]) {
+	for (const args of [["d1", "not-a-subcommand"], ["not-a-command"], ["migrate", "prepare", "--no-such-flag"], ["deploy", "--no-such-flag"], ["serve", "--no-such-flag"], ["whoami", "--no-such-flag"]]) {
 		const { code, output } = await orange(args, repositoryRoot);
 		assert.equal(code, 2, output);
 		assert.ok(!output.includes(newIssue), output);
+	}
+});
+
+test("a mistake in the user's input or Worker fails with its reason and no issues link", { timeout: 120_000 }, async () => {
+	const project = await copyProject(join(repositoryRoot, "examples", "hello-durable-object"));
+	const broken = await copyProject(join(repositoryRoot, "examples", "hello-durable-object"));
+	const withDatabase = await copyProject(join(repositoryRoot, "examples", "hello-durable-object"));
+	await appendFile(join(broken.directory, "src", "index.ts"), "\nexport const = ;\n");
+	await writeFile(
+		join(withDatabase.directory, "wrangler.jsonc"),
+		JSON.stringify({ compatibility_date: "2026-09-03", d1_databases: [{ binding: "DB", database_id: "db-1", database_name: "notes" }], main: "src/index.ts", name: "notes" }),
+	);
+	// A credentials file that is not JSON, as after an edit by hand.
+	const brokenHome = join(project.directory, "home");
+	await mkdir(join(brokenHome, ".rivet"), { recursive: true });
+	await writeFile(join(brokenHome, ".rivet", "credentials"), "{");
+	const noEndpoint = { RIVET_ENDPOINT: "" };
+	try {
+		for (const { args, cwd, env, reason } of [
+			{ args: ["deploy", "--dry-run", "--var", "A=b"], cwd: project.directory, reason: /--var "A=b" needs the form NAME:value/ },
+			{ args: ["deploy", "--dry-run", "--var", "RIVET_TOKEN:x"], cwd: project.directory, reason: /Rivet or Orange sets RIVET_TOKEN on every runner/ },
+			{ args: ["deploy", "--dry-run"], cwd: broken.directory, reason: /src\/index\.ts:\d+:\d+: ERROR: / },
+			{ args: ["serve"], cwd: project.directory, reason: /orange serve needs RIVET_ENDPOINT/ },
+			{ args: ["d1", "execute", "DB", "--remote", "--command", "select 1"], cwd: withDatabase.directory, reason: /--remote needs RIVET_ENDPOINT/ },
+			{ args: ["d1", "execute", "NOPE", "--command", "select 1"], cwd: withDatabase.directory, reason: /Couldn't find a D1 DB with the name or binding 'NOPE'/ },
+			{ args: ["whoami"], cwd: project.directory, env: { HOME: brokenHome }, reason: /credentials: it is not valid JSON .*Fix the file, or delete it/ },
+		] as { args: string[]; cwd: string; env?: NodeJS.ProcessEnv; reason: RegExp }[]) {
+			const { code, output } = await orange(args, cwd, { ...noEndpoint, ...env });
+			assert.equal(code, 1, output);
+			assert.match(output, reason);
+			assert.ok(!output.includes(newIssue), output);
+		}
+	} finally {
+		await Promise.all([project.dispose(), broken.dispose(), withDatabase.dispose()]);
 	}
 });
 

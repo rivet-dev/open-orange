@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 
 import { stop as stopEsbuild } from "esbuild";
 
+import { ExpectedFailure, failureExitCode } from "../cli/issue-report.js";
 import type { Theme } from "../cli/theme.js";
 import { loadWranglerConfiguration } from "../config/load-wrangler.js";
 import { resolveDeploymentStorage } from "../runtime/deployment.js";
@@ -50,7 +51,7 @@ export async function runServeCommand(
 		return await executeServeCommand(args, io);
 	} catch (error: unknown) {
 		io.error(error instanceof Error ? error.message : String(error));
-		return 1;
+		return failureExitCode(error);
 	}
 }
 
@@ -70,13 +71,13 @@ async function executeServeCommand(
 	});
 	const endpoint = process.env.RIVET_ENDPOINT;
 	if (endpoint === undefined || endpoint.length === 0) {
-		throw new Error(
+		throw new ExpectedFailure(
 			"orange serve needs RIVET_ENDPOINT, such as https://<namespace>:<token>@api.rivet.dev",
 		);
 	}
 	const port = Number(values.port ?? process.env.PORT ?? defaultPort);
 	if (!Number.isInteger(port) || port < 0 || port > 65_535) {
-		throw new Error(`orange serve received an invalid port: ${values.port ?? process.env.PORT}`);
+		throw new ExpectedFailure(`orange serve received an invalid port: ${values.port ?? process.env.PORT}. Use a number from 0 to 65535.`);
 	}
 	const configPaths: (string | undefined)[] = values.config === undefined || values.config.length === 0 ? [undefined] : values.config;
 	const configs = [];
@@ -89,7 +90,7 @@ async function executeServeCommand(
 		});
 		for (const warning of loaded.warnings) io.error(`! ${warning}`);
 		if (loaded.build !== undefined && process.env[customBuildDoneVariable] !== "1") {
-			throw new Error("orange serve does not run custom builds. Build the Worker before the image starts.");
+			throw new ExpectedFailure("orange serve does not run custom builds. Build the Worker before the image starts.");
 		}
 		configs.push(loaded);
 	}

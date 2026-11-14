@@ -7,7 +7,7 @@ import { createClient, MigratorError, type BackfillResult } from "@rivet-dev/dur
 import ignore from "ignore";
 
 import type { Theme } from "../cli/theme.js";
-import { ExpectedFailure, exitWithOutcome } from "../cli/issue-report.js";
+import { ExpectedFailure, exitWithOutcome, failureExitCode } from "../cli/issue-report.js";
 import { createTheme } from "../cli/theme.js";
 import { requireDatabase, withDatabase } from "./d1.js";
 import { docsRootUrl } from "./dev-output.js";
@@ -801,10 +801,7 @@ export async function runMigrateCommand(args: readonly string[], io: MigrateComm
 		return 2;
 	} catch (error: unknown) {
 		io.error(error instanceof Error ? error.message : String(error));
-		if (error instanceof ExpectedFailure) return exitWithOutcome(1);
-		// node:util parseArgs refuses an unknown or malformed option. That is a usage error.
-		const code = error instanceof Error && "code" in error ? String(error.code) : "";
-		return code.startsWith("ERR_PARSE_ARGS_") ? 2 : 1;
+		return failureExitCode(error);
 	} finally {
 		process.chdir(originalWorkingDirectory);
 	}

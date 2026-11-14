@@ -248,6 +248,11 @@ function isBuildFailure(error: unknown): error is BuildFailure {
 	);
 }
 
+/** True for an esbuild failure in the Worker's own code, such as a syntax error, and not in an Orange plugin. */
+export function isUserBuildFailure(error: unknown): error is BuildFailure {
+	return isBuildFailure(error) && error.errors.length > 0 && error.errors.every((message) => message.pluginName === "");
+}
+
 /**
  * Maps an esbuild error to an import that workerd rejects lazily, keyed by importer and specifier.
  * Returns undefined for every other build error.

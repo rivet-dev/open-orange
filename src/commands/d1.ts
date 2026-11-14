@@ -8,6 +8,7 @@ import {
 	type D1DatabaseConfiguration,
 	type ResolvedWranglerConfiguration,
 } from "../config/load-wrangler.js";
+import { ExpectedFailure, failureExitCode } from "../cli/issue-report.js";
 import { resolveDeploymentStorage } from "../runtime/deployment.js";
 import { spawnRuntime, type RuntimeProcess } from "../runtime/spawn.js";
 import { rivetNamespaceOf } from "./serve.js";
@@ -104,7 +105,7 @@ export function parseD1Arguments(path: D1CommandPath, args: readonly string[]): 
 	}
 	const database = positionals[0];
 	if (database === undefined || positionals.length > 1) {
-		throw new Error(`orange ${path} requires exactly one database name or binding`);
+		throw new ExpectedFailure(`orange ${path} requires exactly one database name or binding`);
 	}
 	const command = values.get("command");
 	const file = values.get("file");
@@ -173,8 +174,8 @@ async function openDatabase(
 ): Promise<DatabaseConnection> {
 	const endpoint = remote ? process.env.RIVET_ENDPOINT : undefined;
 	if (remote && (endpoint === undefined || endpoint.length === 0)) {
-		throw new Error(
-			"--remote needs RIVET_ENDPOINT, such as https://<namespace>:<token>@api.rivet.dev",
+		throw new ExpectedFailure(
+			"--remote needs RIVET_ENDPOINT. Set it to the Rivet Engine of the deployed app, such as RIVET_ENDPOINT=https://<namespace>:<token>@api.rivet.dev.",
 		);
 	}
 	const temporaryDirectory = await mkdtemp(join(tmpdir(), "open-orange-d1-"));
@@ -278,7 +279,7 @@ export function requireDatabase(
 ): D1DatabaseConfiguration {
 	const database = findDatabase(config, name);
 	if (database === undefined) {
-		throw new Error(
+		throw new ExpectedFailure(
 			`Couldn't find a D1 DB with the name or binding '${name}' in your ${basename(requireConfigPath(config))} file.`,
 		);
 	}
@@ -322,7 +323,7 @@ async function executeCommand(
 	io: D1CommandIo,
 ): Promise<number> {
 	if (parsed.file !== undefined && parsed.command !== undefined) {
-		throw new Error("Error: can't provide both --command and --file.");
+		throw new ExpectedFailure("Error: can't provide both --command and --file.");
 	}
 	const sql =
 		parsed.file !== undefined
@@ -479,7 +480,7 @@ async function migrationsCommand(
 					: ` Set \`migrations_dir\` in your ${basename(configPath)} file to choose a different path.`
 			}`,
 		);
-		throw new Error(`No migrations present at ${migrations.directory}.`);
+		throw new ExpectedFailure(`No migrations present at ${migrations.directory}.`);
 	}
 	const database = requireDatabase(config, parsed.database);
 	return withDatabase(config, database, parsed.remote, async (local) => {
@@ -554,6 +555,6 @@ export async function runD1Command(
 		} else {
 			io.error(message);
 		}
-		return 1;
+		return failureExitCode(error);
 	}
 }

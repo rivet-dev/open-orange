@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 
-import { ExpectedFailure, exitWithOutcome } from "../cli/issue-report.js";
+import { ExpectedFailure, failureExitCode } from "../cli/issue-report.js";
 import { isRivetMcpConfigured } from "./mcp.js";
 import { createRivetCloudClient } from "./rivet-cloud-api.js";
 
@@ -86,7 +86,7 @@ function parseJsonFile(path: string, text: string): unknown {
 	try {
 		return JSON.parse(text);
 	} catch (error: unknown) {
-		throw new Error(`Couldn't read ${path}: it is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+		throw new ExpectedFailure(`Couldn't read ${path}: it is not valid JSON (${error instanceof Error ? error.message : String(error)}). Fix the file, or delete it and sign in or link again.`);
 	}
 }
 
@@ -94,7 +94,7 @@ async function readCredentials(): Promise<Credentials> {
 	const path = credentialsPath();
 	if (!existsSync(path)) return credentialsSchema.parse({});
 	const parsed = credentialsSchema.safeParse(parseJsonFile(path, await readFile(path, "utf8")));
-	if (!parsed.success) throw new Error(`Couldn't read ${path}: ${z.prettifyError(parsed.error)}`);
+	if (!parsed.success) throw new ExpectedFailure(`Couldn't read ${path}: ${z.prettifyError(parsed.error)}\nFix the file, or delete it and run \`orange login\` again.`);
 	return parsed.data;
 }
 
@@ -265,7 +265,7 @@ async function login(apiUrl: string, useBrowser: boolean, io: AccountIo): Promis
 	let intervalMs = Math.max(device.interval, 1) * 1000;
 	for (;;) {
 		await delay(intervalMs);
-		if (Date.now() > deadline) throw new Error("The sign-in code expired. Run `orange login` again.");
+		if (Date.now() > deadline) throw new ExpectedFailure("The sign-in code expired. Run `orange login` again.");
 		const poll = await postAuth(apiUrl, "token", {
 			client_id: clientId,
 			device_code: device.device_code,
@@ -285,8 +285,8 @@ async function login(apiUrl: string, useBrowser: boolean, io: AccountIo): Promis
 			intervalMs += 5_000;
 			continue;
 		}
-		if (reason === "access_denied") throw new Error("Sign-in was denied in the browser.");
-		if (reason === "expired_token") throw new Error("The sign-in code expired. Run `orange login` again.");
+		if (reason === "access_denied") throw new ExpectedFailure("Sign-in was denied in the browser. Run `orange login` again and approve the request.");
+		if (reason === "expired_token") throw new ExpectedFailure("The sign-in code expired. Run `orange login` again.");
 		throw new Error(`Sign-in failed: ${failure.data.error_description ?? reason}`);
 	}
 }
@@ -305,7 +305,7 @@ export function findLink(from: string = process.cwd()): LinkedTarget | undefined
 		const path = linkPath(directory);
 		if (existsSync(path)) {
 			const parsed = linkSchema.safeParse(parseJsonFile(path, readFileSync(path, "utf8")));
-			if (!parsed.success) throw new Error(`Couldn't read ${path}: ${z.prettifyError(parsed.error)}`);
+			if (!parsed.success) throw new ExpectedFailure(`Couldn't read ${path}: ${z.prettifyError(parsed.error)}\nRun \`orange link --cluster <name>\` to write it again.`);
 			return {
 				path,
 				...(parsed.data.cluster === undefined ? {} : { cluster: parsed.data.cluster }),
@@ -391,8 +391,10 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 			case "whoami": {
 				const auth = await resolveCloudAuth(values.token, apiUrl);
 				if (auth === undefined) {
-					throw new Error("Not signed in to Rivet Cloud. Run `orange login`, or set RIVET_CLOUD_TOKEN or pass --token for CI.");
+					throw new ExpectedFailure("Not signed in to Rivet Cloud. Run `orange login`, or set RIVET_CLOUD_TOKEN or pass --token for CI.");
 				}
+				// A saved session can be past refreshing, and then the user is not signed in.
+				if (auth.user !== undefined) await auth.token();
 				if (auth.user === undefined) io.log("Cloud API token");
 				else io.log(auth.user.name.length === 0 ? auth.user.email : `${auth.user.name} <${auth.user.email}>`);
 				io.error(`Credentials: ${auth.description}`);
@@ -401,7 +403,7 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 				return 0;
 			}
 			case "link": {
-				if (values.cluster === undefined) throw new Error("orange link needs a cluster. Pass --cluster <name>.");
+				if (values.cluster === undefined) throw new ExpectedFailure("orange link needs a cluster. Pass --cluster <name>.");
 				// The same call that `orange deploy` makes first, so a cluster that does not exist fails here.
 				const auth = await resolveCloudAuth(values.token, apiUrl);
 				const organization = values.org ?? (process.env.RIVET_ORG?.trim() || undefined);
@@ -440,6 +442,6 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 		}
 	} catch (error: unknown) {
 		io.error(error instanceof Error ? error.message : String(error));
-		return error instanceof ExpectedFailure ? exitWithOutcome(1) : 1;
+		return failureExitCode(error);
 	}
 }

@@ -8956,6 +8956,26 @@
 			]
 		},
 		{
+			"id": "fetch-outbound-cf-connecting-ip",
+			"category": "fetch",
+			"name": "CF-Connecting-IP on outbound fetch()",
+			"status": "partial",
+			"cloudflare": "Cloudflare replaces CF-Connecting-IP on a Worker subrequest and adds CF-Worker. An origin behind Cloudflare answers a request that still carries a client's CF-Connecting-IP with 403.",
+			"orange": "fetch() removes CF-Connecting-IP before it sends the request, as Miniflare does, so a Worker that proxies its incoming request reaches an origin behind Cloudflare.",
+			"notes": "The origin gets no CF-Connecting-IP and no CF-Worker header. Service bindings and Durable Object stubs still pass the header on. Measured against Cloudflare on 2026-11-13: the same proxied request got 403 with the header and reached the origin without it.",
+			"evidence": [
+				{
+					"kind": "code",
+					"path": "packages/runtime-node/src/globals/http.ts",
+					"lines": "862-873"
+				},
+				{
+					"kind": "doc",
+					"url": "https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip-in-worker-subrequests"
+				}
+			]
+		},
+		{
 			"id": "fetch-inbound-cf-ray",
 			"category": "fetch",
 			"name": "CF-Ray inbound header",

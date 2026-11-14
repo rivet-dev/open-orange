@@ -859,6 +859,18 @@ export async function fetch<Cf = unknown>(
 				duplex: "half",
 			});
 		}
+		// A Worker that proxies its incoming request passes on the CF-Connecting-IP
+		// that Orange set. Cloudflare replaces that header on a subrequest, and an
+		// origin behind Cloudflare answers a request that still has it with 403.
+		// Miniflare removes it for the same reason. Measured on Cloudflare on
+		// 2026-11-13.
+		// https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip-in-worker-subrequests
+		// https://github.com/cloudflare/workers-sdk/blob/be87ff0382c53a294e948e49419d25d653c50e86/packages/miniflare/src/workers/core/outbound.worker.ts#L50-L58
+		if (outgoing.headers.has("cf-connecting-ip")) {
+			const headers = new UndiciHeaders(outgoing.headers);
+			headers.delete("cf-connecting-ip");
+			outgoing = new UndiciRequest(outgoing, { headers });
+		}
 		return responseFromUndici(await undiciFetch(outgoing));
 	} finally {
 		ended?.();

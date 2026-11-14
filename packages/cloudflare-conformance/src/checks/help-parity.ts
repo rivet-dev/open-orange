@@ -17,6 +17,9 @@ export const replacedHelpCommands: ReadonlyMap<string, string> = new Map([
 	["logout", "Orange signs out of Rivet Cloud, not Cloudflare."],
 	["whoami", "Orange shows the Rivet Cloud account and the linked cluster, not a Cloudflare account."],
 	["deploy", "Orange deploys to a Rivet cluster through the Rivet Cloud API, not to Cloudflare."],
+	["d1 execute", "Orange adds --cloud-api, because its --remote reaches the linked Rivet cluster, not Cloudflare."],
+	["d1 migrations apply", "Orange's --remote reaches the D1 database on the linked Rivet cluster, not on Cloudflare, and it adds --cloud-api."],
+	["d1 migrations list", "Orange's --remote reaches the D1 database on the linked Rivet cluster, not on Cloudflare, and it adds --cloud-api."],
 ]);
 
 export function compareHelpInventories(

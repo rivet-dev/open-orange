@@ -112,7 +112,7 @@ test("a mistake in the user's input or Worker fails with its reason and no issue
 			{ args: ["deploy", "--dry-run", "--var", "RIVET_TOKEN:x"], cwd: project.directory, reason: /Rivet or Orange sets RIVET_TOKEN on every runner/ },
 			{ args: ["deploy", "--dry-run"], cwd: broken.directory, reason: /src\/index\.ts:\d+:\d+: ERROR: / },
 			{ args: ["serve"], cwd: project.directory, reason: /orange serve needs RIVET_ENDPOINT/ },
-			{ args: ["d1", "execute", "DB", "--remote", "--command", "select 1"], cwd: withDatabase.directory, reason: /--remote needs RIVET_ENDPOINT/ },
+			{ args: ["d1", "execute", "DB", "--remote", "--command", "select 1"], cwd: withDatabase.directory, reason: /--remote needs a Rivet cluster\. Run `orange login` and `orange link --cluster <name>`, or set RIVET_ENDPOINT/ },
 			{ args: ["d1", "execute", "NOPE", "--command", "select 1"], cwd: withDatabase.directory, reason: /Couldn't find a D1 DB with the name or binding 'NOPE'/ },
 			{ args: ["whoami"], cwd: project.directory, env: { HOME: brokenHome }, reason: /credentials: it is not valid JSON .*Fix the file, or delete it/ },
 		] as { args: string[]; cwd: string; env?: NodeJS.ProcessEnv; reason: RegExp }[]) {

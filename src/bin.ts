@@ -13,7 +13,7 @@ import { runDevCommand } from "./commands/dev.js";
 import { renderDoctorHelp, runDoctorCommand } from "./commands/doctor.js";
 import { renderServeHelp, runServeCommand } from "./commands/serve.js";
 import { renderDeployHelp, runDeployCommand } from "./commands/deploy.js";
-import { accountCommands, renderAccountHelp, runAccountCommand } from "./commands/rivet-account.js";
+import { accountCommands, defaultCloudApi, renderAccountHelp, runAccountCommand } from "./commands/rivet-account.js";
 import { renderMcpHelp, runMcpCommand } from "./commands/mcp.js";
 import { runMigrateCommand } from "./commands/migrate.js";
 import { orangeVersion } from "./version.js";
@@ -35,8 +35,18 @@ const defaultIo: CliIo = {
 
 const orangeOnlyCommands: ReadonlySet<string> = new Set(["deploy", "doctor", "mcp", "migrate", "serve", ...accountCommands]);
 
+const d1CommandPaths: ReadonlySet<string> = new Set(["d1 execute", "d1 migrations apply", "d1 migrations list"]);
+const cloudApiHelpRow = `      --cloud-api   Rivet Cloud API for --remote. Default ${defaultCloudApi}  [string]\n`;
+
 function renderHelp(command: CommandDefinition, executableName: string): string {
-	return command.help.replace(/\bwrangler\b/g, executableName).trimEnd();
+	return (
+		command.help
+			// Wrangler's `d1 migrations --remote` reaches Cloudflare. Orange's reaches the deployed Worker's Engine.
+			.replace("a remote DB for use with wrangler dev --remote", "the deployed DB on the linked Rivet cluster or RIVET_ENDPOINT")
+			.replace(/^ {6}--remote .*\n/m, (row) => (d1CommandPaths.has(command.path.join(" ")) ? row + cloudApiHelpRow : row))
+			.replace(/\bwrangler\b/g, executableName)
+			.trimEnd()
+	);
 }
 
 function optionConsumesValue(command: CommandDefinition, token: string): boolean {

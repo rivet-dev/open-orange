@@ -77,6 +77,18 @@ Run `orange deploy` again to roll out each new version.
 
 </Step>
 
+<Step title="Apply D1 migrations">
+
+If your Worker uses D1, apply its migrations to the deployed database. Until
+you do, queries fail with `D1_ERROR: no such table`. Run this in the Worker's
+directory after each deploy that adds a migration.
+
+```sh
+$ orange d1 migrations apply DB --remote
+```
+
+</Step>
+
 <Step title="Call the Worker">
 
 The pool's URL serves your Worker.

@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { ExpectedFailure } from "../cli/issue-report.js";
 
-// A client for the cluster endpoints of the Rivet Cloud API that `orange deploy` calls.
+// A client for the cluster endpoints of the Rivet Cloud API that `orange deploy` and `orange d1 --remote` call.
 // https://cloud-api.rivet.dev/v2/openapi.json
 
 export interface RivetCloudOptions {
@@ -74,6 +74,10 @@ export interface PoolUpdate {
 	node_count?: number;
 }
 
+// `domain` is the host of the cluster's Engine API, and `admin_token` is its Engine token.
+const clusterSchema = z.object({ admin_token: z.string().nullish(), domain: z.string() });
+export type RivetCluster = z.infer<typeof clusterSchema>;
+
 const secretsSchema = z.object({ items: z.array(z.object({ name: z.string() })) });
 const rolloutSchema = z.object({ changed: z.boolean(), latest_version: z.number(), name: z.string() });
 
@@ -91,6 +95,7 @@ export interface RivetCloudClient {
 	completeBuild(buildId: string): Promise<void>;
 	createBuild(body: { content_length: number; content_md5: string; image: string }): Promise<{ build_id: string; upload_url: string }>;
 	getBuild(buildId: string): Promise<RivetBuild>;
+	getCluster(): Promise<RivetCluster>;
 	// Undefined when the pool does not exist yet.
 	getPool(region: string, pool: string): Promise<RivetPool | undefined>;
 	listRegions(): Promise<RivetRegion[]>;
@@ -196,6 +201,10 @@ export function createRivetCloudClient(options: RivetCloudOptions): RivetCloudCl
 		async getBuild(buildId) {
 			const action = `read build ${buildId}`;
 			return required(await call(action, "GET", `/builds/${encodeURIComponent(buildId)}`, buildSchema), action);
+		},
+		async getCluster() {
+			const action = `read cluster ${options.cluster}`;
+			return required(await call(action, "GET", "", clusterSchema), action);
 		},
 		async getPool(region, pool) {
 			const action = `read pool ${pool} in region ${region}`;

@@ -222,6 +222,39 @@ export async function resolveCloudAuth(flag: string | undefined, apiUrl: string)
 	};
 }
 
+/** The Cloud API: the --cloud-api flag, else Rivet Cloud. */
+export function cloudApiUrl(flag?: string): string {
+	return flag ?? defaultCloudApi;
+}
+
+export interface ClusterTarget {
+	readonly apiUrl: string;
+	readonly auth: CloudAuth | undefined;
+	readonly cluster: string | undefined;
+	readonly organization: string | undefined;
+}
+
+/**
+ * The cluster that a command acts on, and the credentials for it. Each flag comes first, then its
+ * variable, then the link and `orange login`.
+ */
+export async function resolveClusterTarget(
+	flags: { cloudApi?: string | undefined; cluster?: string | undefined; org?: string | undefined; token?: string | undefined } = {},
+): Promise<ClusterTarget> {
+	const link = findLink();
+	const apiUrl = cloudApiUrl(flags.cloudApi);
+	const namedCluster = flags.cluster ?? (process.env.RIVET_CLUSTER || undefined);
+	// A link's organization belongs to its cluster, so it does not apply to any other cluster.
+	// https://github.com/rivet-dev/actors/blob/587132c26994d9358b1ed1633641f023cb8f3942/engine/packages/cli/src/target.rs#L100-L125
+	const organization = flags.org ?? (process.env.RIVET_ORG || undefined) ?? (namedCluster === undefined ? link?.org : undefined);
+	return {
+		apiUrl,
+		auth: await resolveCloudAuth(flags.token, apiUrl),
+		cluster: namedCluster ?? link?.cluster,
+		organization,
+	};
+}
+
 // The saved session for this API while it still works. One the server no longer refreshes is gone.
 async function workingSession(apiUrl: string): Promise<Session | undefined> {
 	const saved = (await readCredentials()).sessions[sessionKey(apiUrl)];
@@ -354,7 +387,7 @@ export async function runAccountCommand(args: readonly string[], io: AccountIo):
 			},
 			strict: true,
 		});
-		const apiUrl = values["cloud-api"] ?? defaultCloudApi;
+		const apiUrl = cloudApiUrl(values["cloud-api"]);
 		switch (command) {
 			case "login": {
 				const existing = await workingSession(apiUrl);

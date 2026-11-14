@@ -8,11 +8,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 
 import { minioBucketSettings, minioSkip, s3Client, startMinio } from "../harness/minio.js";
 import { mailpitSkip, startMailpit } from "../harness/mailpit.js";
+import { startRivetCloudDouble } from "../harness/rivet-cloud-double.js";
 import { signForwardedHost } from "../../src/serve/front.js";
 import { collectMessages, copyProject, openWebSocket, repositoryRoot, startOrangeDev, withDeadline, type ClientWebSocket } from "../harness/orange-dev.js";
 import { freePort } from "../harness/free-port.js";
@@ -887,9 +889,10 @@ test("orange serve deletes the cron jobs of a removed configuration after a rest
 async function runCli(
 	args: readonly string[],
 	env: NodeJS.ProcessEnv,
+	cwd: string = repositoryRoot,
 ): Promise<{ code: number | null; output: string }> {
-	const child = spawn(process.execPath, ["--import", "tsx", cliEntrypoint, ...args], {
-		cwd: repositoryRoot,
+	const child = spawn(process.execPath, ["--import", fileURLToPath(import.meta.resolve("tsx")), cliEntrypoint, ...args], {
+		cwd,
 		env: { ...process.env, ...env },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -898,27 +901,42 @@ async function runCli(
 	return { code, output: output() };
 }
 
-test("orange d1 migrations apply --remote migrates the database that orange serve uses", async () => {
+test("orange d1 migrations apply --remote migrates the linked cluster's database", async () => {
 	const engine = await startStandaloneEngine();
+	const cluster = "acme";
+	const cloud = await startRivetCloudDouble({
+		cluster,
+		engine: { adminToken, domain: new URL(engine.endpoint).host },
+		regions: ["iad"],
+		token: "cloud-token",
+	});
 	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "examples", "d1-migrations"));
+	const home = await mkdtemp(join(tmpdir(), "open-orange-home-"));
+	const env = { CI: "1", HOME: home, NO_COLOR: "1", RIVET_ENDPOINT: "" };
+	const orange = (args: readonly string[]) => runCli([...args, "--cloud-api", cloud.url], env, project.directory);
 	let serve: RunningServe | undefined;
 	try {
-		const config = join(project.directory, "wrangler.jsonc");
-		const apply = ["d1", "migrations", "apply", "DB", "--remote", "--config", config];
-		const withoutEndpoint = await runCli(apply, {});
-		assert.equal(withoutEndpoint.code, 1, withoutEndpoint.output);
-		assert.match(withoutEndpoint.output, /--remote needs RIVET_ENDPOINT/);
+		const apply = ["d1", "migrations", "apply", "DB", "--remote"];
+		const notLinked = await orange(apply);
+		assert.equal(notLinked.code, 1, notLinked.output);
+		assert.match(notLinked.output, /Run `orange login` and `orange link --cluster <name>`, or set RIVET_ENDPOINT/);
+		assert.doesNotMatch(notLinked.output, /Looks like a bug/);
 
+		const login = await orange(["login", "--no-browser"]);
+		assert.equal(login.code, 0, login.output);
+		const link = await orange(["link", "--cluster", cluster]);
+		assert.equal(link.code, 0, link.output);
 		const port = await freePort();
 		serve = await startServe(project.directory, engine.endpoint, port);
 		const before = await fetch(`http://127.0.0.1:${port}/comments`);
 		assert.equal(before.status, 500, "the table does not exist before the migrations");
 
-		const applied = await runCli(apply, { RIVET_ENDPOINT: engine.endpoint });
+		const applied = await orange(apply);
 		assert.equal(applied.code, 0, applied.output);
 		const after = await fetch(`http://127.0.0.1:${port}/comments`);
 		assert.equal(after.status, 200, serve.output());
-		const again = await runCli(apply, { RIVET_ENDPOINT: engine.endpoint });
+		// RIVET_ENDPOINT still overrides the link.
+		const again = await runCli([...apply, "--cloud-api", "http://127.0.0.1:9"], { ...env, RIVET_ENDPOINT: engine.endpoint }, project.directory);
 		assert.match(again.output, /No migrations to apply/);
 	} finally {
 		if (serve !== undefined) {
@@ -927,6 +945,8 @@ test("orange d1 migrations apply --remote migrates the database that orange serv
 			await withDeadline(exit, "orange serve stop", 15_000).catch(() => serve?.child.kill("SIGKILL"));
 		}
 		await project.dispose();
+		await rm(home, { force: true, recursive: true });
+		await cloud.close();
 		await engine.stop();
 	}
 });

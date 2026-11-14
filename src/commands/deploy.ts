@@ -27,7 +27,7 @@ import {
 	type RunnerEnvValue,
 	uploadFile,
 } from "./rivet-cloud-api.js";
-import { type CloudAuth, defaultCloudApi, findLink, resolveCloudAuth } from "./rivet-account.js";
+import { type CloudAuth, defaultCloudApi, resolveClusterTarget } from "./rivet-account.js";
 import {
 	type EnvironmentChange,
 	maxClusterSecrets,
@@ -165,16 +165,14 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 	if (nodeCount !== undefined && (!Number.isInteger(nodeCount) || nodeCount < 1)) {
 		throw new ExpectedFailure(`--node-count must be a whole number of at least 1, not ${values["node-count"]}`);
 	}
-	const link = findLink();
-	const apiUrl = values["cloud-api"] ?? defaultCloudApi;
-	const namedCluster = values.cluster ?? nonEmpty(process.env.RIVET_CLUSTER);
-	// A link's organization belongs to its cluster, so it does not apply to any other cluster.
-	// https://github.com/rivet-dev/actors/blob/587132c26994d9358b1ed1633641f023cb8f3942/engine/packages/cli/src/target.rs#L100-L125
-	const organization = values.org ?? nonEmpty(process.env.RIVET_ORG) ?? (namedCluster === undefined ? link?.org : undefined);
+	const { organization, ...resolved } = await resolveClusterTarget({
+		cloudApi: values["cloud-api"],
+		cluster: values.cluster,
+		org: values.org,
+		token: values.token,
+	});
 	const target: DeployTarget = {
-		apiUrl,
-		auth: await resolveCloudAuth(values.token, apiUrl),
-		cluster: namedCluster ?? link?.cluster,
+		...resolved,
 		...(values["machine-type"] === undefined ? {} : { machineType: values["machine-type"] }),
 		...(nodeCount === undefined ? {} : { nodeCount }),
 		pool: values.pool ?? defaultPool,
@@ -344,10 +342,6 @@ interface DeployTarget {
 	pool: string;
 	region?: string;
 	organization?: string;
-}
-
-function nonEmpty(value: string | undefined): string | undefined {
-	return value === undefined || value.length === 0 ? undefined : value;
 }
 
 function requireCredentials(target: DeployTarget): { auth: CloudAuth; cluster: string } {

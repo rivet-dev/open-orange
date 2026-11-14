@@ -194,12 +194,12 @@ $ orange d1 execute DB --command "SELECT * FROM comments"
 $ orange d1 execute DB --file ./seed.sql --json
 ```
 
-With `--remote`, they run on the database of the deployed `orange serve`,
-through the Rivet Engine in `RIVET_ENDPOINT`. Run them in the project, with the
-Worker name and `--env` of the deployment. The deployment must be up.
+With `--remote`, they run on the database of the deployed Worker, through the
+Rivet Engine of the linked cluster. Run them in the project, with the Worker
+name and `--env` of the deployment. The deployment must be up.
 
 ```sh
-$ RIVET_ENDPOINT=https://<namespace>:<token>@api.rivet.dev orange d1 migrations apply DB --remote
+$ orange d1 migrations apply DB --remote
 ```
 
 #### API details
@@ -267,9 +267,13 @@ parser has no `LIMIT` on `DELETE` and `UPDATE`, with or without `RETURNING` and
   capture a backup.
 - `orange d1 execute` takes `--command` or `--file`, not both. With `--json`, or
   when the output is not a terminal, it prints the results as JSON.
-- `--remote` reads `RIVET_ENDPOINT`, not a Cloudflare account. Without it, the
-  command fails with
-  `--remote needs RIVET_ENDPOINT, such as https://<namespace>:<token>@api.rivet.dev`.
+- `--remote` reaches a Rivet Engine, not a Cloudflare account. It uses
+  `RIVET_ENDPOINT` when it is set. Otherwise it gets the Engine and its token
+  from Rivet Cloud for the cluster that `orange deploy` uses: `RIVET_CLUSTER`,
+  then the link, with `orange login` or `RIVET_CLOUD_TOKEN`. `--cloud-api <url>`
+  sets the Cloud API. Default: `https://cloud-api.rivet.dev`. With no cluster
+  or no sign-in, the command fails with
+  ``--remote needs a Rivet cluster. Run `orange login` and `orange link --cluster <name>`, or set RIVET_ENDPOINT, ...``.
   The Engine runs the database on the deployed runner.
 - `--local` is accepted, and is the default. `--preview` and `--persist-to`
   fail. Orange keeps local data under `.open-orange`.
@@ -301,7 +305,8 @@ These add to the differences under [Compatibility](#compatibility).
   sessions, overlapping inserts, and persistence across restarts. The same
   Worker returns identical results under `wrangler dev`.
 - `tests/cli/orange-serve.test.ts` runs `orange d1 migrations apply --remote`
-  against `orange serve`, and checks that `orange serve` skips
+  against `orange serve` through a linked cluster, refuses it with no link,
+  and checks that `orange serve` skips
   `preview_database_id`.
 - `tests/rpc-and-websockets/session-shared-storage.test.ts` checks that the Workers of one session
   share a database by ID, and that another ID stays separate.

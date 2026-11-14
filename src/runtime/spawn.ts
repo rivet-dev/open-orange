@@ -137,8 +137,8 @@ export async function spawnRuntime(
 			...(options.serveMetrics === false ? { RIVETKIT_METRICS_PORT: undefined } : {}),
 		},
 		// The built package runs plain JavaScript. Only a source checkout needs tsx,
-		// and it has tsx installed.
-		execArgv: runnerPath.endsWith(".ts") ? ["--import", "tsx"] : [],
+		// and it has tsx installed. Resolve it here, as the child resolves it from the project's directory.
+		execArgv: runnerPath.endsWith(".ts") ? ["--import", import.meta.resolve("tsx")] : [],
 		stdio:
 			options.onOutput === undefined
 				? ["ignore", options.stdout === "stderr" ? 2 : "inherit", "inherit", "ipc"]

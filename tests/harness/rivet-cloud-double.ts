@@ -27,6 +27,8 @@ export interface RivetCloudDoubleOptions {
 	builds?: Record<string, "failed" | "ready">;
 	// What a completed build becomes after one `preparing` read. Default `ready`.
 	buildOutcome?: "ready" | CloudFailure;
+	// The cluster's Engine, as `GET /v2/clusters/{cluster}` names it.
+	engine?: { adminToken: string; domain: string };
 	// Pools that exist before the deploy, keyed `<region>/<pool>`.
 	pools?: Record<string, CloudPool>;
 	// What a rolled-out pool becomes after one `updating` read. Default `ready`.
@@ -319,11 +321,20 @@ export async function startRivetCloudDouble(options: RivetCloudDoubleOptions): P
 		const organization = request.headers["x-rivet-organization"];
 		if (typeof organization === "string") organizations.push(organization);
 		const prefix = `/v2/clusters/${options.cluster}`;
-		if (!url.pathname.startsWith(`${prefix}/`)) {
+		if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
 			error(response, 404, "NotFound", "Cluster not found.");
 			return;
 		}
 		const path = url.pathname.slice(prefix.length);
+		if (method === "GET" && path === "") {
+			send(response, 200, {
+				admin_token: options.engine?.adminToken ?? null,
+				cluster: options.cluster,
+				domain: options.engine?.domain ?? `${options.cluster}-api.rivet.test`,
+				slug: options.cluster,
+			});
+			return;
+		}
 		if (method === "GET" && path === "/regions") {
 			send(response, 200, {
 				items: options.regions.map((region) => ({

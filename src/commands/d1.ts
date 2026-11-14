@@ -15,6 +15,8 @@ import { rivetNamespaceOf } from "./serve.js";
 import { booleanValue, optionValue, splitOption } from "./arguments.js";
 import { splitSqlQuery } from "./d1-sql.js";
 import { isRecord } from "../unknown-values.js";
+import { resolveClusterTarget } from "./rivet-account.js";
+import { createRivetCloudClient } from "./rivet-cloud-api.js";
 
 interface D1CommandIo {
 	error(message: string): void;
@@ -25,6 +27,7 @@ interface D1CommandIo {
 export type D1CommandPath = "d1 execute" | "d1 migrations apply" | "d1 migrations list";
 
 interface ParsedD1Arguments {
+	cloudApi?: string;
 	command?: string;
 	configPath?: string;
 	cwd?: string;
@@ -32,7 +35,7 @@ interface ParsedD1Arguments {
 	environment?: string;
 	file?: string;
 	json: boolean;
-	// Targets the Rivet Engine in RIVET_ENDPOINT, which `orange serve` uses.
+	// Targets the Rivet Engine that `orange serve` uses: RIVET_ENDPOINT, or the linked cluster's.
 	remote: boolean;
 }
 
@@ -44,6 +47,7 @@ interface QueryResult {
 
 const valueOptions = new Map([
 	["-c", "config"],
+	["--cloud-api", "cloud-api"],
 	["--config", "config"],
 	["--command", "command"],
 	["--cwd", "cwd"],
@@ -107,12 +111,14 @@ export function parseD1Arguments(path: D1CommandPath, args: readonly string[]): 
 	if (database === undefined || positionals.length > 1) {
 		throw new ExpectedFailure(`orange ${path} requires exactly one database name or binding`);
 	}
+	const cloudApi = values.get("cloud-api");
 	const command = values.get("command");
 	const file = values.get("file");
 	const configPath = values.get("config");
 	const cwd = values.get("cwd");
 	const environment = values.get("env");
 	return {
+		...(cloudApi === undefined ? {} : { cloudApi }),
 		...(command === undefined ? {} : { command }),
 		...(configPath === undefined ? {} : { configPath }),
 		...(cwd === undefined ? {} : { cwd }),
@@ -163,21 +169,47 @@ interface DatabaseConnection {
 	origin: string;
 }
 
-// A remote database is the one that `orange serve` reads from the Engine in
-// RIVET_ENDPOINT. The runtime then only calls the Engine, and the deployed
-// runner hosts the database actor.
+// The Engine of the deployed Worker: RIVET_ENDPOINT, else the Engine of the
+// cluster that `orange deploy` deploys to.
+async function remoteEndpoint(cloudApi: string | undefined): Promise<string> {
+	const fromEnvironment = process.env.RIVET_ENDPOINT;
+	if (fromEnvironment !== undefined && fromEnvironment.length > 0) return fromEnvironment;
+	const { apiUrl, auth, cluster, organization } = await resolveClusterTarget({ cloudApi });
+	if (cluster === undefined || auth === undefined) {
+		throw new ExpectedFailure(
+			"--remote needs a Rivet cluster. Run `orange login` and `orange link --cluster <name>`, or set RIVET_ENDPOINT, such as https://<namespace>:<token>@<engine-host>.",
+		);
+	}
+	const { admin_token: token, domain } = await createRivetCloudClient({
+		apiUrl,
+		cluster,
+		...(organization === undefined ? {} : { organization }),
+		token: (force) => auth.token(force),
+	}).getCluster();
+	if (token == null) {
+		throw new ExpectedFailure(
+			`Rivet Cloud returned no Engine token for cluster ${cluster}. Run \`orange login\`, or set RIVET_ENDPOINT.`,
+		);
+	}
+	// The Engine takes the Cloud API's scheme: HTTPS on Rivet Cloud, HTTP for a local Cloud API in tests.
+	const endpoint = new URL(`${new URL(apiUrl).protocol}//${domain}`);
+	// A cluster runs its Workers in the `default` namespace.
+	endpoint.username = "default";
+	endpoint.password = token;
+	return endpoint.href.replace(/\/$/, "");
+}
+
+// A remote database is the one that `orange serve` reads from the Engine. The
+// runtime then only calls the Engine, and the deployed runner hosts the
+// database actor.
 async function openDatabase(
 	config: ResolvedWranglerConfiguration,
 	database: D1DatabaseConfiguration,
 	remote: boolean,
 	vars: Readonly<Record<string, string>>,
+	cloudApi: string | undefined,
 ): Promise<DatabaseConnection> {
-	const endpoint = remote ? process.env.RIVET_ENDPOINT : undefined;
-	if (remote && (endpoint === undefined || endpoint.length === 0)) {
-		throw new ExpectedFailure(
-			"--remote needs RIVET_ENDPOINT. Set it to the Rivet Engine of the deployed app, such as RIVET_ENDPOINT=https://<namespace>:<token>@api.rivet.dev.",
-		);
-	}
+	const endpoint = remote ? await remoteEndpoint(cloudApi) : undefined;
 	const temporaryDirectory = await mkdtemp(join(tmpdir(), "open-orange-d1-"));
 	let runtime: RuntimeProcess | undefined;
 	try {
@@ -246,8 +278,9 @@ export async function withDatabase<Value>(
 	remote: boolean,
 	operation: (database: DatabaseConnection) => Promise<Value>,
 	vars: Readonly<Record<string, string>> = {},
+	cloudApi?: string,
 ): Promise<Value> {
-	const local = await openDatabase(config, database, remote, vars);
+	const local = await openDatabase(config, database, remote, vars, cloudApi);
 	try {
 		return await operation(local);
 	} finally {
@@ -338,12 +371,17 @@ async function executeCommand(
 	if (!parsed.json) {
 		io.log(
 			parsed.remote
-				? `🌀 Executing on remote database ${parsed.database} (${database.databaseId}) in RIVET_ENDPOINT:`
+				? `🌀 Executing on remote database ${parsed.database} (${database.databaseId}):`
 				: `🌀 Executing on local database ${parsed.database} (${database.databaseId}) from .open-orange:`,
 		);
 	}
-	const results = await withDatabase(config, database, parsed.remote, (local) =>
-		local.batch(splitSqlQuery(sql)),
+	const results = await withDatabase(
+		config,
+		database,
+		parsed.remote,
+		(local) => local.batch(splitSqlQuery(sql)),
+		{},
+		parsed.cloudApi,
 	);
 	if (parsed.json || io.isInteractive !== true) {
 		io.log(JSON.stringify(results, null, 2));
@@ -521,7 +559,7 @@ values ('${name.replace(/'/g, "''")}');`;
 			}
 		}
 		return 0;
-	});
+	}, {}, parsed.cloudApi);
 }
 
 export async function runD1Command(

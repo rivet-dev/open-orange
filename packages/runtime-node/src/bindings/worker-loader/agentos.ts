@@ -28,6 +28,8 @@ import type { VmGauges, WorkerLoaderMetrics } from "./metrics.js";
 const runtimeRoot = "/open-orange/runtime";
 const workersRoot = "/open-orange/workers";
 const exitWaitMs = 5_000;
+// The most stdin bytes sent to a dynamic Worker process in one agentOS write.
+const maxStdinWriteBytes = 1024 * 1024;
 
 type NetworkMode = "deny" | "network";
 
@@ -693,8 +695,33 @@ async function spawnVmChild(vm: AgentOs, root: string, options: VmChildOptions):
 		stdout.end();
 		for (const listener of exitListeners.splice(0)) listener(exitReason ?? "unknown");
 	});
-	// The VM takes stdin writes in order only if each waits for the last.
-	let writes = Promise.resolve();
+	// The VM takes stdin writes in order only if each waits for the last. Frames written in one
+	// turn of the event loop, or while the last write is in flight, go in one write of at most
+	// `maxStdinWriteBytes`.
+	let unsent: string[] = [];
+	let writing = false;
+	const writeUnsent = async (): Promise<void> => {
+		while (unsent.length > 0 && exitReason === undefined) {
+			let bytes = 0;
+			let count = 0;
+			for (const frame of unsent) {
+				const frameBytes = Buffer.byteLength(frame);
+				if (count > 0 && bytes + frameBytes > maxStdinWriteBytes) break;
+				bytes += frameBytes;
+				count += 1;
+			}
+			try {
+				await vm.process.writeStdin(pid, unsent.splice(0, count).join(""));
+			} catch (error: unknown) {
+				// Writes fail once the process exits, and its exit fails its calls.
+				if (exitReason === undefined && !killing) {
+					options.report(`OpenOrange cannot write to dynamic Worker process ${pid}: ${errorMessage(error)}`);
+				}
+			}
+		}
+		unsent = [];
+		writing = false;
+	};
 	return {
 		exited: done,
 		kill(): void {
@@ -720,14 +747,10 @@ async function spawnVmChild(vm: AgentOs, root: string, options: VmChildOptions):
 		stdout,
 		write(text): void {
 			if (exitReason !== undefined) return;
-			writes = writes
-				.then(() => vm.process.writeStdin(pid, text))
-				.catch((error: unknown) => {
-					// Writes fail once the process exits, and its exit fails its calls.
-					if (exitReason === undefined && !killing) {
-						options.report(`OpenOrange cannot write to dynamic Worker process ${pid}: ${errorMessage(error)}`);
-					}
-				});
+			unsent.push(text);
+			if (writing) return;
+			writing = true;
+			setImmediate(() => void writeUnsent());
 		},
 	};
 }

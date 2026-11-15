@@ -159,6 +159,10 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			// name or no name loads a fresh Worker and calls the code callback.
 			assert.deepEqual(await get("cache"), { counts: [1, 2, 3, 1, 1], loads: 3 });
 
+			// Calls made while a Worker loads reach it in order and each gets its own result, even
+			// beside a 3 MiB request body.
+			assert.deepEqual(await get("pipelined"), ["/a:3:one", `/large:${3 * 1024 * 1024}:end`, 42, "/b:3:two"]);
+
 			// A syntax error in a module rejects the call with V8's SyntaxError.
 			assert.deepEqual(await get("syntax"), {
 				error: { message: "Unexpected token ';'", name: "SyntaxError" },

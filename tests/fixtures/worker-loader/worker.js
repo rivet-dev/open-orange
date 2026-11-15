@@ -580,6 +580,34 @@ const routes = {
 		const sameTick = await third;
 		return { full, heldCounts, loads, named, sameTick, sameTickCalls, sequential, slept };
 	},
+	// Calls made while the Worker still loads, one of them with a body larger than one
+	// stdin write to its process, each get their own result.
+	async pipelined(env) {
+		const worker = env.LOADER.load({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `
+					export default {
+						async fetch(request) {
+							const body = await request.text();
+							return new Response(new URL(request.url).pathname + ":" + body.length + ":" + body.slice(-3));
+						},
+						double(n) { return n * 2; },
+					};
+				`,
+			},
+		});
+		const large = "x".repeat(3 * 1024 * 1024 - 3) + "end";
+		const send = (path, body) =>
+			worker.getEntrypoint().fetch(`http://x/${path}`, { body, method: "POST" }).then((response) => response.text());
+		return await Promise.all([
+			send("a", "one"),
+			send("large", large),
+			worker.getEntrypoint().double(21),
+			send("b", "two"),
+		]);
+	},
 	async syntax(env) {
 		const worker = env.LOADER.get("syntax", () => ({
 			compatibilityDate: "2026-09-03",

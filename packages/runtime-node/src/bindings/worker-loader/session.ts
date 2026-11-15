@@ -340,10 +340,14 @@ export class LoaderCapabilityTarget extends DurableObjectRpcTarget {
 // process's LoaderCapabilityTarget.
 export class RemoteCapability implements Capability {
 	readonly #stub: object;
+	// Settles before each call's result does, and its rejection replaces the call's. See
+	// `DynamicWorker.entrypoint()`.
+	readonly #ready: Promise<unknown> | undefined;
 	#released = false;
 
-	constructor(stub: object) {
+	constructor(stub: object, ready?: Promise<unknown>) {
 		this.#stub = stub;
+		this.#ready = ready;
 	}
 
 	call(path: readonly string[], args: readonly unknown[] | undefined): CallOutcome {
@@ -353,7 +357,14 @@ export class RemoteCapability implements Capability {
 			const envelope = args === undefined ? undefined : encodeLoaderValue([...args]);
 			const invoke: unknown = Reflect.get(this.#stub, "invoke");
 			if (typeof invoke !== "function") throw new Error("Dynamic Worker capability is invalid");
-			const reply: unknown = await Reflect.apply(invoke, this.#stub, [[...path], envelope]);
+			let reply: unknown;
+			try {
+				reply = await Reflect.apply(invoke, this.#stub, [[...path], envelope]);
+			} catch (error: unknown) {
+				await this.#ready;
+				throw error;
+			}
+			await this.#ready;
 			return decodeLoaderReply(reply);
 		})();
 		value.catch(() => undefined);
@@ -363,7 +374,7 @@ export class RemoteCapability implements Capability {
 	}
 
 	dup(): Capability {
-		return new RemoteCapability(duplicate(this.#stub));
+		return new RemoteCapability(duplicate(this.#stub), this.#ready);
 	}
 
 	dispose(): void {

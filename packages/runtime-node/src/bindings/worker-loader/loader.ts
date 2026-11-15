@@ -489,6 +489,11 @@ class DynamicWorker {
 	#settling: WorkerHost | undefined;
 	#lastUsed = 0;
 	#orphaned = false;
+	// The session's main stub once `start` is sent. Entrypoint calls pipeline behind `start`, so a
+	// new Worker's first call reaches its process together with `start` instead of after its reply.
+	readonly #sent: Promise<CapnWebStub>;
+	#markSent: (main: CapnWebStub) => void = () => undefined;
+	#failSent: (error: unknown) => void = () => undefined;
 	#session: LoaderSession | undefined;
 	#terminated = false;
 
@@ -502,6 +507,11 @@ class DynamicWorker {
 		this.#label = label;
 		this.#onExit = onExit;
 		this.#options = options;
+		this.#sent = new Promise((resolveSent, rejectSent) => {
+			this.#markSent = resolveSent;
+			this.#failSent = rejectSent;
+		});
+		this.#sent.catch(() => undefined);
 	}
 
 	start(): void {
@@ -590,9 +600,12 @@ class DynamicWorker {
 				this.#onExit();
 				void removeHost.remove();
 			});
-			const reply = await session.main.start(envelope);
-			if (reply !== undefined && reply !== null) decodeLoaderReply(reply);
+			const started = session.main.start(envelope);
+			// The envelope's capabilities are exported once `start` is sent, before any other call.
 			this.#baseExports = session.stats().exports;
+			this.#markSent(session.main);
+			const reply = await started;
+			if (reply !== undefined && reply !== null) decodeLoaderReply(reply);
 			this.#session = session;
 			this.#lastUsed = performance.now();
 			pool.metrics.workerStart.observe((this.#lastUsed - startedAt) / 1_000);
@@ -602,6 +615,7 @@ class DynamicWorker {
 			else this.#settling = host;
 			return session;
 		} catch (error: unknown) {
+			this.#failSent(error);
 			host?.settled();
 			this.terminate();
 			// A running child frees the slot when it exits. Without one, nothing else frees it.
@@ -698,15 +712,16 @@ class DynamicWorker {
 
 	// A capability for `getEntrypoint(name, { props })`.
 	entrypoint(name: string | undefined, props: unknown): Promise<RemoteCapability> {
-		const running = this.#running ?? Promise.reject(new Error("Dynamic Worker is not started"));
+		const running = this.#running;
+		if (running === undefined) return Promise.reject(new Error("Dynamic Worker is not started"));
 		const propsEnvelope = props === undefined ? undefined : encodeLoaderValue(props);
-		const remote = running.then(async ({ main }) => {
-			const stub = await main.entrypoint(name, propsEnvelope);
-			if ((typeof stub !== "object" || stub === null) && typeof stub !== "function") {
-				throw new Error("Dynamic Worker returned an invalid entrypoint");
-			}
+		const remote = this.#sent.then((main) => {
+			// A promise for the entrypoint, so calls on it pipeline too. The process resolves it once
+			// the Worker has loaded. A call settles only after `start` does, so a Worker that fails to
+			// load fails its calls with the startup error.
+			const stub: object = main.entrypoint(name, propsEnvelope);
 			this.#entrypointImports += 1;
-			return new RemoteCapability(stub);
+			return new RemoteCapability(stub, running);
 		});
 		remote.catch(() => undefined);
 		return remote;

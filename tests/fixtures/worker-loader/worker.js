@@ -225,6 +225,27 @@ async function settle(promise) {
 	}
 }
 
+const prewarmedCode = {
+	compatibilityDate: "2026-09-03",
+	mainModule: "main.js",
+	globalOutbound: null,
+	modules: {
+		"main.js": `
+			import { createRequire } from "node:module";
+			const fs = createRequire(import.meta.url)("fs");
+			export default { prewarmed(requestedAt) { return fs.statSync(process.cwd()).birthtimeMs < requestedAt; } };
+		`,
+	},
+};
+
+const sleepCode = {
+	compatibilityDate: "2026-09-03",
+	mainModule: "main.js",
+	modules: {
+		"main.js": `export default { async sleep(ms) { await new Promise((r) => setTimeout(r, ms)); return ms; } };`,
+	},
+};
+
 const routes = {
 	async basic(env, ctx) {
 		const worker = env.LOADER.get("basic", () => ({
@@ -476,6 +497,37 @@ const routes = {
 		}
 		return { received: "timed out", started };
 	},
+	// Starts `n` named Workers at once whose calls each take `ms`, half of them with network access.
+	// The garbage collector never stops a named Worker, so only idle Workers free their slots.
+	async queued(env, _ctx, request) {
+		const url = new URL(request.url);
+		const n = Number(url.searchParams.get("n"));
+		const ms = Number(url.searchParams.get("ms"));
+		const tag = crypto.randomUUID();
+		return Promise.all(
+			Array.from({ length: n }, (_, i) => {
+				const code = { ...sleepCode, globalOutbound: i % 2 === 0 ? null : undefined };
+				return settle(env.LOADER.get(`${tag}-${i}`, () => code).getEntrypoint().sleep(ms));
+			}),
+		);
+	},
+	// Whether a new Worker's VM had its Worker root before the load, as a prewarmed VM does.
+	async prewarmed(env) {
+		return env.LOADER.load(prewarmedCode).getEntrypoint().prewarmed(Date.now());
+	},
+	// One Worker and one call. Its errors reach the runtime uncaught.
+	async one(env, _ctx, request) {
+		const ms = Number(new URL(request.url).searchParams.get("ms") ?? 0);
+		return env.LOADER.load(sleepCode).getEntrypoint().sleep(ms);
+	},
+	// One Worker and one call, with the fields of its error.
+	async caught(env) {
+		try {
+			return { value: await env.LOADER.load(sleepCode).getEntrypoint().sleep(0) };
+		} catch (error) {
+			return { error: { code: error.code, name: error.name, overloaded: error.overloaded, retryable: error.retryable } };
+		}
+	},
 	// Runs with ORANGE_WORKER_LOADER_MAX_WORKERS=2: more failed loads than the limit, then a load.
 	async failedStarts(env) {
 		const errors = [];
@@ -505,19 +557,14 @@ const routes = {
 		named.push(await env.LOADER.get("idle", getCode).getEntrypoint().increment());
 		heldCounts.push(await held.increment());
 
-		const slowCode = {
-			compatibilityDate: "2026-09-03",
-			mainModule: "main.js",
-			modules: {
-				"main.js": `export default { async sleep(ms) { await new Promise((r) => setTimeout(r, ms)); return ms; } };`,
-			},
-		};
 		const slow = [
-			env.LOADER.load(slowCode).getEntrypoint().sleep(3_000),
-			env.LOADER.load(slowCode).getEntrypoint().sleep(3_000),
+			env.LOADER.load(sleepCode).getEntrypoint().sleep(3_000),
+			env.LOADER.load(sleepCode).getEntrypoint().sleep(3_000),
 		];
-		const full = await settle(Promise.resolve().then(() => env.LOADER.load(counterCode)));
+		// Every slot is busy, so this Worker waits for one.
+		const waiting = settle(env.LOADER.load(counterCode).getEntrypoint().increment());
 		const slept = await Promise.all(slow.map(settle));
+		const full = await waiting;
 
 		const sequential = [];
 		for (let i = 0; i < 6; i++) {
@@ -528,14 +575,9 @@ const routes = {
 		const b = env.LOADER.load(counterCode).getEntrypoint();
 		await Promise.all([a.increment(), b.increment()]);
 		const calls = [a.increment(), b.increment()];
-		let sameTick;
-		try {
-			env.LOADER.load(counterCode);
-			sameTick = "loaded";
-		} catch (error) {
-			sameTick = error.name;
-		}
+		const third = settle(env.LOADER.load(counterCode).getEntrypoint().increment());
 		const sameTickCalls = await Promise.all(calls.map(settle));
+		const sameTick = await third;
 		return { full, heldCounts, loads, named, sameTick, sameTickCalls, sequential, slept };
 	},
 	async syntax(env) {

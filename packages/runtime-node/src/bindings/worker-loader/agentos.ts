@@ -21,7 +21,8 @@ import type { AgentOs } from "@rivet-dev/agentos-core";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
-import type { WorkerChild, WorkerHost, WorkerLoaderBackend } from "./loader.js";
+import { positiveIntegerSetting, type WorkerChild, type WorkerHost, type WorkerLoaderBackend } from "./loader.js";
+import type { VmGauges, WorkerLoaderMetrics } from "./metrics.js";
 
 // Where the child and runtime modules live inside each VM.
 const runtimeRoot = "/open-orange/runtime";
@@ -110,14 +111,39 @@ const poolSettingLimit = 64;
 const maxParallelPrewarms = 4;
 // The longest one Worker holds back the refill while it loads.
 const maxRefillHoldMs = 1_000;
+// How far back the claim rate looks when loads keep the refill held.
+const claimRateWindowMs = 1_000;
+// Enough claim times to show a rate that needs every parallel prewarm.
+const maxRecentClaims = 512;
 // The prewarm time before the first one is measured.
 const initialPrewarmMs = 250;
+const warnRatio = 0.8;
 
 export interface WorkerLoaderPoolLimits {
 	// Ready VMs kept per network mode when no burst is recent.
 	size: number;
 	// The most ready VMs per network mode. 0 boots every VM on demand.
 	max: number;
+}
+
+// Every agentOS VM of dynamic Workers counts: running Workers, prewarmed VMs, VMs that boot,
+// and VMs that are still stopping. A running Worker's slot frees as soon as it stops, before its
+// VM is gone, so without this budget a churn of Workers could hold more VMs than the slots.
+export const workerLoaderMaxVmsSetting = "ORANGE_WORKER_LOADER_MAX_VMS";
+
+// Defaults to the slots plus one pool's most, so the pool has room beside full slots.
+export function workerLoaderMaxVms(
+	settings: Readonly<Record<string, string | undefined>>,
+	maxWorkers: number,
+	pool: WorkerLoaderPoolLimits,
+): number {
+	return positiveIntegerSetting(
+		settings,
+		workerLoaderMaxVmsSetting,
+		maxWorkers + pool.max,
+		Number.MAX_SAFE_INTEGER,
+		maxWorkers,
+	);
 }
 
 function poolSetting(settings: Readonly<Record<string, string | undefined>>, name: string, fallback: number): number {
@@ -149,6 +175,10 @@ export interface AgentOsWorkerLoaderBackendOptions {
 	bundlePath(): string;
 	// Reports a failure off the request path, such as a failed prewarm.
 	onDiagnostic(message: string): void;
+	onWarning(message: string): void;
+	// At least the slots of the DynamicWorkerPool, so every Worker with a slot gets a VM.
+	maxVms: number;
+	metrics: WorkerLoaderMetrics;
 	pool: WorkerLoaderPoolLimits & {
 		// How long a pool keeps VMs above `size` after its last peak.
 		idleMs: number;
@@ -157,7 +187,13 @@ export interface AgentOsWorkerLoaderBackendOptions {
 
 export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	readonly #options: AgentOsWorkerLoaderBackendOptions;
+	// Every VM from its boot until its disposal finishes.
 	readonly #vms = new Set<OwnedVm>();
+	readonly #stopping = new Set<OwnedVm>();
+	// Opens that wait for room in the VM budget, first in line first. Each boots its VM in the
+	// callback, so no prewarm takes the room first.
+	readonly #vmWaiters: { boot(): void; fail(error: Error): void }[] = [];
+	#warnedVms = false;
 	readonly #children = new Set<{ exited: Promise<void>; kill(): void }>();
 	readonly #pools = new Map<NetworkMode, VmPool>();
 	readonly #warming = new Set<Promise<void>>();
@@ -168,13 +204,35 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	readonly #holds = new Set<{ beside: boolean }>();
 	// A moving average of how long a prewarm takes.
 	#prewarmMs = initialPrewarmMs;
+	// Claim times across both modes, oldest first, within one prewarm time plus the rate window.
+	readonly #recentClaims: number[] = [];
+	// VMs that boot for a load that found no prewarmed VM.
+	#bootingOnDemand = 0;
 	#closed = false;
 
 	constructor(options: AgentOsWorkerLoaderBackendOptions) {
 		this.#options = options;
+		options.metrics.vmGauges = () => this.#gauges();
 		// Each VM owns a sidecar process, so stop every child and dispose the
 		// VMs when the runtime stops.
 		onRuntimeClose(() => this.#close());
+	}
+
+	#gauges(): VmGauges {
+		let pooled = 0;
+		const poolReady: Record<string, number> = {};
+		for (const pool of this.#pools.values()) {
+			pooled += pool.ready.length;
+			poolReady[pool.mode] = pool.ready.length;
+		}
+		const booting = this.#warming.size + this.#bootingOnDemand;
+		const stopping = this.#stopping.size;
+		return {
+			maxVms: this.#options.maxVms,
+			poolReady,
+			waiting: this.#vmWaiters.length,
+			vms: { booting, live: Math.max(0, this.#vms.size - pooled - booting - stopping), pooled, stopping },
+		};
 	}
 
 	async open(network: boolean): Promise<WorkerHost> {
@@ -212,7 +270,13 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 
 	async #openVm(pool: VmPool, hooks: LoadHooks): Promise<WorkerHost> {
 		// A ready VM serves exactly one dynamic Worker and is disposed with it.
-		const ready = await this.#claim(pool);
+		const claim = this.#claim(pool);
+		this.#refill();
+		const ready = await claim;
+		this.#options.metrics.claim(
+			pool.mode,
+			ready === undefined ? "miss" : claim instanceof Promise ? "warming" : "hit",
+		);
 		if (this.#closed) {
 			if (ready !== undefined) await this.#discard(ready);
 			throw new Error("The Worker Loader has stopped.");
@@ -222,16 +286,64 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			// The child is running even if the Worker fails before it is used.
 			return this.#host(() => this.#discard(ready), ready.booted, ready.root, () => child, hooks);
 		}
-		const owned = this.#boot(pool.mode);
+		let owned: OwnedVm | undefined;
 		let booted: BootedVm;
 		try {
-			booted = await owned.booted;
+			owned = await this.#bootWithinBudget(pool.mode);
+			this.#bootingOnDemand += 1;
+			try {
+				booted = await owned.booted;
+			} finally {
+				this.#bootingOnDemand -= 1;
+			}
 		} catch (error: unknown) {
-			await owned.dispose();
+			await owned?.dispose();
 			throw bootError(error);
 		}
+		const bootedVm = owned;
 		const root = posix.join(workersRoot, randomUUID());
-		return this.#host(() => owned.dispose(), booted, root, () => this.#spawn(booted.vm, root, owned), hooks);
+		return this.#host(() => bootedVm.dispose(), booted, root, () => this.#spawn(booted.vm, root, bootedVm), hooks);
+	}
+
+	// Boots a VM for a load once the VM budget has room. At the budget, prewarmed VMs stop to
+	// make room, and the load waits for a VM that stops.
+	#bootWithinBudget(mode: NetworkMode): Promise<OwnedVm> {
+		if (this.#closed) return Promise.reject(new Error("The Worker Loader has stopped."));
+		if (this.#vmWaiters.length === 0 && this.#vms.size < this.#options.maxVms) {
+			return Promise.resolve(this.#boot(mode));
+		}
+		return new Promise((resolveBoot, rejectBoot) => {
+			this.#vmWaiters.push({ boot: () => resolveBoot(this.#boot(mode)), fail: rejectBoot });
+			this.#makeRoom();
+		});
+	}
+
+	// Stops prewarmed VMs, from the fullest pool first, while more loads wait for room than the
+	// VMs that already stop will free.
+	#makeRoom(): void {
+		let short = this.#vmWaiters.length - this.#stopping.size;
+		while (short > 0) {
+			let fullest: VmPool | undefined;
+			for (const pool of this.#pools.values()) {
+				if (pool.ready.length > (fullest?.ready.length ?? 0)) fullest = pool;
+			}
+			const ready = fullest?.ready.shift();
+			if (ready === undefined) return;
+			void this.#discard(ready);
+			short -= 1;
+		}
+	}
+
+	// A VM finished stopping, so a load that waits for room may boot.
+	#vmFreed(): void {
+		if (this.#closed) {
+			for (const waiter of this.#vmWaiters.splice(0)) waiter.fail(new Error("The Worker Loader has stopped."));
+		}
+		while (this.#vmWaiters.length > 0 && this.#vms.size < this.#options.maxVms) {
+			this.#vmWaiters.shift()?.boot();
+		}
+		if (this.#vms.size < Math.ceil(this.#options.maxVms * warnRatio)) this.#warnedVms = false;
+		this.#refill();
 	}
 
 	// A ready VM, or a prewarm in flight that no other open waits for, since it
@@ -252,6 +364,11 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		pool.failed = false;
 		if (max === 0) return;
 		const now = performance.now();
+		this.#recentClaims.push(now);
+		const oldest = now - this.#prewarmMs - claimRateWindowMs;
+		while (this.#recentClaims.length > maxRecentClaims || (this.#recentClaims[0] ?? now) < oldest) {
+			this.#recentClaims.shift();
+		}
 		pool.claims.push(now);
 		if (pool.claims.length > max) pool.claims.shift();
 		const recent = pool.claims.filter((at) => now - at <= this.#prewarmMs).length;
@@ -276,10 +393,34 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		return pool.ready.length + pool.warming - pool.waiting.length;
 	}
 
-	// Starts prewarms for the pools furthest below their target, up to
-	// `maxParallelPrewarms` at once, while no dynamic Worker holds it back.
+	// How many prewarms may run now. With no dynamic Worker loading, `maxParallelPrewarms`. While
+	// Workers load, a prewarm beside them slows them, so only a steady stream of claims earns
+	// prewarms: as many as keep up with its rate. A steady stream claims VMs both within the last
+	// prewarm time and in the second before it; a burst does only once, so it never refills
+	// beside its own loads.
+	#refillLimit(): number {
+		if (this.#holds.size === 0) return maxParallelPrewarms;
+		const now = performance.now();
+		let recent = 0;
+		let earlier = 0;
+		for (const at of this.#recentClaims) {
+			const age = now - at;
+			if (age <= this.#prewarmMs) recent += 1;
+			else if (age <= this.#prewarmMs + claimRateWindowMs) earlier += 1;
+		}
+		const ratePerMs = Math.min(recent / this.#prewarmMs, earlier / claimRateWindowMs);
+		return Math.min(maxParallelPrewarms, Math.ceil(ratePerMs * this.#prewarmMs));
+	}
+
+	// Starts prewarms for the pools furthest below their target, up to the refill limit at once,
+	// while the VM budget has room and no load waits for it.
 	#refill(): void {
-		while (!this.#closed && this.#holds.size === 0 && this.#warming.size < maxParallelPrewarms) {
+		while (
+			!this.#closed &&
+			this.#warming.size < this.#refillLimit() &&
+			this.#vmWaiters.length === 0 &&
+			this.#vms.size < this.#options.maxVms
+		) {
 			let neediest: VmPool | undefined;
 			let missing = 0;
 			for (const pool of this.#pools.values()) {
@@ -329,8 +470,8 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			waiting(ready);
 			return;
 		}
-		// The target may have shrunk while the VM booted.
-		if (this.#closed || pool.ready.length >= this.#target(pool)) {
+		// The target may have shrunk while the VM booted, or a load may wait for its room.
+		if (this.#closed || pool.ready.length >= this.#target(pool) || this.#vmWaiters.length > this.#stopping.size) {
 			void this.#discard(ready);
 			return;
 		}
@@ -377,10 +518,18 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	}
 
 	async #spawn(vm: AgentOs, root: string, owned: OwnedVm): Promise<VmChild> {
-		const child = await spawnVmChild(vm, root, {
+		const spawned = await spawnVmChild(vm, root, {
 			dispose: () => owned.dispose(),
 			report: (message) => this.#options.onDiagnostic(message),
 		});
+		// A VM counts as stopping from the kill on, so room that it will free is not made twice.
+		const child: VmChild = {
+			...spawned,
+			kill: () => {
+				this.#stopping.add(owned);
+				spawned.kill();
+			},
+		};
 		const entry = { exited: child.exited, kill: () => child.kill() };
 		this.#children.add(entry);
 		void child.exited.then(() => this.#children.delete(entry));
@@ -411,13 +560,18 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	}
 
 	#boot(mode: NetworkMode): OwnedVm {
+		const startedAt = performance.now();
 		const booted = this.#create(mode);
+		void booted.then(
+			() => this.#options.metrics.vmBoot.observe((performance.now() - startedAt) / 1_000),
+			() => undefined,
+		);
 		let disposed: Promise<void> | undefined;
 		const owned: OwnedVm = {
 			booted,
 			dispose: () => {
 				disposed ??= (async () => {
-					this.#vms.delete(owned);
+					this.#stopping.add(owned);
 					// A VM that failed to boot has nothing to dispose, and its boot error reaches the
 					// caller that booted it.
 					const vm = await booted.then(({ vm: value }) => value).catch(() => undefined);
@@ -426,11 +580,21 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 							`OpenOrange cannot dispose the agentOS VM of a dynamic Worker: ${errorMessage(error)}`,
 						);
 					});
+					this.#stopping.delete(owned);
+					this.#vms.delete(owned);
+					this.#vmFreed();
 				})();
 				return disposed;
 			},
 		};
 		this.#vms.add(owned);
+		const { maxVms } = this.#options;
+		if (!this.#warnedVms && this.#vms.size >= Math.ceil(maxVms * warnRatio)) {
+			this.#warnedVms = true;
+			this.#options.onWarning(
+				`${this.#vms.size} of ${maxVms} agentOS VMs for dynamic Workers are in use, counting running Workers, prewarmed VMs, and VMs that boot or stop. At the limit, prewarmed VMs stop first, and a new Worker waits for a VM to stop. Raise ${workerLoaderMaxVmsSetting} to allow more.`,
+			);
+		}
 		return owned;
 	}
 
@@ -468,6 +632,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			clearTimeout(pool.shrink);
 			for (const waiting of pool.waiting.splice(0)) waiting(undefined);
 		}
+		for (const waiter of this.#vmWaiters.splice(0)) waiter.fail(new Error("The Worker Loader has stopped."));
 		// Disposing a VM with a running process fails to observe its exit, so
 		// stop the children first.
 		const children = [...this.#children];

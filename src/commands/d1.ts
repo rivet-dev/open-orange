@@ -194,6 +194,8 @@ async function openDatabase(
 			deploymentIdentity,
 			host: "127.0.0.1",
 			normalizedConfiguration: "{}",
+			// A one-shot D1 command has nothing to scrape.
+			serveMetrics: false,
 			port: 0,
 			projectRoot: config.projectRoot,
 			...(endpoint === undefined

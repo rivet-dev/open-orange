@@ -54,7 +54,7 @@ jobs:
           pnpm --dir website install --frozen-lockfile
           pnpm --dir website build
       - name: Publish website
-        uses: rivet-dev/deploy-to-bucket@afc92fa282ac216e2b021cc116779a8e4c374398
+        uses: rivet-dev/deploy-to-bucket@1d63d8da3576b344c4092152c6328adf8db102fd
         with:
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}

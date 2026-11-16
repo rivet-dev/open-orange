@@ -15,8 +15,8 @@ importers:
         specifier: 0.4.8
         version: 0.4.8
       '@rivet-dev/durable-object-migrator':
-        specifier: 1.0.2
-        version: 1.0.2
+        specifier: 1.0.3
+        version: 1.0.3
       '@rivet-dev/sandbox-adapter':
         specifier: 0.5.3
         version: 0.5.3(@aws-sdk/credential-provider-node@3.972.87)(@daytonaio/sdk@0.216.1)(@smithy/signature-v4@5.7.4)(e2b@2.63.0)(freestyle@0.2.23)(undici@8.10.2)(ws@8.21.0)(zod@4.5.4)
@@ -175,8 +175,8 @@ importers:
         specifier: 0.4.8
         version: 0.4.8
       '@rivet-dev/durable-object-migrator':
-        specifier: 1.0.2
-        version: 1.0.2
+        specifier: 1.0.3
+        version: 1.0.3
       '@rivet-dev/sandbox-adapter':
         specifier: 0.5.3
         version: 0.5.3(@aws-sdk/credential-provider-node@3.972.87)(@daytonaio/sdk@0.216.1)(@smithy/signature-v4@5.7.4)(e2b@2.63.0)(freestyle@0.2.23)(undici@8.10.2)(ws@8.21.0)(zod@4.5.4)
@@ -1460,8 +1460,8 @@ packages:
     resolution: {integrity: sha512-SUeyGdmSKl6NyLhFoLo5KJa48b84Cg40Dcw80CxY+62u4tNIiops3XpZEp2Xzeh2USD7GaYfvVBfzYba9votmw==}
     engines: {node: '>=20'}
 
-  '@rivet-dev/durable-object-migrator@1.0.2':
-    resolution: {integrity: sha512-PwQx/77rawuFChOlgdl+PEJ9gdyqHGlyraJjmfClc/Or0xTcKthFX5QWW0BtIdAdkzJQl2UWaayF6F+aCctY7w==}
+  '@rivet-dev/durable-object-migrator@1.0.3':
+    resolution: {integrity: sha512-mM+i1pSYDYqRecE+lhwpK+hi/ZUewiBFOPHGdzrtOu5Y62OxoHf804dTaxH7tQz4fzjfbnh1GluL8CXs3+2OFw==}
     engines: {node: '>=24'}
     peerDependencies:
       '@alchemy.run/cloudflare': 2.0.0-beta.84
@@ -4298,7 +4298,7 @@ snapshots:
       '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu': 0.4.8
       '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu': 0.4.8
 
-  '@rivet-dev/durable-object-migrator@1.0.2':
+  '@rivet-dev/durable-object-migrator@1.0.3':
     dependencies:
       devalue: 5.9.4
 

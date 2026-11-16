@@ -322,8 +322,8 @@ heavier than workerd's in-isolate reset.
 intentionally incomplete. `ctx.facets` is described in [Facets](../modules/durable-objects#facets).
 `ctx.container` works for classes listed under wrangler `containers`. It runs
 one sandbox per object on `ORANGE_SANDBOX_PROVIDER`, so only Cloudflare Sandbox
-images run. See [Sandbox](../modules/sandbox). For other classes it throws a
-`NotSupportedError`. Reading `ctx.props`, `ctx.restore`,
+images run. See [Sandbox](../modules/sandbox). For other classes it is
+`undefined`, as on Cloudflare. Reading `ctx.props`, `ctx.restore`,
 `ctx.configureReadReplication`, `ctx.primaryStub`, or `ctx.version` throws a
 `NotSupportedError`. Other names that workerd does not
 define on `DurableObjectState`, such as `ctx.tracing`, read as `undefined`, as

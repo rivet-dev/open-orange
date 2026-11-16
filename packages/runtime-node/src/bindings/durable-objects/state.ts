@@ -459,16 +459,14 @@ class InitialDurableObjectState implements DurableObjectState {
 	}
 
 	// Classes listed under wrangler `containers` get a Container backed by the
-	// ORANGE_SANDBOX_PROVIDER sandbox provider.
-	get container(): object {
+	// ORANGE_SANDBOX_PROVIDER sandbox provider. Any other class has no container
+	// and reads `undefined`, as workerd's optional `container` does:
+	// https://github.com/cloudflare/workerd/blob/ebf43c5fcdc99a436a95f00384dfed671c75da2e/src/workerd/api/actor-state.h#L673-L675
+	get container(): object | undefined {
 		if (this.#container !== undefined) return this.#container;
-		const container =
-			this.#className === undefined
-				? undefined
-				: containerForDurableObject(this.#className, String(this.id), () => this.storage);
-		if (container === undefined) throw stateUnsupported("container");
-		this.#container = container;
-		return container;
+		if (this.#className === undefined) return undefined;
+		this.#container = containerForDurableObject(this.#className, String(this.id), () => this.storage);
+		return this.#container;
 	}
 
 	get facets(): DurableObjectFacets {

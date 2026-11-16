@@ -131,7 +131,7 @@ test("exposes the object id, delegates waitUntil, and diagnoses excluded state",
 	assert.deepEqual(pending, [task]);
 	assert.deepEqual(generation.state.props, {});
 	assert.throws(() => generation.state.facets, /facets is not implemented/);
-	assert.throws(() => generation.state.container, /container is not implemented/);
+	assert.equal(generation.state.container, undefined);
 });
 
 test("makes abort uncatchable at the event boundary and poisons the generation", async () => {

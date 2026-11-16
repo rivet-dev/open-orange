@@ -353,8 +353,8 @@ preview URLs.
 #### ctx.container
 
 A class that `containers` lists gets a `ctx.container` that runs one sandbox
-per Durable Object on `ORANGE_SANDBOX_PROVIDER`. In any other class, reading
-`ctx.container` throws a `NotSupportedError`.
+per Durable Object on `ORANGE_SANDBOX_PROVIDER`. In any other class,
+`ctx.container` is `undefined`, as on Cloudflare.
 
 - `start()` connects to the object's stored sandbox, or creates one. The image
   must be a Cloudflare Sandbox image: its reference, or the Dockerfile it

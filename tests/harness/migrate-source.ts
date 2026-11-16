@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { readdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { createRequire } from "node:module";
+import { join, matchesGlob } from "node:path";
 
 import { repositoryRoot } from "./orange-dev.js";
 
@@ -13,7 +14,31 @@ export interface CloudflareSource {
 	output(): string;
 }
 
-// What a failed request to a source needs to tell the keep-alive race from other failures.
+interface MiniflareInstance {
+	ready: Promise<URL>;
+	dispose(): Promise<void>;
+}
+
+interface MiniflareModule {
+	Log: new (level: number) => { log(message: string): void };
+	LogLevel: { INFO: number };
+	Miniflare: new (options: unknown) => MiniflareInstance;
+	convertV4MiniflareOptions(options: Record<string, unknown>): unknown;
+}
+
+interface WranglerModule {
+	unstable_getMiniflareWorkerOptions(configPath: string): {
+		workerOptions: Record<string, unknown> & { modulesRules?: { type: string; include: string[] }[] };
+	};
+}
+
+// The pinned Wrangler, and the Miniflare it runs, so the runtime is the one `wrangler dev` would use.
+// Loaded untyped: their declarations need Cloudflare's own types, which this repo does not install.
+const requireFromHere = createRequire(import.meta.url);
+const { unstable_getMiniflareWorkerOptions } = requireFromHere("wrangler") as WranglerModule;
+const { Log, LogLevel, Miniflare, convertV4MiniflareOptions } = createRequire(requireFromHere.resolve("wrangler"))("miniflare") as MiniflareModule;
+
+// What a failed request to a source needs to tell a dead source from other failures.
 const sourceStates = new Map<string, () => string>();
 
 export function describeSource(origin: string): string {
@@ -21,9 +46,15 @@ export function describeSource(origin: string): string {
 }
 
 /**
- * Runs the prepared Worker on real workerd through `wrangler dev`, so the export route, the dirty
- * check, and the block after a move are the migrator's real code on the real runtime. Only
- * Cloudflare's network is missing.
+ * Runs the prepared Worker on real workerd through Miniflare, so the export route, the dirty check,
+ * and the block after a move are the migrator's real code on the real runtime. Only Cloudflare's
+ * network is missing.
+ *
+ * `wrangler dev` would put a proxy Worker in its own workerd process in front of the Worker, with
+ * keep-alive connections between the two that drop a request when one of them times out. Cloudflare
+ * has no such hop, so the source runs the Worker in one process. Its storage is kept under the
+ * project's `.wrangler/state/v3`, as `wrangler dev` keeps it, so a source started again on the same
+ * port has the same data, as Cloudflare does after an outage.
  */
 export async function startCloudflareSource(
 	projectDirectory: string,
@@ -32,59 +63,52 @@ export async function startCloudflareSource(
 ): Promise<CloudflareSource> {
 	const devVars = { WORKER_MIGRATOR_TOKEN: migratorToken, ...vars };
 	await writeFile(join(projectDirectory, ".dev.vars"), Object.entries(devVars).map(([name, value]) => `${name}=${value}\n`).join(""));
-	const wrangler = join(repositoryRoot, "node_modules", "wrangler", "bin", "wrangler.js");
-	const child = spawn(process.execPath, [wrangler, "dev", "--config", "wrangler.migrate.jsonc", "--port", String(port), "--ip", "127.0.0.1", "--inspector-port", "0", "--show-interactive-dev-session=false"], {
-		cwd: projectDirectory,
-		// Its own process group, so close() also stops workerd.
-		detached: true,
-		env: { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false" },
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const config = join(projectDirectory, "wrangler.migrate.jsonc");
+	// Wrangler bundles the Worker as `wrangler deploy` would, without deploying it.
+	const outdir = join(projectDirectory, ".wrangler", "source-bundle");
+	const built = spawnSync(
+		process.execPath,
+		[join(repositoryRoot, "node_modules", "wrangler", "bin", "wrangler.js"), "deploy", "--dry-run", "--outdir", outdir, "--config", config],
+		{ cwd: projectDirectory, encoding: "utf8", env: { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false" } },
+	);
+	if (built.status !== 0) throw new Error(`wrangler could not bundle the prepared Worker:\n${built.stdout}${built.stderr}`);
+
 	let output = "";
-	child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-	child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
-	let keepConnectionBusy: NodeJS.Timeout | undefined;
-	const close = async (): Promise<void> => {
-		clearInterval(keepConnectionBusy);
-		if (child.exitCode !== null || child.signalCode !== null) return;
-		const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
-		process.kill(-child.pid!, "SIGKILL");
-		await exited;
-	};
-	const deadline = Date.now() + 60_000;
-	for (;;) {
-		const ready = /Ready on http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-		if (ready !== null) {
-			const origin = `http://127.0.0.1:${ready[1]}`;
-			// `wrangler dev` forwards requests over keep-alive connections between its two workerd
-			// processes, and each end drops an idle connection at 5 seconds. A request sent just before
-			// that fails with `Network connection lost`, and `wrangler dev` then exits. Cloudflare has no
-			// such hop. This route answers 401 in the Worker, so it wakes no object and writes nothing.
-			// https://github.com/capnproto/capnproto/blob/aac38c2a569e0a4c592246aacc5318b3cb20a6f2/c%2B%2B/src/kj/compat/http.h#L1000
-			// https://github.com/capnproto/capnproto/blob/aac38c2a569e0a4c592246aacc5318b3cb20a6f2/c%2B%2B/src/kj/compat/http.h#L1146
-			let lastPing = Date.now();
-			let longestPingGap = 0;
-			keepConnectionBusy = setInterval(() => {
-				void fetch(`${origin}/__migrate/`)
-					.then((response) => {
-						longestPingGap = Math.max(longestPingGap, Date.now() - lastPing);
-						lastPing = Date.now();
-						return response.body?.cancel();
-					})
-					.catch(() => undefined);
-			}, 1_000);
-			keepConnectionBusy.unref();
-			sourceStates.set(
-				origin,
-				() =>
-					`wrangler dev ${child.exitCode === null && child.signalCode === null ? "still runs" : `exited (${child.exitCode ?? child.signalCode})`}, longest gap between keep-alive pings ${longestPingGap} ms, last ping ${Date.now() - lastPing} ms ago\n${output.slice(-2_000)}`,
-			);
-			return { close, origin, output: () => output };
+	class OutputLog extends Log {
+		override log(message: string): void {
+			output += `${message}\n`;
 		}
-		if (child.exitCode !== null || Date.now() > deadline) {
-			await close();
-			throw new Error(`wrangler dev did not start:\n${output}`);
-		}
-		await delay(50);
 	}
+	const { modulesRules = [], ...workerOptions } = unstable_getMiniflareWorkerOptions(config).workerOptions;
+	// The bundle is worker.js plus the files that `find_additional_modules` keeps, such as text that
+	// the Worker reads from /bundle. Each one is a module, typed by the project's first matching rule.
+	const modules = readdirSync(outdir, { recursive: true, encoding: "utf8" })
+		.filter((path) => path === "worker.js" || (path !== "README.md" && !path.endsWith(".map") && modulesRules.some((rule) => rule.include.some((glob) => matchesGlob(path, glob)))))
+		.sort((a, b) => Number(b === "worker.js") - Number(a === "worker.js"))
+		.map((path) => ({
+			path: join(outdir, path),
+			type: path === "worker.js" ? "ESModule" : modulesRules.find((rule) => rule.include.some((glob) => matchesGlob(path, glob)))!.type,
+		}));
+	// Wrangler's options use Miniflare's v4 shape, which Wrangler converts the same way.
+	const miniflare = new Miniflare(
+		convertV4MiniflareOptions({
+			host: "127.0.0.1",
+			port,
+			resourcePersistencePath: join(projectDirectory, ".wrangler", "state", "v3"),
+			log: new OutputLog(LogLevel.INFO),
+			workers: [{ ...workerOptions, modules, modulesRoot: outdir }],
+		}),
+	);
+	const origin = (await miniflare.ready).origin;
+	let closed = false;
+	sourceStates.set(origin, () => `the source ${closed ? "was closed" : "still runs"}\n${output.slice(-2_000)}`);
+	return {
+		async close(): Promise<void> {
+			if (closed) return;
+			closed = true;
+			await miniflare.dispose();
+		},
+		origin,
+		output: () => output,
+	};
 }

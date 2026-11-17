@@ -50,8 +50,8 @@ export function configureContainerClasses(classes: readonly ContainerClass[]): v
 }
 
 /** Returns the container of a Durable Object, or undefined when its class has none. */
-// Storage is read only for listed classes, so other classes get the
-// unsupported error even before storage exists.
+// Storage is read only for listed classes, so other classes get undefined
+// even before storage exists.
 export function containerForDurableObject(className: string, owner: string, storage: () => ContainerStorage): object | undefined {
 	const images = containerClasses.get(className);
 	return images === undefined ? undefined : new SandboxContainer(owner, storage(), images);

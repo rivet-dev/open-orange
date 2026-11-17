@@ -318,7 +318,8 @@ test("runs Durable Object RPC and fetch through the Worker binding and Rivet act
 		assert.ok(isRecord(state));
 		assert.equal(state.startupReady, true);
 		assert.match(String(state.id), /^[a-f0-9]{64}$/);
-		assert.deepEqual(state.diagnostics, ["DurableObjectState.container is not implemented"]);
+		assert.deepEqual(state.diagnostics, []);
+		assert.equal(state.containerIsUndefined, true);
 		assert.equal(state.exportsCounterNamespace, true);
 		const initialGeneration = state.generation;
 		assert.equal(typeof initialGeneration, "number");

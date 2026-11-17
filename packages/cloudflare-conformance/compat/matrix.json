@@ -11158,7 +11158,7 @@
 			"name": "ctx.container",
 			"status": "partial",
 			"cloudflare": "Controls the container attached to the object.",
-			"orange": "Classes listed under wrangler containers get a Container that runs one sandbox per object on ORANGE_SANDBOX_PROVIDER. start(), exec(), monitor(), destroy(), signal(), and getTcpPort().fetch() work. Other classes throw NotSupportedError.",
+			"orange": "Classes listed under wrangler containers get a Container that runs one sandbox per object on ORANGE_SANDBOX_PROVIDER. start(), exec(), monitor(), destroy(), signal(), and getTcpPort().fetch() work. Other classes read ctx.container as undefined, as on Cloudflare.",
 			"notes": "Only Cloudflare Sandbox images run; other images and start({ entrypoint }) throw. exec({ pty }), exec({ stdin }), interceptOutboundHttp(), interceptAllOutboundHttp(), interceptOutboundHttps(), snapshotContainer(), and inspect() throw. setInactivityTimeout() is a no-op. See docs/modules/sandbox.mdx.",
 			"evidence": [
 				{
@@ -14510,7 +14510,7 @@
 			"status": "alternative",
 			"cloudflare": "Configures Containers bound to Durable Object classes.",
 			"orange": "Accepted with one warning. No container image runs. Sandbox classes from @cloudflare/sandbox, and other classes listed under containers, run on the ORANGE_SANDBOX_PROVIDER backend (default: local).",
-			"notes": "A listed class's ctx.container runs one sandbox per object, and start() takes only a Cloudflare Sandbox image: an image reference or Dockerfile that names cloudflare/sandbox. A class that containers does not list throws NotSupportedError from ctx.container. See do-ctx-container and docs/modules/sandbox.mdx.",
+			"notes": "A listed class's ctx.container runs one sandbox per object, and start() takes only a Cloudflare Sandbox image: an image reference or Dockerfile that names cloudflare/sandbox. A class that containers does not list reads ctx.container as undefined. See do-ctx-container and docs/modules/sandbox.mdx.",
 			"evidence": [
 				{
 					"kind": "code",

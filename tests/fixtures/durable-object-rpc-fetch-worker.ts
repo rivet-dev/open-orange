@@ -387,6 +387,7 @@ export class Counter extends DurableObject {
 		const exportedCounter: unknown = Reflect.get(Reflect.get(this.ctx, "exports"), "Counter");
 		return {
 			diagnostics,
+			containerIsUndefined: Reflect.get(this.ctx, "container") === undefined,
 			exportsCounterNamespace:
 				typeof exportedCounter === "object" &&
 				exportedCounter !== null &&

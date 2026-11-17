@@ -137,7 +137,7 @@
 			"product": "Containers",
 			"orange": "No container runtime. A class listed under containers gets a ctx.container that runs one sandbox per object on ORANGE_SANDBOX_PROVIDER",
 			"status": "partial",
-			"note": "Images are not built or run, and start() takes only a Cloudflare Sandbox image (cloudflare/sandbox). start(), exec(), monitor(), destroy(), signal(), and getTcpPort().fetch() work. start({ entrypoint }), exec({ pty }), exec({ stdin }), the outbound HTTP intercepts, snapshotContainer(), and inspect() throw. ctx.container throws NotSupportedError in a class that containers does not list.",
+			"note": "Images are not built or run, and start() takes only a Cloudflare Sandbox image (cloudflare/sandbox). start(), exec(), monitor(), destroy(), signal(), and getTcpPort().fetch() work. start({ entrypoint }), exec({ pty }), exec({ stdin }), the outbound HTTP intercepts, snapshotContainer(), and inspect() throw. ctx.container is undefined in a class that containers does not list.",
 			"evidence": ["src/config/load-wrangler.ts", "packages/runtime-node/src/bindings/durable-objects/state.ts", "packages/runtime-node/src/modules/cloudflare-sandbox/container.ts", "tests/bindings/sandbox.test.ts", "docs/modules/sandbox.mdx"]
 		},
 		{

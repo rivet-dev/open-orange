@@ -73,7 +73,7 @@
   `*.test.ts` files is one CI job, `e2e / <area>`. A new folder gets its own job.
 - `tests/harness/` holds the shared helpers. Start and stop `orange dev` with
   `startOrangeDev` from `tests/harness/orange-dev.ts`, and wait with `waitFor`,
-  never a fixed sleep. Sleep only for time the test is about, and say why.
+  never a fixed sleep. Sleep only for the time the test is about, and say why.
 - `tests/fixtures/` holds the Worker projects that tests run, and
   `tests/cloudflare-examples/` holds the unchanged Cloudflare copies. Neither
   holds test files.

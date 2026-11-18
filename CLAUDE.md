@@ -88,7 +88,7 @@
   behavior, conformance status, or deviations change.
 - Each module document must state its support status, show Wrangler-compatible
   configuration, explain how Orange implements it, describe its behavioral and
-  type conformance coverage, and list every known deviation from Cloudflare,
+  type conformance coverage, and list every known deviation from Cloudflare
   in the [docs page format](#docs-page-format).
 - Never put secret values, credentials, or private infrastructure details in
   public docs.

@@ -232,6 +232,13 @@ digests through `crypto.DigestStream`.
 
 - `fetch()` decodes `deflate` response bodies through Undici. Workerd decodes
   only `gzip` and `br`, and passes other codings through.
+- When a hostname has more than one address, `fetch()` and
+  `cloudflare:sockets` `connect()` race them, as
+  [RFC 8305](https://www.rfc-editor.org/rfc/rfc8305#section-5) describes: the
+  next attempt starts 250 ms after the last one, or when it fails. Earlier
+  attempts keep running, and the first to connect wins. Workerd tries one
+  address at a time, and moves on only when a connect fails
+  ([kj](https://github.com/capnproto/capnproto/blob/be8fbe7bc7ad6c5cc8106385a1919df7222b1e5e/c%2B%2B/src/kj/async-io-unix.c%2B%2B#L1636-L1671)).
 - `URL.createObjectURL()` throws `URL.createObjectURL is not implemented yet.`
 - These are not implemented: Cloudflare-specific outbound request metadata,
   some Cloudflare crypto algorithms, exact stream queuing semantics, exact

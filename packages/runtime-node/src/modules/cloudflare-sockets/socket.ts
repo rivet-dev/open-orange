@@ -2,10 +2,10 @@
 // pipes for service bindings. The observable behavior mirrors workerd's Socket:
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/sockets.c++#L95-L800
 
-import { connect as netConnect } from "node:net";
 import { Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 
+import { connectHappyEyeballs } from "../../internal/happy-eyeballs.js";
 import { virtualHostFetcher } from "../../internal/virtual-hosts.js";
 import { currentGlobalOutbound, globalOutboundBlockedError } from "../../internal/global-outbound.js";
 
@@ -205,8 +205,15 @@ class SocketPipeEnd extends Duplex {
 
 const kCreate = Symbol("open-orange.socket.create");
 
+// An outbound connection that is still racing a hostname's addresses. `abort` stops every
+// attempt, and closes a connection that wins anyway.
+interface PendingConnection {
+	connected: Promise<Duplex>;
+	abort(): void;
+}
+
 interface SocketInit {
-	connection: Duplex;
+	connection: Duplex | PendingConnection;
 	parsed: ParsedAddress;
 	options: SocketOptions | undefined;
 	secureTransport: SecureTransport;
@@ -234,6 +241,10 @@ export class Socket {
 	readonly #writable: WritableStream<unknown>;
 	readonly #listeners: Array<[string, ConnectionListener]> = [];
 	#connection: Duplex | undefined;
+	#pending: PendingConnection | undefined;
+	// A read waits for the pending connection.
+	#resumeOnConnect = false;
+	readonly #allowHalfOpen: boolean;
 	#readController: ReadableByteStreamController | undefined;
 	#writeController: WritableStreamDefaultController | undefined;
 	#openedState: "pending" | "opened" | "failed" = "pending";
@@ -252,12 +263,11 @@ export class Socket {
 	private constructor(badge: symbol, init: SocketInit) {
 		if (badge !== kCreate) throw new TypeError("Illegal constructor");
 		const { connection, parsed, options, secureTransport, opened, info, transferred } = init;
-		this.#connection = connection;
 		this.#parsed = parsed;
 		this.#options = options;
 		this.#secureTransport = secureTransport;
 		this.#info = info;
-		const allowHalfOpen = options?.allowHalfOpen === true;
+		this.#allowHalfOpen = options?.allowHalfOpen === true;
 
 		this.#readable = new ReadableStream({
 			type: "bytes",
@@ -265,10 +275,11 @@ export class Socket {
 				this.#readController = controller;
 			},
 			pull: () => {
+				if (this.#connection === undefined) this.#resumeOnConnect = true;
 				this.#connection?.resume();
 			},
 			cancel: () => {
-				this.#connection?.destroy();
+				this.#destroyConnection();
 			},
 		});
 		this.#writable = new WritableStream<unknown>(
@@ -293,7 +304,7 @@ export class Socket {
 					this.#connection?.end();
 				},
 				abort: () => {
-					this.#connection?.destroy();
+					this.#destroyConnection();
 				},
 			},
 			options?.highWaterMark === undefined
@@ -301,6 +312,46 @@ export class Socket {
 				: { highWaterMark: options.highWaterMark },
 		);
 
+		let ready = opened;
+		if (connection instanceof Duplex) {
+			this.#attach(connection);
+		} else {
+			// `opened` resolves only after the winning connection is attached, so a write that
+			// waits for it has a connection.
+			this.#pending = connection;
+			ready = connection.connected.then(
+				(connected) => {
+					if (this.#pending !== connection) return opened;
+					this.#pending = undefined;
+					this.#attach(connected);
+					return opened;
+				},
+				(error: unknown) => {
+					if (this.#pending === connection) {
+						this.#pending = undefined;
+						this.#fail(connectionError(parsed));
+					}
+					throw error;
+				},
+			);
+		}
+		if (transferred) {
+			this.#startedTls = true;
+			this.#openedState = "opened";
+			this.#opened.resolve(info);
+			return;
+		}
+		ready.then(
+			() => {
+				this.#openedState = "opened";
+				this.#opened.resolve(info);
+			},
+			() => {},
+		);
+	}
+
+	#attach(connection: Duplex): void {
+		this.#connection = connection;
 		connection.pause();
 		this.#listen(connection, "data", (data: Buffer) => {
 			const controller = this.#readController;
@@ -318,7 +369,7 @@ export class Socket {
 			// Without allowHalfOpen the write side closes once the peer sends EOF.
 			// A writer the user holds, such as a pipeTo(), closes the stream itself.
 			// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/sockets.c++#L763-L800
-			if (!allowHalfOpen && !this.#writable.locked) {
+			if (!this.#allowHalfOpen && !this.#writable.locked) {
 				const writer = this.#writable.getWriter();
 				writer
 					.close()
@@ -328,7 +379,7 @@ export class Socket {
 		});
 		this.#listen(connection, "error", (error: Error) => {
 			if (this.#detached) return;
-			this.#fail(this.#openedState === "opened" ? error : connectionError(parsed));
+			this.#fail(this.#openedState === "opened" ? error : connectionError(this.#parsed));
 		});
 		this.#listen(connection, "close", () => {
 			if (this.#detached) return;
@@ -341,19 +392,18 @@ export class Socket {
 				if (!this.#detached) this.#resolveClosed();
 			});
 		}
-		if (transferred) {
-			this.#startedTls = true;
-			this.#openedState = "opened";
-			this.#opened.resolve(info);
-			return;
-		}
-		opened.then(
-			() => {
-				this.#openedState = "opened";
-				this.#opened.resolve(info);
-			},
-			() => {},
-		);
+		if (this.#resumeOnConnect) connection.resume();
+	}
+
+	// Closes the connection, or stops connecting. Stopping a pending connect resolves `closed`, as
+	// destroying a connecting socket does.
+	#destroyConnection(): void {
+		this.#connection?.destroy();
+		const pending = this.#pending;
+		if (pending === undefined) return;
+		this.#pending = undefined;
+		pending.abort();
+		if (!this.#detached) this.#resolveClosed();
 	}
 
 	#listen(connection: Duplex, event: string, listener: ConnectionListener): void {
@@ -375,7 +425,7 @@ export class Socket {
 			// The stream already finished.
 		}
 		this.#writable.abort(error).catch(() => {});
-		this.#connection?.destroy();
+		this.#destroyConnection();
 	}
 
 	// Moves the connection to a new Socket for the receiver of an RPC call.
@@ -476,7 +526,8 @@ export class Socket {
 			throw new TypeError("Cannot startTls on a TLS socket.");
 		}
 		const connection = this.#connection;
-		if (connection === undefined) {
+		const pending = this.#pending;
+		if (connection === undefined && pending === undefined) {
 			throw new TypeError(
 				"The connection was closed before startTls could be started.",
 			);
@@ -498,25 +549,32 @@ export class Socket {
 		this.#detached = true;
 		this.#upgraded = true;
 		this.#connection = undefined;
-		connection.removeAllListeners("data");
-		connection.removeAllListeners("end");
+		this.#pending = undefined;
+		connection?.removeAllListeners("data");
+		connection?.removeAllListeners("end");
 		try {
 			this.#readController?.close();
 		} catch {
 			// The stream was already canceled.
 		}
 		this.#resolveClosed();
-		const tlsOptions: TlsOptionsWithHalfOpen = {
-			allowHalfOpen: true,
-			servername,
-			socket: connection,
-		};
-		const secure = tlsConnect(tlsOptions);
 		const opened = deferred<void>();
-		secure.once("secureConnect", () => opened.resolve());
-		secure.once("error", (error) => opened.reject(error));
+		const upgrade = (plain: Duplex): Duplex => {
+			const tlsOptions: TlsOptionsWithHalfOpen = {
+				allowHalfOpen: true,
+				servername,
+				socket: plain,
+			};
+			const secure = tlsConnect(tlsOptions);
+			secure.once("secureConnect", () => opened.resolve());
+			secure.once("error", (error) => opened.reject(error));
+			return secure;
+		};
 		return createSocket({
-			connection: secure,
+			connection:
+				connection === undefined
+					? { abort: pending!.abort, connected: pending!.connected.then(upgrade) }
+					: upgrade(connection),
 			info: this.#info,
 			opened: opened.promise,
 			options: this.#options,
@@ -622,27 +680,38 @@ export function connect(
 	}
 	const secureTransport = parseSecureTransport(options);
 	const opened = deferred<void>();
+	const abort = new AbortController();
 	// Node.js keeps both directions open so this module can apply allowHalfOpen.
-	const tlsOptions: TlsOptionsWithHalfOpen = {
+	const connected = connectHappyEyeballs({
 		allowHalfOpen: true,
 		host: parsed.hostname,
 		port: parsed.port,
-		servername: parsed.hostname,
-	};
-	const connection =
-		secureTransport === "on"
-			? tlsConnect(tlsOptions)
-			: netConnect({
-					allowHalfOpen: true,
-					host: parsed.hostname,
-					port: parsed.port,
-				});
-	connection.once(secureTransport === "on" ? "secureConnect" : "connect", () =>
-		opened.resolve(),
-	);
-	connection.once("error", (error) => opened.reject(error));
+		signal: abort.signal,
+	}).then((plain): Duplex => {
+		if (secureTransport !== "on") {
+			opened.resolve();
+			return plain;
+		}
+		const tlsOptions: TlsOptionsWithHalfOpen = {
+			allowHalfOpen: true,
+			servername: parsed.hostname,
+			socket: plain,
+		};
+		const secure = tlsConnect(tlsOptions);
+		secure.once("secureConnect", () => opened.resolve());
+		secure.once("error", (error) => opened.reject(error));
+		return secure;
+	});
+	connected.catch((error: unknown) => opened.reject(error));
 	return createSocket({
-		connection,
+		connection: {
+			abort: () => {
+				abort.abort();
+				// The race can win just before the abort.
+				connected.then((connection) => connection.destroy(), () => {});
+			},
+			connected,
+		},
 		info: { remoteAddress: parsed.address },
 		opened: opened.promise,
 		options,

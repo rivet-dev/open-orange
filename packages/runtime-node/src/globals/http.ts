@@ -20,6 +20,7 @@ import { WebSocket } from "./websocket.js";
 import { waitForOutputGate } from "../internal/output-gate.js";
 import { isRequestSignalPassthrough } from "../internal/request-signal-passthrough.js";
 import { currentGlobalOutbound, globalOutboundBlockedError } from "../internal/global-outbound.js";
+import { workerFetchDispatcher } from "../internal/worker-fetch-dispatcher.js";
 import type {
 	BodyInit as UndiciBodyInit,
 	RequestInit as UndiciRequestInit,
@@ -859,7 +860,7 @@ export async function fetch<Cf = unknown>(
 				duplex: "half",
 			});
 		}
-		return responseFromUndici(await undiciFetch(outgoing));
+		return responseFromUndici(await undiciFetch(outgoing, { dispatcher: workerFetchDispatcher }));
 	} finally {
 		ended?.();
 	}

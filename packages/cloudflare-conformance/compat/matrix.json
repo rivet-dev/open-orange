@@ -13643,20 +13643,40 @@
 			"id": "config-find-additional-modules",
 			"category": "config",
 			"name": "find_additional_modules",
-			"status": "rejected",
+			"status": "supported",
 			"cloudflare": "Uploads files under base_dir that match rules as extra modules.",
-			"orange": "When true, config load fails with Unsupported Wrangler configuration: find_additional_modules.",
-			"notes": "Orange always bundles the Worker into one module.",
+			"orange": "When true, orange dev and orange serve search base_dir, or the entrypoint's directory, for files that match the active module rules, and put them under /bundle, read-only, as workerd does.",
+			"notes": "The search skips the entrypoint and the Wrangler config file. Without the field, /bundle has only the Worker.",
 			"evidence": [
 				{
 					"kind": "code",
 					"path": "src/config/load-wrangler.ts",
-					"lines": "567-569"
+					"lines": "504-506"
 				},
 				{
 					"kind": "code",
-					"path": "src/config/load-wrangler.ts",
-					"lines": "1408-1412"
+					"path": "src/build/additional-modules.ts",
+					"lines": "48-60"
+				},
+				{
+					"kind": "code",
+					"path": "src/commands/dev.ts",
+					"lines": "260-268"
+				},
+				{
+					"kind": "code",
+					"path": "src/serve/session.ts",
+					"lines": "24-31"
+				},
+				{
+					"kind": "code",
+					"path": "tests/node-compat/additional-modules.test.ts",
+					"lines": "10-48"
+				},
+				{
+					"kind": "code",
+					"path": "tests/cli/orange-serve.test.ts",
+					"lines": "341-343"
 				}
 			]
 		},
@@ -13684,15 +13704,20 @@
 			"id": "config-base-dir",
 			"category": "config",
 			"name": "base_dir",
-			"status": "not-applicable",
+			"status": "supported",
 			"cloudflare": "The directory where module rules are evaluated.",
-			"orange": "Ignored. Orange does not pass it to esbuild.",
-			"notes": "Only matters with find_additional_modules or rules, which Orange rejects.",
+			"orange": "find_additional_modules searches base_dir, resolved from the project root, and names each file under /bundle by its path from there. Without base_dir, it searches the entrypoint's directory.",
+			"notes": "Only matters with find_additional_modules.",
 			"evidence": [
 				{
 					"kind": "code",
-					"path": "src/build/bundle-worker.ts",
-					"lines": "326-355"
+					"path": "src/config/load-wrangler.ts",
+					"lines": "1758-1766"
+				},
+				{
+					"kind": "code",
+					"path": "tests/node-compat/additional-modules.test.ts",
+					"lines": "27-35"
 				},
 				{
 					"kind": "doc",

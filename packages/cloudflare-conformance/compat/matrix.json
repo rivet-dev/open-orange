@@ -3876,7 +3876,7 @@
 				{
 					"kind": "code",
 					"path": "src/build/bundle-worker.ts",
-					"lines": "128-175"
+					"lines": "206-287"
 				},
 				{
 					"kind": "code",
@@ -7921,7 +7921,7 @@
 			"name": "node:fs",
 			"status": "partial",
 			"cloudflare": "A virtual file system. /bundle holds the Worker's modules, /tmp is per request, and /dev has null, zero, full, and random.",
-			"orange": "Stock Node.js node:fs on the host disk. Paths under /bundle map to the Worker's bundled files and are read-only: writes fail with EPERM. /tmp maps to a private directory for each request and each Durable Object, removed when it ends, as in workerd. Outside every event /tmp is one writable directory for the process, and files have no size limit, as in Node.js.",
+			"orange": "Stock Node.js node:fs on the host disk. Paths under /bundle map to the Worker's bundled files and are read-only: writes fail with EPERM. /bundle holds the bundled main module as worker, each Text, Data, and CompiledWasm module that a module rule matched, under the name Wrangler uploads it as, and the find_additional_modules files. /tmp maps to a private directory for each request and each Durable Object, removed when it ends, as in workerd. Outside every event /tmp is one writable directory for the process, and files have no size limit, as in Node.js.",
 			"notes": "workerd makes /tmp read-only during module evaluation and stops a file at 128 MiB; Orange follows Node.js for both. The /tmp files are on disk, not in memory. Every other path is the host path. workerd's 15 fs test files run unmodified. 153 tests pass. 105 fail on stock Node.js too, so they test workerd-only behavior, such as a / that holds only /bundle, /tmp, and /dev, files owned by uid 0, path limits, and workerd error codes. opendirSyncAndAsyncTest2 is not run because it lists the whole host disk.",
 			"evidence": [
 				{
@@ -7935,6 +7935,10 @@
 				{
 					"kind": "code",
 					"path": "tests/node-compat/node-fs.test.ts"
+				},
+				{
+					"kind": "code",
+					"path": "tests/node-compat/module-rule-packages.test.ts"
 				},
 				{
 					"kind": "code",
@@ -13660,15 +13664,15 @@
 			"id": "config-preserve-file-names",
 			"category": "config",
 			"name": "preserve_file_names",
-			"status": "not-applicable",
+			"status": "partial",
 			"cloudflare": "Keeps original file names for additional modules on upload.",
-			"orange": "Ignored.",
-			"notes": "Only matters with find_additional_modules or rules, which Orange rejects.",
+			"orange": "Names each rule module in /bundle by its import path instead of its SHA-1 and file name, as Wrangler names the upload.",
+			"notes": "A rule module whose import path starts with ../, such as ../core.wasm, still loads but is not listed in /bundle. No end-to-end test sets the field.",
 			"evidence": [
 				{
 					"kind": "code",
-					"path": "src/config/load-wrangler.ts",
-					"lines": "540-581"
+					"path": "src/build/bundle-worker.ts",
+					"lines": "185-193"
 				},
 				{
 					"kind": "doc",
@@ -14025,7 +14029,7 @@
 				{
 					"kind": "code",
 					"path": "src/build/bundle-worker.ts",
-					"lines": "128-175"
+					"lines": "206-287"
 				},
 				{
 					"kind": "code",

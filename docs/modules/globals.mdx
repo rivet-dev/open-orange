@@ -93,6 +93,7 @@ $ curl -d hello localhost:8787
 | `Body`, `ExtendableEvent`, `FetchEvent`, `origin`, `ScheduledEvent`, and `TailEvent` | Not supported | See [The global manifest](#the-global-manifest). |
 | `URL.createObjectURL()` | Not supported | See [Deviations](#deviations). |
 | `compatibility_date` and `compatibility_flags` | Partial | One fixed profile. See [Compatibility date and flags](#compatibility-date-and-flags). |
+| `node:fs` `/bundle` | Partial | Lists Wasm, Data, and Text modules under Wrangler's names. See [Uploaded modules in /bundle](#uploaded-modules-in-bundle). |
 
 #### Limits
 
@@ -228,6 +229,32 @@ digests through `crypto.DigestStream`.
 - An exception thrown from a timer, a microtask, or an event listener is
   reported the same way, and does not stop the runtime process.
 
+#### Uploaded modules in /bundle
+
+On Cloudflare, `node:fs` shows the Worker's uploaded modules read-only under
+`/bundle`. Orange inlines each import that a module rule matches (`CompiledWasm`,
+`Data`, or `Text`) into its bundle, and also writes that file under `/bundle`
+with the name Wrangler uploads it as. `orange dev`, `orange serve`, and the
+`orange deploy` image list the same files.
+
+- By default, the name is the SHA-1 of the file in hex, a `-`, and the file
+  name, such as `f2f415504deccd0e0a3a17df30fb123b0f773ce2-core.wasm`.
+- With `preserve_file_names: true`, the name is the import path, such as
+  `wasm/core.wasm`.
+- A file that `find_additional_modules` finds keeps its path from the search
+  root, and is listed once.
+
+```ts
+import { readdirSync, readFileSync } from "node:fs";
+// The import is what makes core.wasm an uploaded module.
+import core from "./core.wasm";
+
+const name = readdirSync("/bundle").find((entry) => entry.endsWith("-core.wasm"));
+const bytes = readFileSync(`/bundle/${name}`);
+```
+
+The main module and the JavaScript modules differ; see [Deviations](#deviations).
+
 #### Deviations
 
 - `fetch()` decodes `deflate` response bodies through Undici. Workerd decodes
@@ -239,6 +266,10 @@ digests through `crypto.DigestStream`.
   semantics, and structured-clone host types.
 - A global that keeps its Node.js value behaves as Node.js does. Orange has not
   verified it against workerd.
+- `/bundle` holds the main module as the file `worker`, and no other JavaScript
+  module, because Orange bundles them into one.
+- With `preserve_file_names`, a rule module whose import path starts with
+  `../`, such as `../core.wasm`, still loads but is not listed in `/bundle`.
 
 #### Conformance
 
@@ -255,6 +286,9 @@ digests through `crypto.DigestStream`.
   module evaluates.
 - `src/config/load-wrangler.test.ts` checks that another compatibility date
   loads, and the two warnings for ignored flags.
+- `tests/node-compat/module-rule-packages.test.ts` imports Wasm, Data, and
+  Text modules through `orange dev`, then lists and reads `/bundle` and checks
+  each Wrangler name and its bytes.
 
 <BindingEvidence bindings={["workers"]} />
 

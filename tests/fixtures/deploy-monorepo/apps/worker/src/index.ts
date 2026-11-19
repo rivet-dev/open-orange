@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+
 import { DurableObject } from "cloudflare:workers";
 import { lib } from "@acme/lib";
 import { shared } from "@acme/shared";
@@ -13,6 +15,10 @@ export class Counter extends DurableObject {
 export default {
 	async fetch(_request: Request, env: { COUNTER: DurableObjectNamespace }) {
 		const count = await (await env.COUNTER.getByName("one").fetch("https://do/")).text();
-		return Response.json({ count, lib, note: note.trim(), shared });
+		// The image lists the module rule file under /bundle by its Wrangler name.
+		const bundle = readdirSync("/bundle")
+			.filter((name) => name !== "worker")
+			.map((name) => [name, readFileSync(`/bundle/${name}`, "utf8")]);
+		return Response.json({ bundle, count, lib, note: note.trim(), shared });
 	},
 };

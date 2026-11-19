@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { stop as stopEsbuild } from "esbuild";
 
 import { findAdditionalModules } from "../build/additional-modules.js";
-import { bundleWorker } from "../build/bundle-worker.js";
+import { bundleWorker, packagedRuleModules } from "../build/bundle-worker.js";
 import { runtimeModuleRewrites } from "../build/rewrite-module-imports.js";
 import type { ResolvedWranglerConfiguration } from "../config/load-wrangler.js";
 import { resolveDeploymentStorages } from "../runtime/deployment.js";
@@ -22,24 +22,26 @@ export interface ServeBundle {
 /** Bundles a Worker for production, as `wrangler deploy` builds it. */
 export async function bundleForServe(config: ResolvedWranglerConfiguration, directory: string): Promise<ServeBundle> {
 	if (config.entrypoint === undefined) throw new Error("orange serve needs a Worker entrypoint");
-	const { outputPath } = await bundleWorker({
+	const additionalModules =
+		config.additionalModuleSearch === undefined
+			? []
+			: await findAdditionalModules(config.additionalModuleSearch, [
+					config.entrypoint,
+					...(config.configPath === undefined ? [] : [config.configPath]),
+				]);
+	const { outputPath, ruleModules } = await bundleWorker({
+		additionalModules,
 		entrypoint: config.entrypoint,
 		moduleRewrites: runtimeModuleRewrites(),
 		moduleRules: config.moduleRules,
 		...(config.noBundle ? {} : { nodeEnv: process.env.NODE_ENV || "production" }),
 		outputPath: join(directory, "worker.mjs"),
+		preserveFileNames: config.preserveFileNames,
 		sourcemap: false,
 	});
 	return {
+		additionalModules: [...additionalModules, ...ruleModules, ...(await packagedRuleModules(config.entrypoint))],
 		bundlePath: outputPath,
-		...(config.additionalModuleSearch === undefined
-			? {}
-			: {
-					additionalModules: await findAdditionalModules(config.additionalModuleSearch, [
-						config.entrypoint,
-						...(config.configPath === undefined ? [] : [config.configPath]),
-					]),
-				}),
 	};
 }
 

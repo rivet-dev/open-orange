@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -43,7 +44,7 @@ test("a custom build runs on the host, its output reaches the image, and a faile
 	}
 });
 
-test("a Worker with workspace: and file: dependencies builds an image, and serves them with its Durable Object", { skip: dockerSkip, timeout: 600_000 }, async () => {
+test("a Worker with workspace: and file: dependencies builds an image, and serves them, its Durable Object, and its module rule file in /bundle", { skip: dockerSkip, timeout: 600_000 }, async () => {
 	const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "deploy-monorepo"));
 	const tag = "oo-monorepo-test:1";
 	const worker = join(project.directory, "apps", "worker");
@@ -59,7 +60,9 @@ test("a Worker with workspace: and file: dependencies builds an image, and serve
 
 		dockerBuild(outdir, tag);
 		const answer = await withEngine((endpoint) => workerAnswer(tag, endpoint));
+		const note = "from a module rule\n";
 		assert.deepEqual(JSON.parse(answer), {
+			bundle: [[`${createHash("sha1").update(note).digest("hex")}-note.txt`, note]],
 			count: "1",
 			lib: "from a workspace: package",
 			note: "from a module rule",

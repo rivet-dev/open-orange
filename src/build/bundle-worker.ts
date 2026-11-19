@@ -1,12 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { isBuiltin } from "node:module";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 
 import { build, type BuildFailure, type Message, type Plugin } from "esbuild";
 
 import { isRecord } from "../unknown-values.js";
+import type { AdditionalModule } from "./additional-modules.js";
 
 export interface BundleWorkerOptions {
+	/** The `find_additional_modules` files. Wrangler keeps them under their own name, not as rule modules. */
+	additionalModules?: readonly AdditionalModule[];
 	entrypoint: string;
 	moduleRewrites?: Readonly<Record<string, string>>;
 	/** Wrangler module rules in priority order, matched against import specifiers. */
@@ -22,6 +26,8 @@ export interface BundleWorkerOptions {
 	 * specifiers in `moduleRewrites`, and the next bundle resolves them and `process.env.NODE_ENV`.
 	 */
 	packagesOnly?: boolean;
+	/** Wrangler's `preserve_file_names`: a rule module's name is its import path, not its hash. */
+	preserveFileNames?: boolean;
 	/**
 	 * The inline source map, on by default. The runtime does not read it, so `orange serve` leaves
 	 * it out: a large Worker's map can be bigger than its code, and the runtime holds both.
@@ -37,6 +43,11 @@ export interface ModuleRule {
 export interface WorkerBundle {
 	bytes: Uint8Array;
 	outputPath: string;
+	/**
+	 * Each import that a module rule matched, under the name Wrangler uploads it as. The bundle
+	 * inlines it, and the runtime also puts it under `/bundle`, where workerd lists it.
+	 */
+	ruleModules: AdditionalModule[];
 	/** Module load errors that workerd reports at runtime, so the bundle defers them to runtime. */
 	warnings: string[];
 }
@@ -53,6 +64,10 @@ const requiredBuiltinNamespace = "open-orange-required-builtin";
 const moduleRuleNamespace = "open-orange-module-rule";
 const moduleRuleBytesNamespace = "open-orange-module-rule-bytes";
 const resolvingRuleSpecifier = Symbol("open-orange-resolving-rule-specifier");
+// A packages-only bundle still inlines each rule module, and also writes it below this directory
+// next to itself, by name. The bundle in the image has no rule imports left, so `orange serve`
+// lists these copies instead.
+const ruleModuleCopies = join(".open-orange", "rule-modules");
 
 // npm packages that Orange replaces with its own implementation.
 const replacedPackages = new Set(["@cloudflare/sandbox"]);
@@ -167,16 +182,38 @@ function globRegExp(glob: string): RegExp {
 	return new RegExp(`^${pattern}$`);
 }
 
+// Wrangler uploads a rule module as its own module, named by the SHA-1 of its contents and its
+// file name, or by its import path with `preserve_file_names`. workerd lists it under /bundle.
+// https://github.com/cloudflare/workers-sdk/blob/be87ff0382c53a294e948e49419d25d653c50e86/packages/wrangler/src/deployment-bundle/module-collection.ts#L320-L331
+function ruleModuleName(specifier: string, contents: Uint8Array, preserveFileNames: boolean): string | undefined {
+	if (!preserveFileNames) return `${createHash("sha1").update(contents).digest("hex")}-${posix.basename(specifier)}`;
+	const name = posix.normalize(specifier);
+	// A name that starts with `../` has no place under /bundle.
+	return name === ".." || name.startsWith("../") || name.startsWith("/") ? undefined : name;
+}
+
+interface ModuleRulesOptions {
+	/** `find_additional_modules` files, which keep their own name. */
+	additionalModulePaths: ReadonlySet<string>;
+	/** Where a packages-only bundle writes its rule module copies. Undefined writes none. */
+	copyDirectory: string | undefined;
+	/** Each rule module's path, by its name. */
+	ruleModules: Map<string, string>;
+	preserveFileNames: boolean;
+	rules: readonly ModuleRule[];
+}
+
 /**
  * Loads imports that match a Wrangler module rule the way workerd does: Text as a string,
  * Data as an ArrayBuffer, and CompiledWasm as a WebAssembly.Module.
  * https://github.com/cloudflare/workers-sdk/blob/be87ff0382c53a294e948e49419d25d653c50e86/packages/wrangler/src/deployment-bundle/module-collection.ts#L253-L262
  */
-function moduleRulesPlugin(rules: readonly ModuleRule[]): Plugin {
+function moduleRulesPlugin(options: ModuleRulesOptions): Plugin {
 	return {
 		name: "open-orange-module-rules",
 		setup(buildContext): void {
-			for (const rule of rules) {
+			options.ruleModules.clear();
+			for (const rule of options.rules) {
 				for (const glob of rule.globs) {
 					buildContext.onResolve({ filter: globRegExp(glob) }, async (args) => {
 						// The rule's own wrapper module imports the bytes, and a package lookup
@@ -202,7 +239,20 @@ function moduleRulesPlugin(rules: readonly ModuleRule[]): Plugin {
 							}
 							path = resolved.path;
 						}
-						return { namespace: moduleRuleNamespace, path, pluginData: rule.type };
+						const loaded = { namespace: moduleRuleNamespace, path, pluginData: rule.type };
+						// Wrangler keeps a `find_additional_modules` file under its own name. It looks the
+						// file up by the import path before it resolves a package, as here.
+						if (options.additionalModulePaths.has(resolve(args.resolveDir, specifier))) return loaded;
+						const contents = await readFile(path);
+						const name = ruleModuleName(specifier, contents, options.preserveFileNames);
+						if (name === undefined) return loaded;
+						options.ruleModules.set(name, path);
+						if (options.copyDirectory !== undefined) {
+							const copy = join(options.copyDirectory, ruleModuleCopies, name);
+							await mkdir(dirname(copy), { recursive: true });
+							await writeFile(copy, contents);
+						}
+						return loaded;
 					});
 				}
 			}
@@ -379,6 +429,24 @@ function deferredModuleErrorPlugin(
 	};
 }
 
+/**
+ * The rule modules that a packages-only bundle of this entrypoint wrote next to itself, as in an
+ * `orange deploy` image. Empty for any other entrypoint.
+ */
+export async function packagedRuleModules(entrypoint: string): Promise<AdditionalModule[]> {
+	const directory = join(dirname(resolve(entrypoint)), ruleModuleCopies);
+	const entries = await readdir(directory, { recursive: true, withFileTypes: true }).catch((error: unknown) => {
+		if (isRecord(error) && error.code === "ENOENT") return [];
+		throw error;
+	});
+	return entries
+		.filter((entry) => entry.isFile())
+		.map((entry) => {
+			const path = join(entry.parentPath, entry.name);
+			return { name: relative(directory, path).split(sep).join("/"), path };
+		});
+}
+
 export async function bundleWorker(
 	options: BundleWorkerOptions,
 ): Promise<WorkerBundle> {
@@ -391,6 +459,7 @@ export async function bundleWorker(
 	// await, when the importing module evaluates. esbuild fails the whole build, so the bundle
 	// is rebuilt with throwing stubs for exactly those imports.
 	const deferred = new Map<string, DeferredModuleError>();
+	const ruleModules = new Map<string, string>();
 	const bundle = async () => {
 		for (;;) {
 			try {
@@ -423,7 +492,13 @@ export async function bundleWorker(
 					platform: "node",
 					plugins: [
 						deferredModuleErrorPlugin(deferred, root),
-						moduleRulesPlugin(options.moduleRules ?? []),
+						moduleRulesPlugin({
+							additionalModulePaths: new Set((options.additionalModules ?? []).map((module) => module.path)),
+							copyDirectory: options.packagesOnly === true ? dirname(outputPath) : undefined,
+							ruleModules,
+							preserveFileNames: options.preserveFileNames === true,
+							rules: options.moduleRules ?? [],
+						}),
 						cloudflareModulePlugin(moduleRewrites),
 					],
 					sourcemap: options.sourcemap === false ? false : "inline",
@@ -463,5 +538,10 @@ export async function bundleWorker(
 		({ importer, specifier }) =>
 			`${relative(root, importer)} imports ${JSON.stringify(specifier)}, which fails when that module evaluates`,
 	);
-	return { bytes: new Uint8Array(output.contents), outputPath, warnings };
+	return {
+		bytes: new Uint8Array(output.contents),
+		outputPath,
+		ruleModules: [...ruleModules].map(([name, path]) => ({ name, path })),
+		warnings,
+	};
 }

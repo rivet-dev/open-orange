@@ -793,7 +793,8 @@ export async function startRuntime(
 	const cronName = hostedBy(cronActorName, message.session?.self);
 	const workerBundle = await readFile(message.bundlePath);
 	// node:fs maps /bundle to this directory. Orange runs one bundled main module, so it holds
-	// that one file, named `worker`, and any files from `find_additional_modules`.
+	// that one file, named `worker`, each module that a module rule matched, and any files from
+	// `find_additional_modules`.
 	const bundleRoot = await mkdtemp(join(dirname(message.bundlePath), "bundle-"));
 	for (const module of message.additionalModules ?? []) {
 		const target = join(bundleRoot, module.name);

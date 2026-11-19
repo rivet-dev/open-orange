@@ -301,6 +301,7 @@ export interface ResolvedWranglerConfiguration {
 	moduleRules: ModuleRule[];
 	noBundle: boolean;
 	normalizedConfiguration: string;
+	preserveFileNames: boolean;
 	requestSignalPassthrough: boolean;
 	projectRoot: string;
 	queueConsumers: RuntimeQueueConsumer[];
@@ -432,6 +433,7 @@ interface WranglerConfig {
 	readonly moduleRules: ModuleRule[];
 	readonly noBundle: boolean;
 	readonly name?: string;
+	readonly preserveFileNames: boolean;
 	readonly queueConsumers: RuntimeQueueConsumer[];
 	// The whole resolved configuration, for Wrangler's own binding APIs.
 	readonly raw: Record<string, unknown>;
@@ -505,6 +507,7 @@ function parseWranglerConfig(value: unknown): WranglerConfig {
 		moduleRules: rules.moduleRules,
 		noBundle: value.no_bundle === true,
 		...(name === undefined ? {} : { name }),
+		preserveFileNames: value.preserve_file_names === true,
 		queueConsumers: parseQueueConsumers(value.queues),
 		raw: value,
 		tailConsumers: parseTailConsumers(value.tail_consumers),
@@ -1763,6 +1766,7 @@ export async function loadWranglerConfiguration(
 		moduleRules: config.moduleRules,
 		noBundle: config.noBundle,
 		normalizedConfiguration,
+		preserveFileNames: config.preserveFileNames,
 		requestSignalPassthrough: compatibilityFlags.includes("request_signal_passthrough"),
 		projectRoot,
 		queueConsumers: config.queueConsumers,

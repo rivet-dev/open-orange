@@ -231,6 +231,7 @@ async function executeDeployCommand(args: readonly string[], io: DeployCommandIo
 				configPath: config.configPath,
 				entrypoint: config.entrypoint,
 				moduleRules: config.moduleRules,
+				preserveFileNames: config.preserveFileNames,
 				usesWorkerLoader: config.bindings.some((binding) => binding.type === "worker_loader"),
 				warn: (message) => io.error(message),
 			},
@@ -666,6 +667,7 @@ async function writeBuildContext(
 		configPath?: string | undefined;
 		entrypoint: string | undefined;
 		moduleRules: readonly ModuleRule[];
+		preserveFileNames: boolean;
 		usesWorkerLoader: boolean;
 		warn(message: string): void;
 	},
@@ -711,14 +713,17 @@ async function writeBuildContext(
 		});
 	}
 	await writeRuntimePackageJson(projectRoot, projectContext);
+	const additionalModules =
+		worker.additionalModules === undefined
+			? []
+			: await findAdditionalModules(worker.additionalModules, [
+					...(worker.entrypoint === undefined ? [] : [worker.entrypoint]),
+					...(worker.configPath === undefined ? [] : [worker.configPath]),
+				]);
 	// `orange serve` finds these again in the image, in the same place, so a search root outside
 	// the project needs its files copied. One inside the project was copied with it.
 	if (worker.additionalModules !== undefined && !isInside(projectRoot, worker.additionalModules.root)) {
-		const modules = await findAdditionalModules(worker.additionalModules, [
-			...(worker.entrypoint === undefined ? [] : [worker.entrypoint]),
-			...(worker.configPath === undefined ? [] : [worker.configPath]),
-		]);
-		for (const module of modules) {
+		for (const module of additionalModules) {
 			const target = join(workerContext, relative(imageRoot, module.path));
 			await mkdir(dirname(target), { recursive: true });
 			await cp(module.path, target);
@@ -730,12 +735,15 @@ async function writeBuildContext(
 	let usesSandbox = true;
 	if (worker.entrypoint !== undefined) {
 		const outputPath = join(workerContext, relative(imageRoot, worker.entrypoint));
+		// The bundle writes each rule module next to itself, so `/bundle` in the image lists it.
 		const bundle = await bundleWorker({
+			additionalModules,
 			entrypoint: worker.entrypoint,
 			moduleRewrites: unresolvedRuntimeModules(),
 			moduleRules: worker.moduleRules,
 			outputPath,
 			packagesOnly: true,
+			preserveFileNames: worker.preserveFileNames,
 		}).catch((error: unknown) => {
 			// esbuild names the file and line, such as a syntax error in the Worker.
 			throw isUserBuildFailure(error) ? new ExpectedFailure(error.message) : error;

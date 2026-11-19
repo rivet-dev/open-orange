@@ -246,33 +246,33 @@ async function prepareWorker(
 	}
 	reporter.phase("Bundling Worker…");
 	await mkdir(directory, { recursive: true });
-	let bundlePath: string;
 	if (config.entrypoint === undefined) {
 		// An assets-only Worker serves every request from assets, so its
 		// Worker module never runs.
-		bundlePath = join(directory, "worker.mjs");
+		const bundlePath = join(directory, "worker.mjs");
 		await writeFile(bundlePath, "export default {};\n");
-	} else {
-		const bundle = await bundleWorker({
-			entrypoint: config.entrypoint,
-			moduleRewrites: runtimeModuleRewrites(),
-			moduleRules: config.moduleRules,
-			...(config.noBundle ? {} : { nodeEnv: process.env.NODE_ENV || "development" }),
-			outputPath: join(directory, "worker.mjs"),
-		});
-		for (const warning of bundle.warnings) reporter.warning(warning);
-		bundlePath = bundle.outputPath;
+		return { bundlePath, config, deploymentIdentity };
 	}
+	const additionalModules =
+		config.additionalModuleSearch === undefined
+			? []
+			: await findAdditionalModules(config.additionalModuleSearch, [
+					config.entrypoint,
+					...(config.configPath === undefined ? [] : [config.configPath]),
+				]);
+	const bundle = await bundleWorker({
+		additionalModules,
+		entrypoint: config.entrypoint,
+		moduleRewrites: runtimeModuleRewrites(),
+		moduleRules: config.moduleRules,
+		...(config.noBundle ? {} : { nodeEnv: process.env.NODE_ENV || "development" }),
+		outputPath: join(directory, "worker.mjs"),
+		preserveFileNames: config.preserveFileNames,
+	});
+	for (const warning of bundle.warnings) reporter.warning(warning);
 	return {
-		...(config.additionalModuleSearch === undefined || config.entrypoint === undefined
-			? {}
-			: {
-					additionalModules: await findAdditionalModules(config.additionalModuleSearch, [
-						config.entrypoint,
-						...(config.configPath === undefined ? [] : [config.configPath]),
-					]),
-				}),
-		bundlePath,
+		additionalModules: [...additionalModules, ...bundle.ruleModules],
+		bundlePath: bundle.outputPath,
 		config,
 		deploymentIdentity,
 	};

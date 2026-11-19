@@ -12,8 +12,8 @@ importers:
         specifier: 3.1153.0
         version: 3.1153.0
       '@rivet-dev/agentos-core':
-        specifier: 0.4.8
-        version: 0.4.8
+        specifier: 0.4.9
+        version: 0.4.9
       '@rivet-dev/durable-object-migrator':
         specifier: 1.0.3
         version: 1.0.3
@@ -172,8 +172,8 @@ importers:
         specifier: 3.1153.0
         version: 3.1153.0
       '@rivet-dev/agentos-core':
-        specifier: 0.4.8
-        version: 0.4.8
+        specifier: 0.4.9
+        version: 0.4.9
       '@rivet-dev/durable-object-migrator':
         specifier: 1.0.3
         version: 1.0.3
@@ -1424,40 +1424,40 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@rivet-dev/agentos-core@0.4.8':
-    resolution: {integrity: sha512-EekiSBrBGAR6VI41BlzQyaIDRXGxHillrojST5t8XnZ30jfzqpymWkPC997G+MT5NPyPcrv/q3duAjX06imzXQ==}
+  '@rivet-dev/agentos-core@0.4.9':
+    resolution: {integrity: sha512-7UWtu3PQcj34RKGbs2ypvcGhIHgXgHuYzNKURrVwdhCUXtvOSbiq6HaAhNHvmpU2Ob7hRgon7lJIZKPEJt/88w==}
 
-  '@rivet-dev/agentos-runtime-core@0.4.8':
-    resolution: {integrity: sha512-uCNXNPJXisctZrRonSvjzPxazwQErPZaOrtogibnONd11D6KxDT2u/p89BqihUiK3KCQs8NLkVr3WaYgwZ+0bA==}
+  '@rivet-dev/agentos-runtime-core@0.4.9':
+    resolution: {integrity: sha512-4l0Wh6Xc9/4HbZPFIEYp/D60KhjMYdKDpCyw/eA8PGdNNWCUJa07UxMuJLt6NGfOfj96lM5QdmWBKQL+xb68HA==}
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.8':
-    resolution: {integrity: sha512-ZaL+MEHqtbP1WRF575m2LQFP6tBcIPb6p4vKnZGYuUad2o9qqE1qeOhG3YhFdymrE8QUMHwFKDvL/+7Ep1k/7Q==}
+  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.9':
+    resolution: {integrity: sha512-9U7QRinHTfTPk9iOWddHbYSNoI9gBfu30gVVVLz1vDdkiUl82WQ7t20KcHii+Djp5RBn4xLLEaFdY5sYe+lvcg==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.8':
-    resolution: {integrity: sha512-chpzdQjs4SdSGrlTj6MSAk14/E91kyb6zcrbw2CJCn2tE4CJi0BUqgFAdWHKfZznwbnWXNB7vU9oBxYLmHSQQw==}
+  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.9':
+    resolution: {integrity: sha512-n4DA3G+drLPIv2cC3lVHL10FfY8C2F0I6jNmGoSHgPdLhH0frNQsbWdxJgjKXAQcWddiySvzVGZH4A9vg9dhLw==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.8':
-    resolution: {integrity: sha512-ysmQ8kfBNAhRGodTkSJUftb7PowrxBhhDil66mSKVOQwO6jN21/K6M+K8y0DGTS5d1azqf+fZe2UzewMb3dUbQ==}
+  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.9':
+    resolution: {integrity: sha512-PcWTzd5YK50W/XzWslmu8C9dMt8N/PGzOOmzubCNWZbCBicenVx7+WiiY+2rl83KSIIzPuieodiSMt7qRktVWg==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.8':
-    resolution: {integrity: sha512-DEJNL3VcxWqRwIDcOSWHQ3APTNFZRvv6wokWP4dV4dwHsNc8dCKMLf8B2qYKw3Qljb7loinppeOu6WRwDaJgqw==}
+  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.9':
+    resolution: {integrity: sha512-jCgzK6y2cycyBYmNgjFq6QmNIhWlyHXLtYWWZbAGoBK4ZimImibXt9S/vsiNYr7jo5IF1i98o7uvq8YnD2JZSA==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@rivet-dev/agentos-runtime-sidecar@0.4.8':
-    resolution: {integrity: sha512-SUeyGdmSKl6NyLhFoLo5KJa48b84Cg40Dcw80CxY+62u4tNIiops3XpZEp2Xzeh2USD7GaYfvVBfzYba9votmw==}
+  '@rivet-dev/agentos-runtime-sidecar@0.4.9':
+    resolution: {integrity: sha512-44OBAIp4NWF1ylcTQar56IsEekfjgAImZy+FDi08FXXTM0cMTEamLf60loy4bEidiOwkLqOX7p5/6MZQLVFgCQ==}
     engines: {node: '>=20'}
 
   '@rivet-dev/durable-object-migrator@1.0.3':
@@ -4263,40 +4263,40 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@rivet-dev/agentos-core@0.4.8':
+  '@rivet-dev/agentos-core@0.4.9':
     dependencies:
-      '@rivet-dev/agentos-runtime-core': 0.4.8
-      '@rivet-dev/agentos-runtime-sidecar': 0.4.8
+      '@rivet-dev/agentos-runtime-core': 0.4.9
+      '@rivet-dev/agentos-runtime-sidecar': 0.4.9
       '@xterm/headless': 6.0.0
       croner: 10.0.1
       long-timeout: 0.1.1
       zod: 4.5.4
 
-  '@rivet-dev/agentos-runtime-core@0.4.8':
+  '@rivet-dev/agentos-runtime-core@0.4.9':
     dependencies:
       '@bare-ts/lib': 0.4.1
-      '@rivet-dev/agentos-runtime-sidecar': 0.4.8
+      '@rivet-dev/agentos-runtime-sidecar': 0.4.9
       zod: 4.5.4
       zod-to-json-schema: 3.25.2(zod@4.5.4)
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.8':
+  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.9':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.8':
+  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.9':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.8':
+  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.9':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.8':
+  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.9':
     optional: true
 
-  '@rivet-dev/agentos-runtime-sidecar@0.4.8':
+  '@rivet-dev/agentos-runtime-sidecar@0.4.9':
     optionalDependencies:
-      '@rivet-dev/agentos-runtime-sidecar-darwin-arm64': 0.4.8
-      '@rivet-dev/agentos-runtime-sidecar-darwin-x64': 0.4.8
-      '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu': 0.4.8
-      '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu': 0.4.8
+      '@rivet-dev/agentos-runtime-sidecar-darwin-arm64': 0.4.9
+      '@rivet-dev/agentos-runtime-sidecar-darwin-x64': 0.4.9
+      '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu': 0.4.9
+      '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu': 0.4.9
 
   '@rivet-dev/durable-object-migrator@1.0.3':
     dependencies:

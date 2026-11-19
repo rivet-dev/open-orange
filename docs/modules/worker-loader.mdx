@@ -108,6 +108,7 @@ Hello from a dynamic Worker
 | `env` and `props` | Supported | Same reference passing as RPC. |
 | `globalOutbound` | Supported | `null` makes `fetch()` reject and `connect()` throw. A Fetcher receives the dynamic Worker's `fetch()` calls. |
 | JavaScript, CommonJS, text, data, JSON, and Wasm modules | Supported | Pass Wasm as bytes. Relative, `cloudflare:*`, and `node:*` imports resolve as in the parent Worker. |
+| Wasm exception handling with exnref (`try_table`, `throw_ref`), as Rust `panic=unwind` builds use | Supported | On by default, as in workerd. See [The VM runtime](#the-vm-runtime). |
 | A `node:http` server through `cloudflare:node` | Supported | An Express app serves requests. |
 | Python modules and compiled `WebAssembly.Module` values | Not supported | Throw a `TypeError`. |
 | `getDurableObjectClass()` | Not supported | Throws a `NotSupportedError`. |
@@ -209,6 +210,11 @@ limit never stops them.
 #### The VM runtime
 
 - The agentOS VM runs Node.js 22.
+- The agentOS VM embeds V8 13.0, which has Wasm exnref off. Orange turns it
+  on, as in workerd, by setting `AGENTOS_V8_WASM_EXNREF=1` for its runtime
+  process unless you set the variable yourself. Set it to `0` to turn exnref
+  off. The value holds for every agentOS VM of the runtime, including agentOS
+  sandboxes.
 - The VM bundle fills missing Web globals from `node:stream/web`,
   `node:buffer`, `node:crypto`, and `node:perf_hooks`, builds
   `CompressionStream` and `DecompressionStream` on `node:zlib`, adds
@@ -259,10 +265,11 @@ These add to the [Compatibility](#compatibility) table, the
 `tests/bindings/worker-loader.test.ts` drives a real `orange dev` over HTTP:
 fetch and RPC, env and props capabilities, isolation, `globalOutbound: null`,
 name caching, syntax errors, process crashes, module types, 20 MiB Wasm and
-data modules in two Workers in a row, a `node:http` server and an Express app
-in a dynamic Worker, and two bursts of loads larger
-than the VM pool, the second after the first burst's Workers stop idle, with
-each Worker isolated from the others and from the read-only runtime mount. A
+data modules in two Workers in a row, Wasm exception handling with exnref, a
+`node:http` server and an Express app in a dynamic Worker, and two bursts of
+loads larger than the VM pool, the second after the first burst's Workers stop
+idle, with each Worker isolated from the others and from the read-only runtime
+mount. A
 second `orange dev` with a limit of 2 and a 1.5-second idle timeout checks that
 idle Workers stop and load again, that calls longer than the timeout finish,
 that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more

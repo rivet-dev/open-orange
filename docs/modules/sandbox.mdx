@@ -225,6 +225,8 @@ embedded in the `orange dev` process. It needs no account or API key.
   commands. Absolute paths in commands are VM paths.
 - Commands run in the VM's shell with its tools, such as `sh` and `node`.
   Host environment variables are not passed.
+- Wasm exnref exception handling is on in the VM, as for dynamic Workers. See
+  [Worker Loader](./worker-loader#the-vm-runtime).
 - VMs are in memory. `destroy()` disposes the VM. Files do not survive an
   `orange dev` restart, so the next call after a restart starts an empty VM.
 - Preview URLs go through a small proxy in the VM. Servers in the VM listen

@@ -680,6 +680,44 @@ const routes = {
 			}).getEntrypoint().read(null);
 		return [await load(), await load()];
 	},
+	async "wasm-exceptions"(env) {
+		// The module of agentOS's exnref test: `catch_ref` catches a thrown tag as
+		// an exnref, `throw_ref` rethrows it, and the outer `catch` returns its
+		// payload, 42. The dynamic Worker compiles the bytes itself, so a runtime
+		// without exnref returns the CompileError instead of failing to load.
+		// https://github.com/rivet-dev/agentos/blob/794ddb2f33a960c5eafa4ab7aa0409febc1a130c/crates/execution/tests/javascript_v8.rs#L6027-L6036
+		const wasm = new Uint8Array([
+			0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0e, 0x03, 0x60, 0x01, 0x7f, 0x00,
+			0x60, 0x00, 0x01, 0x7f, 0x60, 0x00, 0x02, 0x7f, 0x69, 0x03, 0x02, 0x01, 0x01, 0x0d, 0x03,
+			0x01, 0x00, 0x00, 0x07, 0x11, 0x01, 0x0d, 0x72, 0x65, 0x74, 0x68, 0x72, 0x6f, 0x77, 0x43,
+			0x61, 0x75, 0x67, 0x68, 0x74, 0x00, 0x00, 0x0a, 0x1e, 0x01, 0x1c, 0x00, 0x02, 0x7f, 0x1f,
+			0x7f, 0x01, 0x00, 0x00, 0x00, 0x02, 0x02, 0x1f, 0x40, 0x01, 0x01, 0x00, 0x00, 0x41, 0x2a,
+			0x08, 0x00, 0x0b, 0x00, 0x0b, 0x0a, 0x0b, 0x0b, 0x0b,
+		]);
+		const worker = env.LOADER.load({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": {
+					js: `
+						import bytes from "./exceptions.bin";
+						export default {
+							async run() {
+								try {
+									const { instance } = await WebAssembly.instantiate(bytes);
+									return instance.exports.rethrowCaught();
+								} catch (error) {
+									return error.name + ": " + error.message;
+								}
+							},
+						};
+					`,
+				},
+				"exceptions.bin": { data: wasm },
+			},
+		});
+		return worker.getEntrypoint().run(null);
+	},
 	async values(env) {
 		const worker = env.LOADER.load({
 			compatibilityDate: "2026-09-03",

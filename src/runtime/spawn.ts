@@ -132,6 +132,15 @@ export async function spawnRuntime(
 			// RivetKit's native Engine spawner reads the storage path from the process
 			// environment. Bun does not copy runtime `process.env` writes there.
 			RIVETKIT_STORAGE_PATH: options.rivetStoragePath,
+			// workerd compiles Wasm that uses exnref exception handling (`try_table`,
+			// `throw_ref`), which Rust `panic=unwind` builds emit. V8 turns it on by
+			// default from 13.7:
+			// https://github.com/v8/v8/blob/33e7739c134d24c94fdda02ab631eefed6bd18df/src/wasm/wasm-feature-flags.h#L131-L135
+			// agentOS, which runs dynamic Workers and agentOS sandboxes, embeds V8 13.0.
+			// Its sidecar inherits this environment and turns exnref on for all its VMs
+			// when the variable is 1:
+			// https://github.com/rivet-dev/agentos/blob/794ddb2f33a960c5eafa4ab7aa0409febc1a130c/crates/v8-runtime/src/isolate.rs#L117-L139
+			AGENTOS_V8_WASM_EXNREF: process.env.AGENTOS_V8_WASM_EXNREF ?? "1",
 			...(options.rivetLogLevel === undefined ? {} : { RIVET_LOG_LEVEL: options.rivetLogLevel }),
 			// One port can have one metrics server, so only one runtime of a deployment serves it.
 			...(options.serveMetrics === false ? { RIVETKIT_METRICS_PORT: undefined } : {}),

@@ -210,6 +210,10 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			const large = { data: [20 * 1024 * 1024, 7], json: "last", text: [20 * 1024 * 1024, "z"], wasm: [1, 7] };
 			assert.deepEqual(await get("large-modules"), [large, large]);
 
+			// Wasm that catches and rethrows an exception with exnref, as Rust
+			// `panic=unwind` builds do, compiles and runs like in workerd.
+			assert.equal(await get("wasm-exceptions"), 42);
+
 			// Two dynamic Workers run in separate VMs, so a file that one writes is
 			// not visible to the other.
 			assert.deepEqual(await get("filesystem"), {

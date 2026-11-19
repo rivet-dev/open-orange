@@ -67,10 +67,11 @@ function throwingSource(message: string): string {
 }
 
 // agentOS answers one read with one message of at most 16 MiB, with the bytes in base64. A 4 MiB
-// read stays under it, so a data or Wasm module of any size loads.
+// read stays under it, so a module of any size loads.
 const bytesReadChunk = 4 * 1024 * 1024;
 
-// Reads the module's bytes from its file in the bundle. The bytes never become JavaScript source.
+// Reads the module's bytes from its file in the bundle. The bytes never become JavaScript source,
+// so a text or JSON module is not capped by the 16 MiB file message either.
 function bytesSource(path: string, name: string): string {
 	return `import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 const fd = openSync(${JSON.stringify(path)}, "r");
@@ -88,16 +89,18 @@ try {
 `;
 }
 
+// ignoreBOM keeps a leading U+FEFF in the string, as the module's content had it.
+const textSource = `new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)`;
+
 // Text, data, JSON, and Wasm modules have a default export, as in workerd.
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/worker-loader.c%2B%2B#L273-L330
 function valueModuleSource(module: DynamicModule, bundleRoot: string): string {
-	const text = typeof module.content === "string" ? module.content : "";
 	const bundleFile = posix.join(bundleRoot, module.name);
 	switch (module.type) {
 		case "text":
-			return `export default ${JSON.stringify(text)};\n`;
+			return `${bytesSource(bundleFile, module.name)}export default ${textSource};\n`;
 		case "json":
-			return `export default JSON.parse(${JSON.stringify(text)});\n`;
+			return `${bytesSource(bundleFile, module.name)}export default JSON.parse(${textSource});\n`;
 		case "data":
 			return `${bytesSource(bundleFile, module.name)}export default bytes.buffer;\n`;
 		case "wasm":

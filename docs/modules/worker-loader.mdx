@@ -122,8 +122,8 @@ agentOS's limits apply:
 
 | What | Limit | What happens over it |
 | --- | --- | --- |
-| One JavaScript, CommonJS, text, or JSON module | 16 MiB | The load fails with a `RangeError` that names the limit. Split the module. |
-| One Wasm or data module | No set limit. In a test, 20 MiB worked. | Orange adds no check. |
+| One JavaScript or CommonJS module | 16 MiB | The load fails with a `RangeError` that names the limit. Split the module. |
+| One text, JSON, Wasm, or data module | No set limit. In a test, 20 MiB worked. | Orange adds no check. |
 | Linked modules in the VM | 64 MiB by default | agentOS's limit. Orange adds no check. |
 | `env` | No set limit. In a test with agentOS 0.4.1, 5 MiB worked. | At 10 MiB, the dynamic Worker exited with code 1. |
 | Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, `get()` or `load()` throws a `WorkerLoaderLimitError` that names the limit. At 80% of the limit, `orange dev` logs a warning. |
@@ -201,9 +201,10 @@ limit never stops them.
   Worker's modules as written there, and `node:fs` reads them as `/bundle`.
   Orange deletes the directory with the VM. The linked modules that Node.js
   imports are written into the VM.
-- A Wasm or data module reads its bytes from `/bundle` when it is imported, in
-  4 MiB reads. agentOS answers each read with one message of at most 16 MiB,
-  so a module of any size loads.
+- A text, JSON, Wasm, or data module reads its bytes from `/bundle` when it is
+  imported, in 4 MiB reads. A text module decodes them as UTF-8, and a JSON
+  module decodes and then parses them. agentOS answers each read with one
+  message of at most 16 MiB, so a module of any size loads.
 
 #### The VM runtime
 
@@ -236,7 +237,7 @@ limit never stops them.
 | `connect()` through a Fetcher `globalOutbound` | `OpenOrange does not support connect() through a dynamic Worker's globalOutbound fetcher. Use fetch() instead.` |
 | A VM that cannot boot | `OpenOrange cannot boot the agentOS VM for a dynamic Worker: <message>. Dynamic Workers never run on the host.` |
 | A new dynamic Worker when the limit is reached and none is idle | `WorkerLoaderLimitError`: `OpenOrange cannot start another dynamic Worker: <n> are running, none is idle, and the limit is <limit>. Raise ORANGE_WORKER_LOADER_MAX_WORKERS or let calls finish first.` |
-| A JavaScript, CommonJS, text, or JSON module over 16 MiB | `RangeError`: `Dynamic Worker file <name> is <n> bytes. agentOS writes one file into its VM as one message of at most 16777216 bytes (16 MiB). Split the module.` |
+| A JavaScript or CommonJS module over 16 MiB | `RangeError`: `Dynamic Worker file <name> is <n> bytes. agentOS writes one file into its VM as one message of at most 16777216 bytes (16 MiB). Split the module.` |
 
 #### Deviations
 

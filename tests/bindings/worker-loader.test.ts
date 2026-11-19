@@ -205,9 +205,9 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			// and so does a specifier computed at runtime.
 			assert.deepEqual(await get("modules"), ["text", 42, "cjs Bo", "data", 5, "text"]);
 
-			// Wasm and data modules larger than agentOS's 16 MiB file message load whole, in two
-			// dynamic Workers in a row.
-			const large = { data: [20 * 1024 * 1024, 7], wasm: [1, 7] };
+			// Wasm, data, text, and JSON modules larger than agentOS's 16 MiB file message load
+			// whole, in two dynamic Workers in a row.
+			const large = { data: [20 * 1024 * 1024, 7], json: "last", text: [20 * 1024 * 1024, "z"], wasm: [1, 7] };
 			assert.deepEqual(await get("large-modules"), [large, large]);
 
 			// Two dynamic Workers run in separate VMs, so a file that one writes is

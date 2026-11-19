@@ -646,6 +646,8 @@ const routes = {
 		const size = 20 * 1024 * 1024;
 		const data = new Uint8Array(size).fill(1);
 		data[size - 1] = 7;
+		const text = `${"a".repeat(size - 1)}z`;
+		const json = { padding: "a".repeat(size), field: "last" };
 		const load = () =>
 			env.LOADER.load({
 				compatibilityDate: "2026-09-03",
@@ -654,17 +656,26 @@ const routes = {
 					"main.js": `
 						import wasm from "./big.wasm";
 						import data from "./big.bin";
+						import text from "./big.txt";
+						import json from "./big.json";
 						export default {
 							async read() {
 								const { exports } = await WebAssembly.instantiate(wasm);
 								const memory = new Uint8Array(exports.mem.buffer);
 								const bytes = new Uint8Array(data);
-								return { data: [bytes.length, bytes[${size - 1}]], wasm: [memory[0], memory[${size - 1}]] };
+								return {
+									data: [bytes.length, bytes[${size - 1}]],
+									json: json.field,
+									text: [text.length, text.at(-1)],
+									wasm: [memory[0], memory[${size - 1}]],
+								};
 							},
 						};
 					`,
 					"big.wasm": { wasm: wasmWithData(data) },
 					"big.bin": { data },
+					"big.txt": { text },
+					"big.json": { json },
 				},
 			}).getEntrypoint().read(null);
 		return [await load(), await load()];

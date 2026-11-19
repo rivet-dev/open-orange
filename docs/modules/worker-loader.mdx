@@ -8,7 +8,7 @@ description: Load and run dynamic Workers at runtime with the worker_loaders bin
 <BindingStatus
   binding="worker-loader"
   works="`get()`, `load()`, `fetch()`, and RPC, with `env` and `props` capabilities and `globalOutbound`"
-  differs="Each dynamic Worker runs in its own agentOS VM. A load usually takes a prewarmed VM; when none is ready, it waits about 0.3 seconds for one to boot. Compatibility settings and `limits` are ignored."
+  differs="Each dynamic Worker runs in its own agentOS VM. A load usually takes a prewarmed VM; when none is ready, it boots one, which takes about 0.3 seconds. Compatibility settings and `limits` are ignored."
   missing="`getDurableObjectClass()`, `connect()` to a dynamic Worker, Python modules, and tail events from dynamic Workers"
 />
 
@@ -89,8 +89,9 @@ Hello from a dynamic Worker
 
 - Dynamic Worker code is untrusted, so each dynamic Worker gets its own VM,
   as it gets its own isolate on Cloudflare. It never runs on the host.
-- Orange keeps a few VMs booted ahead of use, so a new dynamic Worker only
-  writes its own modules. Each VM runs one dynamic Worker and is never reused.
+- Orange keeps VMs booted ahead of use, and more after a burst of loads, so a
+  new dynamic Worker only writes its own modules. Each VM runs one dynamic
+  Worker and is never reused.
 - A dynamic Worker stops when it is idle or nothing references it. Its VM is
   disposed, never returned to the pool.
 - Your Worker and the dynamic Worker talk Workers RPC, so stubs and bindings
@@ -125,13 +126,44 @@ agentOS's limits apply:
 | One module file | 16 MiB | The load fails with a `RangeError` that names the limit. Split the module. |
 | All files in the VM | 64 MiB by default | agentOS's limit. Orange adds no check. |
 | `env` | No set limit. In a test with agentOS 0.4.1, 5 MiB worked. | At 10 MiB, the dynamic Worker exited with code 1. |
-| Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, `get()` or `load()` throws a `WorkerLoaderLimitError` that names the limit. At 80% of the limit, `orange dev` logs a warning. |
+| Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, it waits in line for a slot, first come first served, and its calls wait with it. At 80% of the limit, Orange logs a warning. |
+| Time a dynamic Worker waits for a slot | 5 seconds. Set `ORANGE_WORKER_LOADER_QUEUE_TIMEOUT_MS` to change it, from 1 to 2147483647. | Its calls reject with a `WorkerLoaderLimitError` whose `code` is `queue_timeout`. |
+| Dynamic Workers that wait for a slot | 256. Set `ORANGE_WORKER_LOADER_MAX_QUEUED` to change it; `0` refuses at once. | Its calls reject with a `WorkerLoaderLimitError` whose `code` is `queue_full`. At 80% of the limit, Orange logs a warning. |
+| agentOS VMs, counting running Workers, prewarmed VMs, and VMs that boot or stop | `ORANGE_WORKER_LOADER_MAX_WORKERS` plus `ORANGE_WORKER_LOADER_POOL_MAX`, 48 by default. Set `ORANGE_WORKER_LOADER_MAX_VMS` to change it; it must not be less than `ORANGE_WORKER_LOADER_MAX_WORKERS`. | Prewarmed VMs stop first, and the pool stops refilling. A Worker that needs a new VM waits for one to stop. At 80% of the budget, Orange logs a warning. |
 | Idle time before a dynamic Worker stops | 30 seconds. Set `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` to change it, from 1 to 2147483647. | The dynamic Worker stops and frees its VM. The next call loads it again. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
-| Prewarmed VMs | 2 for each network mode by default, from 0 to 16 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
+| Prewarmed VMs when no burst is recent | 2 for each network mode by default, from 0 to 64 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
+| Prewarmed VMs after a burst | 16 for each network mode by default, from 0 to 64 with `ORANGE_WORKER_LOADER_POOL_MAX`. It must not be less than `ORANGE_WORKER_LOADER_POOL_SIZE`. `0` boots every VM on demand. | The pool stops growing. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
+| VMs that prewarm at once | 4, across both network modes, while no Worker loads. While Workers load, only as many as keep up with a steady rate of loads. | The other prewarms wait. Loads never wait for this limit. |
 
-Each running dynamic Worker uses about 54 MiB. Prewarmed VMs that no Worker
-has claimed do not count toward `ORANGE_WORKER_LOADER_MAX_WORKERS`, and the
-limit never stops them.
+Each running dynamic Worker uses about 54 MiB. Each prewarmed VM uses 26 to
+54 MiB, depending on the agentOS version. After a burst of 16 or more loads,
+a network mode can hold 16 prewarmed VMs, 0.4 to 0.9 GiB, until the idle
+timeout passes. Prewarmed VMs do not count toward
+`ORANGE_WORKER_LOADER_MAX_WORKERS`, but they count toward
+`ORANGE_WORKER_LOADER_MAX_VMS`, which bounds the memory of all VMs.
+
+##### Refusals
+
+- A `WorkerLoaderLimitError` is a `RangeError` with `code` (`queue_full` or
+  `queue_timeout`), `overloaded: true`, `retryable: true`, and
+  `retryAfterSeconds: 1`, like the overloaded error of a Cloudflare Durable
+  Object. `get()` and `load()` never throw it; the Worker's calls reject with it.
+- If your Worker does not catch it, the response is `503 Service Unavailable`
+  with `Retry-After: 1`, not 500. A WebSocket upgrade gets the same 503. On
+  Cloudflare, an uncaught exception is a 500 (error 1101). Cloudflare has no
+  per-runner Worker limit, so it has no such refusal.
+- A held stub whose Worker was refused asks for a slot again on its next call,
+  and `get()` with the same name calls `getCode` again.
+- Under load that stays above what the runner can start, the line stays full:
+  a Worker that gets a slot has waited close to the queue timeout, and the
+  rest are refused. Lower `ORANGE_WORKER_LOADER_QUEUE_TIMEOUT_MS` to trade
+  refusals for latency, and scale out on the queue wait (see
+  [Monitoring](../operations/monitoring#autoscaling)).
+- agentOS bounds the requests in flight to its shared sidecar at 128, and
+  each running Worker keeps some open. In a test that started 80 Workers at
+  once with `ORANGE_WORKER_LOADER_MAX_WORKERS` at 96, 33 to 38 started; the
+  rest failed with agentOS's `ERR_AGENTOS_IN_FLIGHT_REQUEST_LIMIT`. When a
+  running Worker's process fails this way, its call fails with a 500.
 
 #### Isolation
 
@@ -149,12 +181,32 @@ limit never stops them.
   Worker loads, so an app without dynamic Workers boots none. A prewarmed VM
   has its Node.js process started with Orange's runtime imported. It has seen
   no Worker code or `env`.
+- With an agentOS client that supports `snapshotEntrypoints`, each Node.js
+  process boots from a V8 snapshot of Orange's runtime, built once per agentOS
+  sidecar, instead of importing it. Each process gets its own copy of the
+  runtime's state. agentOS 0.4.8 lacks the option, so there each process
+  imports the runtime.
 - A load takes a prewarmed VM, writes its modules, and starts the Worker. If
-  the pool is empty, it waits for the VM that is booting, or boots its own.
-  The pool refills one VM at a time, shortly after the load finishes.
+  the pool is empty, it takes a VM that is booting and that no other load
+  waits for, or boots its own at once, beside the other loads.
+- Each network mode's pool aims for the most loads seen within one prewarm
+  time, from `ORANGE_WORKER_LOADER_POOL_SIZE` to
+  `ORANGE_WORKER_LOADER_POOL_MAX`. So the next burst of the same size finds
+  its VMs ready, and a steady stream of loads keeps the pool ahead.
+- The pool refills at full speed as soon as no dynamic Worker is loading,
+  because a prewarm that runs beside a load slows it. Workers that load at the
+  same time also hold the refill until their first calls finish. One Worker
+  holds the refill back for at most 1 second.
+- While Workers keep loading, the pool still refills, with as many prewarms
+  as the rate of loads needs. Only loads that keep arriving count, so a burst
+  does not refill beside its own loads.
+- When the idle timeout (`ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS`) passes
+  without a burst as large, the pool shrinks to
+  `ORANGE_WORKER_LOADER_POOL_SIZE` and disposes the other prewarmed VMs.
 - A VM that fails to prewarm is reported as a background error, and the next
-  load boots its own VM. Set `ORANGE_WORKER_LOADER_POOL_SIZE` to `0` to boot
-  every VM on demand.
+  load boots its own VM. The pool tries to prewarm again only after its next
+  load. Set `ORANGE_WORKER_LOADER_POOL_MAX` to `0` to boot every VM on
+  demand.
 - If the VM cannot boot, `get()` and `load()` calls fail with the boot error.
   Orange never falls back to the host.
 - A dynamic Worker is idle when no call to it is in flight, your Worker holds
@@ -250,10 +302,13 @@ These add to the [Compatibility](#compatibility) table, the
 `tests/bindings/worker-loader.test.ts` drives a real `orange dev` over HTTP:
 fetch and RPC, env and props capabilities, isolation, `globalOutbound: null`,
 name caching, syntax errors, process crashes, module types, a `node:http`
-server and an Express app in a dynamic Worker, and two bursts of loads larger
-than the VM pool, the second after the first burst's Workers stop idle, with
-each Worker isolated from the others and from the read-only runtime mount. A
-second `orange dev` with a limit of 2 and a 1.5-second idle timeout checks that
+server and an Express app in a dynamic Worker, and bursts of loads larger than
+the VM pool whose Workers each wait in a call for all the others. The VM pool
+grows to the last burst and shrinks to its idle size after the idle timeout,
+and each Worker gets a fresh VM, isolated from the others and from the
+read-only runtime mount, with its own runtime module state and randomness
+when its process boots from the agentOS snapshot. A second `orange dev` with
+a limit of 2 and a 1.5-second idle timeout checks that
 idle Workers stop and load again, that calls longer than the timeout finish,
 that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more
 `load()` calls than the limit succeed.

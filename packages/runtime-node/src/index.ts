@@ -78,7 +78,7 @@ export {
 	WritableStream,
 } from "./globals/native.js";
 export { Event } from "./globals/event.js";
-export { WebAssembly } from "./globals/webassembly.js";
+export { nativeWebAssembly } from "./globals/webassembly.js";
 export { WebSocket, WebSocketPair } from "./globals/websocket.js";
 export {
 	clearInterval,

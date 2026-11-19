@@ -432,6 +432,8 @@ async function executeDevCommand(
 					...(index === 0 ? { onRequest: (request) => reporter.request(request) } : {}),
 					port: index === 0 ? parsed.port : 0,
 					projectRoot: config.projectRoot,
+					// One port can have one metrics server.
+					serveMetrics: index === 0,
 					queueConsumers: config.queueConsumers,
 					tailConsumers: config.tailConsumers,
 					...(config.workerName === undefined ? {} : { workerName: config.workerName }),

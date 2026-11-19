@@ -68,6 +68,12 @@ $ docker run \
   -e RIVET_ENDPOINT=... my-worker
 ```
 
+## Autoscale dynamic Workers
+
+Scale runners on `orange_worker_loader_slot_utilization` and the slot queue
+wait, not on CPU. See [Dynamic Worker metrics](#dynamic-worker-metrics) for an
+example.
+
 ## Learn more
 
 - [OpenTelemetry](https://rivet.dev/docs/tracing/): span names, sampling, and application spans
@@ -95,7 +101,7 @@ RivetKit serves Prometheus metrics at `http://127.0.0.1:$RIVETKIT_METRICS_PORT/m
   them in the Rivet dashboard. `orange deploy` refuses to set it with `--var`.
 - **Self-hosted:** the endpoint listens on `127.0.0.1` only, so `docker run -p` does not expose
   it. Scrape it from the same network namespace, such as a sidecar in the same Kubernetes pod.
-- `orange dev` serves no metrics.
+- `orange dev` serves metrics when `RIVETKIT_METRICS_PORT` is set, from its first Worker.
 - With several Workers, only the first Worker's runtime serves metrics, so they cover that
   Worker's objects only.
 
@@ -104,6 +110,62 @@ RivetKit serves Prometheus metrics at `http://127.0.0.1:$RIVETKIT_METRICS_PORT/m
 | `rivet_rivetkit_actor_active_count` | Awake actors, by `actor_name` |
 | `rivet_rivetkit_actor_http_requests_active` | Requests and RPC calls in progress |
 | `rivet_rivetkit_actor_inbox_depth` | Work waiting to run |
+
+#### Dynamic Worker metrics
+
+A Worker with a `worker_loaders` binding adds these to the same endpoint.
+
+| Metric | Type | What it shows |
+|---|---|---|
+| `orange_worker_loader_workers` | gauge | Dynamic Workers that hold a slot |
+| `orange_worker_loader_workers_max` | gauge | `ORANGE_WORKER_LOADER_MAX_WORKERS` |
+| `orange_worker_loader_slot_utilization` | gauge | Slots in use divided by slots, from 0 to 1 |
+| `orange_worker_loader_queue_depth` | gauge | Dynamic Workers that wait for a slot |
+| `orange_worker_loader_queue_wait_seconds` | histogram | How long each dynamic Worker waited for a slot |
+| `orange_worker_loader_start_seconds` | histogram | From a slot to a loaded dynamic Worker |
+| `orange_worker_loader_vm_boot_seconds` | histogram | How long one agentOS VM takes to boot |
+| `orange_worker_loader_pool_claims_total` | counter | VM claims by `mode` (`network`, `deny`) and `result`: `hit` (prewarmed), `warming` (waited for a prewarm), `miss` (booted on demand) |
+| `orange_worker_loader_pool_ready` | gauge | Prewarmed VMs by `mode` |
+| `orange_worker_loader_vms` | gauge | agentOS VMs by `state`: `live`, `pooled`, `booting`, `stopping` |
+| `orange_worker_loader_vms_max` | gauge | `ORANGE_WORKER_LOADER_MAX_VMS` |
+| `orange_worker_loader_vm_queue_depth` | gauge | Dynamic Workers with a slot that wait for room in the VM budget |
+| `orange_worker_loader_rejections_total` | counter | `WorkerLoaderLimitError` refusals by `code`: `queue_full`, `queue_timeout` |
+| `orange_runtime_resident_memory_bytes` | gauge | RSS by `process`: `runner`, and on Linux `children`, which includes the agentOS sidecar |
+| `orange_runtime_memory_limit_bytes` | gauge | The runner's cgroup memory limit, when it has one |
+
+Useful queries:
+
+```promql
+# Pool miss rate
+sum(rate(orange_worker_loader_pool_claims_total{result="miss"}[5m]))
+  / sum(rate(orange_worker_loader_pool_claims_total[5m]))
+# Slot queue wait, p95
+histogram_quantile(0.95, sum by (le) (rate(orange_worker_loader_queue_wait_seconds_bucket[5m])))
+# Memory headroom
+sum(orange_runtime_resident_memory_bytes) / orange_runtime_memory_limit_bytes
+```
+
+The agentOS sidecar's own request queue is not visible to Orange, so it has no metric.
+
+#### Autoscaling
+
+With a Kubernetes HorizontalPodAutoscaler and a Prometheus adapter:
+
+- Scale on `orange_worker_loader_slot_utilization`, with a target of about
+  0.7, and on the p95 of `orange_worker_loader_queue_wait_seconds`. A busy
+  slot can mean a dynamic Worker that waits on I/O, so CPU does not show
+  dynamic Worker demand. Do not scale on CPU.
+- Set `behavior.scaleDown.stabilizationWindowSeconds` longer than
+  `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` (30 s by default), such as 300 s. An
+  idle dynamic Worker holds its slot until the timeout, so a shorter window
+  scales down while slots still look busy, and then scales up again.
+- Alert on `orange_worker_loader_rejections_total`. Each refusal is a 503 or
+  a `WorkerLoaderLimitError` your Worker caught.
+- Size the pod's memory limit for `ORANGE_WORKER_LOADER_MAX_VMS` VMs, and
+  watch `orange_runtime_resident_memory_bytes` against
+  `orange_runtime_memory_limit_bytes`.
+- Orange has no readiness endpoint, so a full runner still receives
+  requests. Its 503s carry `Retry-After`.
 
 #### Logs
 

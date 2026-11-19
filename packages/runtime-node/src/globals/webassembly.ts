@@ -141,10 +141,13 @@ function isWebAssemblyNamespace(value: unknown): value is WebAssemblyNamespace {
 }
 
 // Preserve Node's full namespace (including host-only helpers used by Undici),
-// while exposing only the Cloudflare-visible contract to Orange code.
-const nativeWebAssembly: unknown = Reflect.get(globalThis, "WebAssembly");
-if (!isWebAssemblyNamespace(nativeWebAssembly)) {
-	throw new Error("Node.js does not provide the required WebAssembly global");
+// while exposing only the Cloudflare-visible contract to Orange code. Read on
+// use, not at module load: V8 has no WebAssembly global while agentOS builds
+// a module snapshot of the dynamic Worker child.
+export function nativeWebAssembly(): WebAssemblyNamespace {
+	const value: unknown = Reflect.get(globalThis, "WebAssembly");
+	if (!isWebAssemblyNamespace(value)) {
+		throw new Error("Node.js does not provide the required WebAssembly global");
+	}
+	return value;
 }
-
-export const WebAssembly = nativeWebAssembly;

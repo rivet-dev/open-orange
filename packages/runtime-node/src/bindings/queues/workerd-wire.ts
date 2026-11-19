@@ -35,13 +35,19 @@ const maxHeadersGuard = 3;
 
 // The index is workerd's ErrorTag. Unknown (0) carries its own name.
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/jsg/ser.c%2B%2B#L23
-const webAssemblyError = (name: string): ErrorConstructor =>
-	Reflect.get(Reflect.get(globalThis, "WebAssembly") as object, name) as ErrorConstructor;
-const errorClasses: readonly (ErrorConstructor | undefined)[] = [
+// A string names a WebAssembly class, read on use: V8 has no WebAssembly
+// global while agentOS builds a module snapshot of the dynamic Worker child.
+const errorClasses: readonly (ErrorConstructor | string | undefined)[] = [
 	Error, Error, TypeError, RangeError, ReferenceError, SyntaxError,
-	webAssemblyError("CompileError"), webAssemblyError("LinkError"), webAssemblyError("RuntimeError"),
+	"CompileError", "LinkError", "RuntimeError",
 	undefined, EvalError, URIError, undefined, undefined,
 ];
+const errorClass = (tag: number): ErrorConstructor | undefined => {
+	const entry = errorClasses[tag];
+	return typeof entry === "string"
+		? (Reflect.get(Reflect.get(globalThis, "WebAssembly") as object, entry) as ErrorConstructor)
+		: entry;
+};
 const errorNames: Readonly<Record<number, string>> = {
 	9: "SuspendError",
 	12: "AggregateError",
@@ -111,7 +117,7 @@ class WorkerdWireDeserializer extends Deserializer {
 		const name: unknown = errorTag === 0 ? this.readValue() : errorNames[errorTag];
 		const message: unknown = this.readValue();
 		if (typeof message !== "string") throw cloneError("error message is not a string");
-		const error = new (errorClasses[errorTag] ?? Error)(message);
+		const error = new (errorClass(errorTag) ?? Error)(message);
 		if (name !== undefined) Object.defineProperty(error, "name", { configurable: true, value: name, writable: true });
 		const properties: unknown = this.readValue();
 		if (isObject(properties)) {

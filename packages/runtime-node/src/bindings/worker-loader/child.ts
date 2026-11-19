@@ -3,7 +3,7 @@
 // env, modules, and outbound access that the parent passed.
 
 import { writeSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import { DurableObjectRpcTarget } from "../durable-objects/rpc/target.js";
 import type { Request, Response } from "../../globals/http.js";
@@ -92,11 +92,20 @@ function startupError(error: unknown, start: DynamicWorkerStart | undefined): un
 
 class DynamicWorkerHost extends DurableObjectRpcTarget {
 	#worker: LoadedWorkerEntrypoint | undefined;
+	// The first `start`. The parent pipelines its entrypoint calls behind it.
+	#started: Promise<LoaderReply | undefined> | undefined;
 
-	async start(envelope: unknown): Promise<LoaderReply | undefined> {
+	start(envelope: unknown): Promise<LoaderReply | undefined> {
+		if (this.#started !== undefined) {
+			return Promise.resolve(encodeLoaderError(new Error("Dynamic Worker already started")));
+		}
+		this.#started = this.#load(envelope);
+		return this.#started;
+	}
+
+	async #load(envelope: unknown): Promise<LoaderReply | undefined> {
 		let start: DynamicWorkerStart | undefined;
 		try {
-			if (this.#worker !== undefined) throw new Error("Dynamic Worker already started");
 			start = parseDynamicWorkerStart(decodeLoaderValue(envelope, true));
 			const { bundleRoot, mainFile, moduleRoot, outbound } = start;
 			// node:fs reads `/bundle` from the dynamic Worker's own modules.
@@ -122,8 +131,11 @@ class DynamicWorkerHost extends DurableObjectRpcTarget {
 		}
 	}
 
-	entrypoint(name: unknown, props: unknown): LoaderCapabilityTarget {
-		if (this.#worker === undefined) throw new Error("Dynamic Worker is not started");
+	async entrypoint(name: unknown, props: unknown): Promise<LoaderCapabilityTarget> {
+		if (this.#started === undefined) throw new Error("Dynamic Worker is not started");
+		await this.#started;
+		// The parent fails this call with the startup error.
+		if (this.#worker === undefined) throw new Error("Dynamic Worker failed to start");
 		if (name !== undefined && typeof name !== "string") {
 			throw new TypeError("Entrypoint name must be a string");
 		}
@@ -132,13 +144,34 @@ class DynamicWorkerHost extends DurableObjectRpcTarget {
 	}
 }
 
+interface FrameWriter {
+	send(message: object): void;
+	// Returns the frames not yet written and forgets them.
+	take(): string;
+}
+
 // Stdout carries the frames to the parent, so the Worker's own stdout writes
-// travel as frames too. The parent writes them to its stdout. Returns the
-// writer for every other frame.
-function frameStdoutWrites(): (message: object) => void {
+// travel as frames too. The parent writes them to its stdout. Frames sent in
+// one microtask checkpoint leave in one write, so the messages of a call reach
+// the parent together. Returns the writer for every other frame.
+function frameStdoutWrites(): FrameWriter {
 	const stdout = process.stdout;
-	const frameStream = { write: stdout.write.bind(stdout) };
-	const sendFrame = (message: object): void => writeFrame(frameStream, message);
+	const write = stdout.write.bind(stdout);
+	let pending = "";
+	const buffer = {
+		write(text: string): boolean {
+			if (pending === "") {
+				queueMicrotask(() => {
+					const frames = pending;
+					pending = "";
+					if (frames !== "") write(frames);
+				});
+			}
+			pending += text;
+			return true;
+		},
+	};
+	const sendFrame = (message: object): void => writeFrame(buffer, message);
 	stdout.write = (
 		chunk: string | Uint8Array,
 		encoding?: BufferEncoding | ((error?: Error | null) => void),
@@ -153,11 +186,23 @@ function frameStdoutWrites(): (message: object) => void {
 		if (done !== undefined) process.nextTick(done);
 		return true;
 	};
-	return sendFrame;
+	return {
+		send: sendFrame,
+		take(): string {
+			const frames = pending;
+			pending = "";
+			return frames;
+		},
+	};
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	const sendFrame = frameStdoutWrites();
+// Runs the child. The thin entry `worker-loader-child-main.mjs` calls it, so
+// agentOS can boot the child from a snapshot that holds this module and the
+// whole runtime, evaluated once. Read per-process state such as `process.env`
+// in here or later, never at module top level.
+export function startChild(): void {
+	const frames = frameStdoutWrites();
+	const sendFrame = frames.send;
 	const report = (error: unknown): void => {
 		sendFrame({
 			openOrangeWorkerLoaderDiagnostic:
@@ -171,10 +216,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	// The dynamic Worker never outlives the runtime process that loaded it.
 	process.stdin.once("end", () => process.exit(0));
 	process.stdout.on("error", () => process.exit(0));
+	// Frames sent just before an exit still reach the parent.
+	process.on("exit", () => {
+		const unsent = frames.take();
+		if (unsent !== "") writeSync(1, unsent);
+	});
 	// abortIsolate() reports its reason and ends this process at once, so nothing else from the
 	// aborted isolate reaches the parent. The frame is written synchronously for that reason.
 	Reflect.set(globalThis, abortIsolateHook, (reason: string): never => {
-		writeSync(1, `${JSON.stringify({ openOrangeWorkerLoaderAbort: reason })}\n`);
+		writeSync(1, `${frames.take()}${JSON.stringify({ openOrangeWorkerLoaderAbort: reason })}\n`);
 		process.exit(1);
 	});
 	const transport = new FramedRpcTransport(readFrames(process.stdin, () => undefined), sendFrame);

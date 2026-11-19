@@ -22,6 +22,7 @@ import {
 } from "./session.js";
 import type { CapnWebStub } from "../durable-objects/rpc/capnweb.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
+import { WorkerLoaderMetrics } from "./metrics.js";
 
 export interface WorkerFile {
 	content: string | Uint8Array;
@@ -47,6 +48,9 @@ export interface WorkerHost {
 	spawn(): Promise<WorkerChild>;
 	// Runs once the dynamic Worker has loaded or failed to load.
 	loaded(): void;
+	// Runs once the loaded dynamic Worker first has no call in flight, or when
+	// it fails to load.
+	settled(): void;
 	// Disposes the VM. Runs when the process exits or fails to start.
 	remove(): Promise<void>;
 }
@@ -214,97 +218,242 @@ interface LoaderSession {
 
 export const maxWorkersSetting = "ORANGE_WORKER_LOADER_MAX_WORKERS";
 export const idleTimeoutSetting = "ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS";
+export const queueTimeoutSetting = "ORANGE_WORKER_LOADER_QUEUE_TIMEOUT_MS";
+export const maxQueuedSetting = "ORANGE_WORKER_LOADER_MAX_QUEUED";
 const defaultMaxWorkers = 32;
 const defaultIdleTimeoutMs = 30_000;
+const defaultQueueTimeoutMs = 5_000;
+const defaultMaxQueued = 256;
 const warnRatio = 0.8;
+const retryAfterSeconds = 1;
 
-// A new dynamic Worker needs a slot, and every running one holds a slot until it stops.
+export type WorkerLoaderLimitCode = "queue_full" | "queue_timeout";
+
+// A new dynamic Worker needs a slot, and every running one holds a slot until it stops. With every
+// slot busy, a new one waits in line; this error refuses it when the line is full or its wait
+// passes the queue timeout. Like the overloaded error of a Cloudflare Durable Object, it carries
+// `overloaded` and `retryable`, and the runtime answers it with 503 and Retry-After when the
+// Worker does not catch it.
+// https://developers.cloudflare.com/durable-objects/best-practices/error-handling/
 export class WorkerLoaderLimitError extends RangeError {
-	constructor(message: string) {
+	readonly code: WorkerLoaderLimitCode;
+	readonly overloaded = true;
+	readonly retryable = true;
+	readonly retryAfterSeconds = retryAfterSeconds;
+
+	constructor(code: WorkerLoaderLimitCode, message: string) {
 		super(message);
 		this.name = "WorkerLoaderLimitError";
+		this.code = code;
 	}
 }
 
 // Node.js runs a setTimeout() delay above this after 1 ms.
 const maxTimerDelayMs = 2_147_483_647;
 
-function positiveIntegerSetting(
+export function positiveIntegerSetting(
 	settings: Readonly<Record<string, string | undefined>>,
 	name: string,
 	fallback: number,
 	max: number,
+	min = 1,
 ): number {
 	const raw = settings[name];
 	if (raw === undefined || raw.trim() === "") return fallback;
 	const value = Number(raw);
-	if (!Number.isSafeInteger(value) || value < 1 || value > max) {
-		throw new RangeError(`${name} must be an integer from 1 to ${max}. Got: ${JSON.stringify(raw)}`);
+	if (!Number.isSafeInteger(value) || value < min || value > max) {
+		throw new RangeError(`${name} must be an integer from ${min} to ${max}. Got: ${JSON.stringify(raw)}`);
 	}
 	return value;
 }
 
+export function workerLoaderIdleTimeoutMs(settings: Readonly<Record<string, string | undefined>>): number {
+	return positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs);
+}
+
+export function workerLoaderMaxWorkers(settings: Readonly<Record<string, string | undefined>>): number {
+	return positiveIntegerSetting(settings, maxWorkersSetting, defaultMaxWorkers, Number.MAX_SAFE_INTEGER);
+}
+
+interface SlotWaiter {
+	grant(): void;
+	fail(error: Error): void;
+}
+
+export interface DynamicWorkerPoolLimits {
+	idleTimeoutMs: number;
+	maxQueued: number;
+	maxWorkers: number;
+	queueTimeoutMs: number;
+}
+
 // Bounds the dynamic Workers that run at once across every Worker Loader binding of the runtime.
-// Each one is an agentOS VM and a Node.js process, about 54 MiB. At the limit, a new Worker stops
-// the least recently used idle one. A Worker with a call in flight is never stopped.
+// Each one is an agentOS VM and a Node.js process. At the limit, a new Worker stops the least
+// recently used idle one. A Worker with a call in flight is never stopped. With none idle, new
+// Workers wait in line, first come first served, until a slot frees or the queue timeout passes.
 export class DynamicWorkerPool {
 	readonly idleTimeoutMs: number;
+	readonly maxQueued: number;
 	readonly maxWorkers: number;
+	readonly queueTimeoutMs: number;
+	readonly metrics: WorkerLoaderMetrics;
 	// Least recently used first.
 	readonly #live = new Set<DynamicWorker>();
+	// First in line first.
+	readonly #queue = new Map<DynamicWorker, SlotWaiter>();
 	readonly #warn: (message: string) => void;
-	#warned = false;
+	#pumping = false;
+	#warnedLive = false;
+	#warnedQueue = false;
 
-	constructor(limits: { idleTimeoutMs: number; maxWorkers: number }, warn: (message: string) => void) {
+	constructor(limits: DynamicWorkerPoolLimits, warn: (message: string) => void, metrics = new WorkerLoaderMetrics()) {
 		this.idleTimeoutMs = limits.idleTimeoutMs;
+		this.maxQueued = limits.maxQueued;
 		this.maxWorkers = limits.maxWorkers;
+		this.queueTimeoutMs = limits.queueTimeoutMs;
+		this.metrics = metrics;
+		metrics.slotGauges = () => ({ live: this.#live.size, maxWorkers: this.maxWorkers, queued: this.#queue.size });
 		this.#warn = warn;
 	}
 
 	static fromSettings(
 		settings: Readonly<Record<string, string | undefined>>,
 		warn: (message: string) => void,
+		metrics?: WorkerLoaderMetrics,
 	): DynamicWorkerPool {
 		return new DynamicWorkerPool(
 			{
-				idleTimeoutMs: positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs),
-				maxWorkers: positiveIntegerSetting(settings, maxWorkersSetting, defaultMaxWorkers, Number.MAX_SAFE_INTEGER),
+				idleTimeoutMs: workerLoaderIdleTimeoutMs(settings),
+				maxQueued: positiveIntegerSetting(settings, maxQueuedSetting, defaultMaxQueued, Number.MAX_SAFE_INTEGER, 0),
+				maxWorkers: workerLoaderMaxWorkers(settings),
+				queueTimeoutMs: positiveIntegerSetting(settings, queueTimeoutSetting, defaultQueueTimeoutMs, maxTimerDelayMs),
 			},
 			warn,
+			metrics,
 		);
 	}
 
-	admit(worker: DynamicWorker): void {
-		if (this.#live.size >= this.maxWorkers) {
-			let evicted = false;
-			for (const candidate of this.#live) {
-				if (!candidate.idle) continue;
-				candidate.evict();
-				evicted = true;
-				break;
+	get queued(): number {
+		return this.#queue.size;
+	}
+
+	// Resolves once `worker` holds a slot.
+	acquire(worker: DynamicWorker): Promise<void> {
+		const queuedAt = performance.now();
+		return new Promise((resolveSlot, rejectSlot) => {
+			let timer: NodeJS.Timeout | undefined;
+			this.#queue.set(worker, {
+				fail: (error) => {
+					clearTimeout(timer);
+					rejectSlot(error);
+				},
+				grant: () => {
+					clearTimeout(timer);
+					this.metrics.queueWait.observe((performance.now() - queuedAt) / 1_000);
+					resolveSlot();
+				},
+			});
+			this.#pump();
+			if (!this.#queue.has(worker)) return;
+			// Only the Workers behind those that got a slot count toward the queue limit.
+			if (this.#queue.size > this.maxQueued) {
+				this.#queue.delete(worker);
+				rejectSlot(
+					this.#refuse(
+						"queue_full",
+						`OpenOrange cannot start another dynamic Worker: all ${this.maxWorkers} slots are busy and ${this.#queue.size} Workers already wait for one, the most ${maxQueuedSetting} allows. Retry later, or raise ${maxWorkersSetting} or ${maxQueuedSetting}.`,
+					),
+				);
+				return;
 			}
-			if (!evicted) {
-				throw new WorkerLoaderLimitError(
-					`OpenOrange cannot start another dynamic Worker: ${this.#live.size} are running, none is idle, and the limit is ${this.maxWorkers}. Raise ${maxWorkersSetting} or let calls finish first.`,
+			if (!this.#warnedQueue && this.#queue.size >= Math.ceil(this.maxQueued * warnRatio)) {
+				this.#warnedQueue = true;
+				this.#warn(
+					`${this.#queue.size} dynamic Workers wait for a slot, and past ${this.maxQueued} new ones fail with WorkerLoaderLimitError. Raise ${maxWorkersSetting} or ${maxQueuedSetting}, or add runners.`,
 				);
 			}
-		}
-		this.#live.add(worker);
-		if (!this.#warned && this.#live.size >= Math.ceil(this.maxWorkers * warnRatio)) {
-			this.#warned = true;
-			this.#warn(
-				`${this.#live.size} of ${this.maxWorkers} dynamic Workers are running. At the limit, a new one stops the least recently used idle one, or fails with WorkerLoaderLimitError if none is idle. Raise ${maxWorkersSetting} to allow more.`,
-			);
-		}
+			timer = setTimeout(() => {
+				if (!this.#queue.delete(worker)) return;
+				this.#queueShrank();
+				rejectSlot(
+					this.#refuse(
+						"queue_timeout",
+						`OpenOrange cannot start another dynamic Worker: it waited ${this.queueTimeoutMs} ms for one of ${this.maxWorkers} busy slots. Retry later, or raise ${maxWorkersSetting} or ${queueTimeoutSetting}.`,
+					),
+				);
+			}, this.queueTimeoutMs);
+			timer.unref();
+		});
+	}
+
+	// Takes a Worker that stops before it gets a slot out of line.
+	cancel(worker: DynamicWorker, error: Error): void {
+		const waiter = this.#queue.get(worker);
+		if (waiter === undefined) return;
+		this.#queue.delete(worker);
+		this.#queueShrank();
+		waiter.fail(error);
 	}
 
 	touch(worker: DynamicWorker): void {
 		if (this.#live.delete(worker)) this.#live.add(worker);
 	}
 
+	// A Worker may have become idle, so a Worker in line may take its slot.
+	idle(): void {
+		if (this.#queue.size > 0) this.#pump();
+	}
+
 	remove(worker: DynamicWorker): void {
 		this.#live.delete(worker);
-		if (this.#live.size < Math.ceil(this.maxWorkers * warnRatio)) this.#warned = false;
+		if (this.#live.size < Math.ceil(this.maxWorkers * warnRatio)) this.#warnedLive = false;
+		this.#pump();
+	}
+
+	#refuse(code: WorkerLoaderLimitCode, message: string): WorkerLoaderLimitError {
+		this.metrics.reject(code);
+		return new WorkerLoaderLimitError(code, message);
+	}
+
+	#queueShrank(): void {
+		if (this.#queue.size < Math.ceil(this.maxQueued * warnRatio)) this.#warnedQueue = false;
+	}
+
+	// Hands free slots to Workers in line, in order. Stopping an idle Worker frees its slot, and
+	// its removal must not start a second pass.
+	#pump(): void {
+		if (this.#pumping) return;
+		this.#pumping = true;
+		try {
+			for (const [worker, waiter] of this.#queue) {
+				if (!this.#freeSlot()) break;
+				this.#queue.delete(worker);
+				this.#live.add(worker);
+				this.#warnLive();
+				waiter.grant();
+			}
+			this.#queueShrank();
+		} finally {
+			this.#pumping = false;
+		}
+	}
+
+	#freeSlot(): boolean {
+		if (this.#live.size < this.maxWorkers) return true;
+		for (const candidate of this.#live) {
+			if (!candidate.idle) continue;
+			candidate.evict();
+			return this.#live.size < this.maxWorkers;
+		}
+		return false;
+	}
+
+	#warnLive(): void {
+		if (this.#warnedLive || this.#live.size < Math.ceil(this.maxWorkers * warnRatio)) return;
+		this.#warnedLive = true;
+		this.#warn(
+			`${this.#live.size} of ${this.maxWorkers} dynamic Workers are running. At the limit, a new one stops the least recently used idle one, or waits up to ${this.queueTimeoutMs} ms for a slot and then fails with WorkerLoaderLimitError. Raise ${maxWorkersSetting} to allow more.`,
+		);
 	}
 }
 
@@ -333,10 +482,18 @@ class DynamicWorker {
 	#baseExports = 0;
 	#evicted = false;
 	#exited = false;
+	#idleCheck = false;
 	#idleTimer: NodeJS.Timeout | undefined;
 	#inFlight = 0;
+	// The host of a Worker that has loaded and whose first calls are in flight.
+	#settling: WorkerHost | undefined;
 	#lastUsed = 0;
 	#orphaned = false;
+	// The session's main stub once `start` is sent. Entrypoint calls pipeline behind `start`, so a
+	// new Worker's first call reaches its process together with `start` instead of after its reply.
+	readonly #sent: Promise<CapnWebStub>;
+	#markSent: (main: CapnWebStub) => void = () => undefined;
+	#failSent: (error: unknown) => void = () => undefined;
 	#session: LoaderSession | undefined;
 	#terminated = false;
 
@@ -350,6 +507,11 @@ class DynamicWorker {
 		this.#label = label;
 		this.#onExit = onExit;
 		this.#options = options;
+		this.#sent = new Promise((resolveSent, rejectSent) => {
+			this.#markSent = resolveSent;
+			this.#failSent = rejectSent;
+		});
+		this.#sent.catch(() => undefined);
 	}
 
 	start(): void {
@@ -362,7 +524,7 @@ class DynamicWorker {
 		return this.#running ?? Promise.resolve();
 	}
 
-	// Stopped by the pool, so a held stub may load the Worker again.
+	// Stopped by the pool or refused a slot, so a held stub may load the Worker again.
 	get evicted(): boolean {
 		return this.#evicted;
 	}
@@ -376,7 +538,16 @@ class DynamicWorker {
 
 	async #start(): Promise<LoaderSession> {
 		let host: WorkerHost | undefined;
+		const { pool } = this.#options;
 		try {
+			try {
+				await pool.acquire(this);
+			} catch (error: unknown) {
+				// A stub that is still held asks for a slot again on its next call.
+				if (error instanceof WorkerLoaderLimitError) this.#evicted = true;
+				throw error;
+			}
+			const startedAt = performance.now();
 			const prepared = await this.#getCode();
 			host = await this.#options.backend.open(prepared.outbound === "network");
 			const bundleRoot = posix.join(host.root, "bundle");
@@ -404,6 +575,7 @@ class DynamicWorker {
 			if (this.#terminated) child.kill();
 			const frames = readFrames(child.stdout, (line) => process.stdout.write(`${line}\n`));
 			frames.on("message", (message: unknown) => {
+				this.#checkIdle();
 				if (typeof message !== "object" || message === null) return;
 				const stdout: unknown = Reflect.get(message, "openOrangeWorkerLoaderStdout");
 				if (typeof stdout === "string") process.stdout.write(stdout);
@@ -415,6 +587,7 @@ class DynamicWorker {
 				}
 			});
 			const transport = new FramedRpcTransport(frames, (message) => {
+				this.#checkIdle();
 				child.write(`${JSON.stringify(message)}\n`);
 			});
 			const session = openLoaderSession(transport);
@@ -427,14 +600,23 @@ class DynamicWorker {
 				this.#onExit();
 				void removeHost.remove();
 			});
-			const reply = await session.main.start(envelope);
-			if (reply !== undefined && reply !== null) decodeLoaderReply(reply);
+			const started = session.main.start(envelope);
+			// The envelope's capabilities are exported once `start` is sent, before any other call.
 			this.#baseExports = session.stats().exports;
+			this.#markSent(session.main);
+			const reply = await started;
+			if (reply !== undefined && reply !== null) decodeLoaderReply(reply);
 			this.#session = session;
 			this.#lastUsed = performance.now();
-			this.#armIdleTimer(this.#options.pool.idleTimeoutMs);
+			pool.metrics.workerStart.observe((this.#lastUsed - startedAt) / 1_000);
+			this.#armIdleTimer(pool.idleTimeoutMs);
+			this.#checkIdle();
+			if (this.#inFlight === 0) host.settled();
+			else this.#settling = host;
 			return session;
 		} catch (error: unknown) {
+			this.#failSent(error);
+			host?.settled();
 			this.terminate();
 			// A running child frees the slot when it exits. Without one, nothing else frees it.
 			if (this.#child === undefined) {
@@ -451,6 +633,18 @@ class DynamicWorker {
 		} finally {
 			host?.loaded();
 		}
+	}
+
+	// A message in either direction can end the last call or stream, which leaves the Worker
+	// idle. Only Workers in line for a slot need to know at once, so the check runs only then,
+	// at most once per turn of the event loop.
+	#checkIdle(): void {
+		if (this.#idleCheck || this.#options.pool.queued === 0) return;
+		this.#idleCheck = true;
+		setImmediate(() => {
+			this.#idleCheck = false;
+			if (this.idle) this.#options.pool.idle();
+		});
 	}
 
 	// Like workerd, an isolate that abortIsolate() ended fails its calls with an internal error,
@@ -486,15 +680,24 @@ class DynamicWorker {
 		const settle = (): void => {
 			this.#inFlight -= 1;
 			this.#lastUsed = performance.now();
+			if (this.#inFlight === 0) {
+				this.#settling?.settled();
+				this.#settling = undefined;
+			}
 			if (this.#orphaned && this.idle) this.evict();
+			else this.#checkIdle();
 		};
 		void call.then(settle, settle);
 		return call;
 	}
 
-	// No stub references this unnamed Worker any more, so it stops once idle.
+	// No stub references this unnamed Worker any more, so it stops once idle. A Worker in line for
+	// a slot leaves the line, unless a call waits on it: the call holds no stub.
 	release(): void {
 		this.#orphaned = true;
+		if (this.#inFlight === 0) {
+			this.#options.pool.cancel(this, new Error(`Dynamic Worker ${this.#label} has no stub left.`));
+		}
 		if (this.idle) this.evict();
 	}
 
@@ -509,15 +712,16 @@ class DynamicWorker {
 
 	// A capability for `getEntrypoint(name, { props })`.
 	entrypoint(name: string | undefined, props: unknown): Promise<RemoteCapability> {
-		const running = this.#running ?? Promise.reject(new Error("Dynamic Worker is not started"));
+		const running = this.#running;
+		if (running === undefined) return Promise.reject(new Error("Dynamic Worker is not started"));
 		const propsEnvelope = props === undefined ? undefined : encodeLoaderValue(props);
-		const remote = running.then(async ({ main }) => {
-			const stub = await main.entrypoint(name, propsEnvelope);
-			if ((typeof stub !== "object" || stub === null) && typeof stub !== "function") {
-				throw new Error("Dynamic Worker returned an invalid entrypoint");
-			}
+		const remote = this.#sent.then((main) => {
+			// A promise for the entrypoint, so calls on it pipeline too. The process resolves it once
+			// the Worker has loaded. A call settles only after `start` does, so a Worker that fails to
+			// load fails its calls with the startup error.
+			const stub: object = main.entrypoint(name, propsEnvelope);
 			this.#entrypointImports += 1;
-			return new RemoteCapability(stub);
+			return new RemoteCapability(stub, running);
 		});
 		remote.catch(() => undefined);
 		return remote;
@@ -530,6 +734,7 @@ class DynamicWorker {
 				capability.dispose();
 				this.#entrypointImports -= 1;
 				if (this.#orphaned && this.idle) this.evict();
+				else this.#checkIdle();
 			},
 			() => undefined,
 		);
@@ -537,6 +742,7 @@ class DynamicWorker {
 
 	terminate(): void {
 		this.#terminated = true;
+		this.#options.pool.cancel(this, new Error("The Worker Loader has stopped."));
 		if (this.#child !== undefined && !this.#exited) this.#child.kill();
 	}
 }
@@ -649,7 +855,8 @@ export class WorkerStub {
 
 	constructor(handle: WorkerHandle) {
 		this.#handle = handle;
-		// The Worker starts loading at once, and a full pool throws here.
+		// The Worker starts loading at once. With every slot busy, it waits in line, and its calls
+		// wait with it.
 		handle.acquire();
 		handle.hold(this);
 	}
@@ -759,7 +966,6 @@ export class WorkerLoader {
 				onExit();
 			},
 		);
-		this.#options.pool.admit(worker);
 		this.#all.add(worker);
 		worker.start();
 		return worker;

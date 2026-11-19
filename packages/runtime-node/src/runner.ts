@@ -55,13 +55,21 @@ import {
 	type WorkflowEngineObject,
 	workflowEngineClassName,
 } from "./bindings/workflows/engine-object.js";
-import { AgentOsWorkerLoaderBackend, workerLoaderPoolSize } from "./bindings/worker-loader/agentos.js";
+import {
+	AgentOsWorkerLoaderBackend,
+	workerLoaderMaxVms,
+	workerLoaderPoolLimits,
+} from "./bindings/worker-loader/agentos.js";
 import {
 	DynamicWorkerPool,
 	WorkerLoader,
+	WorkerLoaderLimitError,
+	workerLoaderIdleTimeoutMs,
+	workerLoaderMaxWorkers,
 	workerLoaderVmBundlePath,
 	type WorkerLoaderBackend,
 } from "./bindings/worker-loader/loader.js";
+import { WorkerLoaderMetrics } from "./bindings/worker-loader/metrics.js";
 import { createDispatchNamespace } from "./bindings/dispatch-namespace.js";
 import type { EnvironmentBinding } from "./bindings/create-env.js";
 import type { ConfiguredDurableObjectClass } from "./bindings/durable-objects/classes.js";
@@ -218,15 +226,24 @@ function requestBody(
 }
 
 // Dynamic Workers run only in agentOS VMs. All Worker Loader bindings share one
-// backend.
+// backend, one VM budget, and one set of metrics.
+const workerLoaderMetrics = new WorkerLoaderMetrics();
 let sharedWorkerLoaderBackend: WorkerLoaderBackend | undefined;
 function workerLoaderBackend(): WorkerLoaderBackend {
+	const settings = runtimeSettings();
+	const pool = workerLoaderPoolLimits(settings);
 	sharedWorkerLoaderBackend ??= new AgentOsWorkerLoaderBackend({
 		bundlePath: () => workerLoaderVmBundlePath(import.meta.url),
+		maxVms: workerLoaderMaxVms(settings, workerLoaderMaxWorkers(settings), pool),
+		metrics: workerLoaderMetrics,
 		onDiagnostic(message): void {
 			send({ message, type: "background-error" });
 		},
-		poolSize: workerLoaderPoolSize(runtimeSettings()),
+		onWarning(message): void {
+			send({ message, type: "warning" });
+		},
+		// The pool keeps VMs above its idle size as long as a Worker stays idle before it stops.
+		pool: { ...pool, idleMs: workerLoaderIdleTimeoutMs(settings) },
 	});
 	return sharedWorkerLoaderBackend;
 }
@@ -234,8 +251,15 @@ function workerLoaderBackend(): WorkerLoaderBackend {
 // One pool bounds the dynamic Workers of every Worker Loader binding.
 let sharedWorkerLoaderPool: DynamicWorkerPool | undefined;
 function workerLoaderPool(warn: (message: string) => void): DynamicWorkerPool {
-	sharedWorkerLoaderPool ??= DynamicWorkerPool.fromSettings(runtimeSettings(), warn);
+	sharedWorkerLoaderPool ??= DynamicWorkerPool.fromSettings(runtimeSettings(), warn, workerLoaderMetrics);
 	return sharedWorkerLoaderPool;
+}
+
+// A Worker that does not catch a WorkerLoaderLimitError is out of dynamic Worker capacity, not
+// broken, so the client gets 503 and when to retry. Cloudflare answers a Worker that cannot run
+// for platform limits with 503 too.
+function capacityFailure(error: unknown): { retryAfterSeconds: number } | undefined {
+	return error instanceof WorkerLoaderLimitError ? { retryAfterSeconds: error.retryAfterSeconds } : undefined;
 }
 
 function requestHeaders(request: IncomingMessage): Headers {
@@ -1205,14 +1229,19 @@ export async function startRuntime(
 				reportWaitUntil(dispatch.waitUntil);
 			} catch (error: unknown) {
 				send({ ...errorDetails(error), type: "request-error" });
-				if (!outgoing.headersSent) {
-					outgoing.statusCode = 500;
-					outgoing.setHeader("content-type", "text/plain; charset=utf-8");
-				}
 				if (outgoing.headersSent) {
 					outgoing.destroy(error instanceof Error ? error : undefined);
-				} else {
+					return;
+				}
+				outgoing.setHeader("content-type", "text/plain; charset=utf-8");
+				const capacity = capacityFailure(error);
+				if (capacity === undefined) {
+					outgoing.statusCode = 500;
 					outgoing.end("Internal Server Error");
+				} else {
+					outgoing.statusCode = 503;
+					outgoing.setHeader("retry-after", String(capacity.retryAfterSeconds));
+					outgoing.end("Service Unavailable");
 				}
 			}
 		})();
@@ -1257,8 +1286,20 @@ export async function startRuntime(
 			} catch (error: unknown) {
 				if (workerSocket !== null) closeUncoupledWorkerWebSocket(workerSocket);
 				send({ ...errorDetails(error), type: "request-error" });
-				writeUpgradeFailure(socket);
-				reportRequest(incoming, 500, startedAt);
+				const capacity = capacityFailure(error);
+				if (capacity === undefined) {
+					writeUpgradeFailure(socket);
+					reportRequest(incoming, 500, startedAt);
+				} else {
+					await writeRejectedUpgrade(
+						socket,
+						new Response("Service Unavailable", {
+							headers: { "retry-after": String(capacity.retryAfterSeconds) },
+							status: 503,
+						}),
+					);
+					reportRequest(incoming, 503, startedAt);
+				}
 			}
 		})();
 	});
@@ -1274,16 +1315,26 @@ export async function startRuntime(
 		await closeRegistry();
 		throw error;
 	}
-	// A Rivet cluster scrapes the runner's metrics. A local Engine has no scraper.
-	const metricsPort = externalEngine ? metricsPortFromEnvironment(process.env) : undefined;
+	// A Rivet cluster scrapes the runner's metrics. `orange dev` serves them too when the port is set.
+	const metricsPort = metricsPortFromEnvironment(process.env);
 	const metricsServer =
 		metricsPort === undefined
 			? undefined
 			: await startMetricsServer(metricsPort, async () => {
+					const loaderMetrics = runtimeBindings.workerLoaders.length > 0 ? workerLoaderMetrics.render() : "";
 					if (durableObjectRegistry === undefined) {
+						if (loaderMetrics !== "") {
+							return new Response(loaderMetrics, { headers: { "content-type": "text/plain; version=0.0.4" } });
+						}
 						return new Response("registry not started\n", { status: 503 });
 					}
-					return await durableObjectRegistry.prometheusMetrics();
+					const rivet = await durableObjectRegistry.prometheusMetrics();
+					if (loaderMetrics === "" || !rivet.ok) return rivet;
+					// Only the content type carries over: the body is longer than RivetKit's.
+					return new Response(`${await rivet.text()}${loaderMetrics}`, {
+						headers: { "content-type": rivet.headers.get("content-type") ?? "text/plain; version=0.0.4" },
+						status: rivet.status,
+					});
 				});
 	// The cron actor runs in this process.
 	const cronSync = new AbortController();

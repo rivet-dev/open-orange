@@ -406,7 +406,7 @@ export function renderDevHelp(theme: Theme): string {
 		option("--json", "Print JSON Lines events instead of the terminal view"),
 		option("--test-scheduled", "Serve /__scheduled to run the scheduled() handler"),
 		theme.dim(
-			"  Also accepted for Wrangler compatibility: --local, --latest, --profile,\n  --show-interactive-dev-session, and --local-protocol http.",
+			"  Also accepted for Wrangler compatibility: --local, --latest, --profile,\n  --inspector-port, --inspector-ip, --show-interactive-dev-session, and\n  --local-protocol http.",
 		),
 		section("Keys"),
 		`  ${theme.dim("In a terminal: b opens the Worker, c clears, x or Ctrl-C stops.\n  Press Ctrl-C twice to stop without waiting.")}`,

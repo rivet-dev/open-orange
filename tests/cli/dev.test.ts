@@ -69,8 +69,11 @@ function waitForExit(child: ChildProcess): Promise<{
 	});
 }
 
-test("serves a Worker request through orange dev", async () => {
-	const dev = await startOrangeDev(configDirectory, "wrangler.toml");
+// Wrangler dev scripts such as `wrangler dev --inspector-port 9229` must run unchanged.
+test("serves a Worker request through orange dev started with Wrangler's inspector flags", async () => {
+	const dev = await startOrangeDev(configDirectory, "wrangler.toml", {
+		args: ["--inspector-port", "9229", "--inspector-ip=127.0.0.1"],
+	});
 	try {
 		const response = await fetch(`${dev.origin}/hello`);
 		assert.equal(response.status, 200);

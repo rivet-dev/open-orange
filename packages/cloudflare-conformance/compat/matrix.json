@@ -14782,7 +14782,7 @@
 			"status": "unsupported",
 			"cloudflare": "The port of the `wrangler dev` DevTools inspector.",
 			"orange": "Ignored. `orange dev` opens no inspector port.",
-			"notes": "None.",
+			"notes": "The `--inspector-port` and `--inspector-ip` flags are accepted and ignored.",
 			"unverified": "Whether the runtime child process can be inspected another way is not checked.",
 			"evidence": [
 				{

@@ -56,7 +56,12 @@ function portValue(value: string): number {
 	return port;
 }
 
-const acceptedIgnoredValueOptions = new Set(["--profile"]);
+const acceptedIgnoredValueOptions = new Set([
+	// Orange has no Worker debugger, so the DevTools inspector flags do nothing.
+	"--inspector-ip",
+	"--inspector-port",
+	"--profile",
+]);
 
 // Wrangler's --log-level values, mapped to levels that both RivetKit's
 // TypeScript and Rust loggers accept.

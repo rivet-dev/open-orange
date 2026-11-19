@@ -12990,23 +12990,23 @@
 			"name": "compatibility_flags",
 			"status": "unsupported",
 			"cloudflare": "Turns individual runtime behaviors on or off, on top of the compatibility date.",
-			"orange": "Ignored. Config load prints `[config-warning] Orange ignores compatibility_flags [\"...\"]` with every distinct flag, sorted. The Node.js flags nodejs_compat, nodejs_compat_v2, and nodejs_als get `Orange always has Node.js APIs, so it does not need compatibility_flags [\"...\"]` instead.",
-			"notes": "The supported flag list is empty, so every flag gets a warning. The Worker still starts.",
+			"orange": "Ignored. Config load prints `[config-warning] Orange ignores compatibility_flags [\"...\"]` with every distinct flag, sorted. The Node.js flags nodejs_compat, nodejs_compat_v2, and nodejs_als get no warning, because Orange always has Node.js APIs. global_fetch_strictly_public and global_fetch_private_origin get no warning, because Orange has no Cloudflare zone, so global fetch() always goes to the public network.",
+			"notes": "request_signal_passthrough and no_request_signal_passthrough are applied. Every other flag gets a warning. The Worker still starts.",
 			"evidence": [
 				{
 					"kind": "code",
 					"path": "src/config/profile.ts",
-					"lines": "2"
+					"lines": "2-5"
 				},
 				{
 					"kind": "code",
 					"path": "src/config/load-wrangler.ts",
-					"lines": "449-465"
+					"lines": "556-590"
 				},
 				{
 					"kind": "code",
 					"path": "src/commands/dev.ts",
-					"lines": "206-208"
+					"lines": "358"
 				}
 			]
 		},

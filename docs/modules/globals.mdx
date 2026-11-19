@@ -136,17 +136,17 @@ behave as it does on Node.js, so Orange does not switch runtime behavior by
 date or flag. `orange dev` warns about each flag that it does not apply:
 
 ```text
-! Orange always has Node.js APIs, so it does not need compatibility_flags ["nodejs_compat"]
 ! Orange ignores compatibility_flags ["streams_enable_constructors"]
 ```
 
 | In `wrangler.jsonc` | On Orange |
 | --- | --- |
 | `compatibility_date` | Ignored, except for static assets: from `2025-04-01`, navigation requests prefer asset serving, as on Cloudflare. See [Static assets](./assets). |
-| `nodejs_compat`, `nodejs_compat_v2`, and `nodejs_als` | Node.js APIs are always on. `orange dev` prints the first warning above. |
+| `nodejs_compat`, `nodejs_compat_v2`, and `nodejs_als` | Node.js APIs are always on. No warning. |
+| `global_fetch_strictly_public` and `global_fetch_private_origin` | No warning. Orange has no Cloudflare zone, so global `fetch()` always goes to the public network, as `global_fetch_strictly_public` asks. |
 | `request_signal_passthrough` and `no_request_signal_passthrough` | Applied. With `request_signal_passthrough`, a copy of an incoming request also follows its client's disconnect. Without it, the default, a copy passed to a subrequest or over RPC does not. |
 | `assets_navigation_prefers_asset_serving` and `assets_navigation_has_no_effect` | Applied. See [Static assets](./assets). |
-| Any other flag | Ignored. `orange dev` prints the second warning above. |
+| Any other flag | Ignored. `orange dev` prints the warning above. |
 
 #### HTTP
 

@@ -43,7 +43,7 @@ test("resolves TOML configuration and supported bindings", async () => {
 	);
 });
 
-test("accepts other compatibility profiles, warns about ignored flags, and keeps quiet about Node.js flags that Cloudflare needs", async () => {
+test("accepts other compatibility profiles, warns about ignored flags, and keeps quiet about Node.js and own-zone fetch flags that Orange already meets", async () => {
 	const config = await loadWranglerConfiguration({
 		configPath: fixture("wrangler-other-profile.jsonc"),
 	});

@@ -555,6 +555,11 @@ function stringArray(
 // Flags that turn on Node.js APIs, which Orange always has.
 const alwaysOnNodeFlags: ReadonlySet<string> = new Set(["nodejs_als", "nodejs_compat", "nodejs_compat_v2"]);
 
+// These flags only choose whether global fetch() to the Worker's own Cloudflare zone goes to the
+// zone's origin. Orange has no zone, so fetch() always goes to the public network either way:
+// https://github.com/cloudflare/workerd/blob/0efc13cbd5152497986d08643af22a212025dfc6/src/workerd/io/compatibility-date.capnp#L475-L505
+const noZoneFetchFlags: ReadonlySet<string> = new Set(["global_fetch_private_origin", "global_fetch_strictly_public"]);
+
 // Orange runs one runtime profile, so it ignores compatibility_date and warns
 // about flags it does not apply instead of rejecting the configuration.
 function resolveCompatibilityProfile(config: WranglerConfig): {
@@ -574,7 +579,7 @@ function resolveCompatibilityProfile(config: WranglerConfig): {
 		.sort();
 	// Orange always has Node.js APIs, and Cloudflare still needs these flags (the Agents SDK needs
 	// nodejs_compat), so Orange accepts them without a warning that reads as "remove this flag".
-	const otherFlags = ignoredFlags.filter((flag) => !alwaysOnNodeFlags.has(flag));
+	const otherFlags = ignoredFlags.filter((flag) => !alwaysOnNodeFlags.has(flag) && !noZoneFetchFlags.has(flag));
 	return {
 		compatibilityDate,
 		compatibilityFlags,

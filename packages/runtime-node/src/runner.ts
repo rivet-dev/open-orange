@@ -633,6 +633,7 @@ async function createBindings(
 				const loader = new WorkerLoader({
 					backend: workerLoaderBackend(),
 					pool: workerLoaderPool((message) => send({ message, type: "warning" })),
+					projectRoot: message.projectRoot,
 					onDiagnostic(diagnostic): void {
 						send({ message: diagnostic, type: "background-error" });
 					},

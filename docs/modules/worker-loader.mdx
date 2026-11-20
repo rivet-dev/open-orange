@@ -110,6 +110,7 @@ Hello from a dynamic Worker
 | JavaScript, CommonJS, text, data, JSON, and Wasm modules | Supported | Pass Wasm as bytes. Relative, `cloudflare:*`, and `node:*` imports resolve as in the parent Worker. |
 | Wasm exception handling with exnref (`try_table`, `throw_ref`), as Rust `panic=unwind` builds use | Supported | On by default, as in workerd. See [The VM runtime](#the-vm-runtime). |
 | A `node:http` server through `cloudflare:node` | Supported | An Express app serves requests. |
+| `mounts` | Orange extension | Mounts a project directory read-only, or an empty writable directory, into the VM. See [Mounts](#mounts). |
 | Python modules and compiled `WebAssembly.Module` values | Not supported | Throw a `TypeError`. |
 | `getDurableObjectClass()` | Not supported | Throws a `NotSupportedError`. |
 | `connect()` on an entrypoint, or through a Fetcher `globalOutbound` | Not supported | Throws. |
@@ -201,11 +202,41 @@ limit never stops them.
 - Each VM mounts a host directory read-only at boot. Orange writes the
   Worker's modules as written there, and `node:fs` reads them as `/bundle`.
   Orange deletes the directory with the VM. The linked modules that Node.js
-  imports are written into the VM.
+  imports go in the same directory.
 - A text, JSON, Wasm, or data module reads its bytes from `/bundle` when it is
   imported, in 4 MiB reads. A text module decodes them as UTF-8, and a JSON
   module decodes and then parses them. agentOS answers each read with one
   message of at most 16 MiB, so a module of any size loads.
+
+#### Mounts
+
+`mounts` is an Orange extension to the code object, so a dynamic Worker can run
+a directory of files, such as a Next.js standalone build, without one module
+per file:
+
+```js
+env.LOADER.get("next", () => ({
+  compatibilityDate: "2026-01-01",
+  mainModule: "worker.js",
+  modules: { "worker.js": workerCode },
+  mounts: [
+    { guestPath: "/app", hostPath: "app/.next/standalone" }, // read-only
+    { guestPath: "/app/.next/cache" }, // empty and writable
+  ],
+}));
+```
+
+- Only the parent Worker's code callback sets `mounts`. The dynamic Worker
+  has no API for it.
+- `hostPath` resolves against the project directory. Its real path, after
+  symlinks, must be a directory inside the project. A `hostPath` mount is
+  always read-only, and a guest write to it fails.
+- A mount without `hostPath` is an empty host directory that Orange deletes
+  with the VM.
+- `guestPath` must be absolute, not `/`, unique, and outside
+  `/open-orange`, which Orange reserves.
+- A mount that breaks a rule fails the load with a `TypeError` that names it.
+- `orange deploy` does not ship mounted directories yet.
 
 #### The VM runtime
 

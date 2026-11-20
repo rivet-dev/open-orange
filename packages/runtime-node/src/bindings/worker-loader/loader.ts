@@ -4,8 +4,8 @@
 // Worker. Workers RPC between the processes uses Cap'n Web over framed stdio.
 
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { posix } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, posix, relative, resolve } from "node:path";
 import type { Readable } from "node:stream";
 
 import { Request, type RequestInfo, type RequestInit } from "../../globals/http.js";
@@ -57,16 +57,76 @@ export interface WorkerHost {
 	remove(): Promise<void>;
 }
 
+// A directory in the dynamic Worker's VM. With `hostPath`, it is that host directory, read-only.
+// Without it, it is an empty writable directory that lives as long as the VM.
+export interface WorkerMount {
+	guestPath: string;
+	hostPath?: string;
+}
+
 // Where dynamic Worker processes run. `network` is false for
 // `globalOutbound: null` or a Fetcher, which never need direct network access.
 export interface WorkerLoaderBackend {
-	open(network: boolean): Promise<WorkerHost>;
+	open(network: boolean, mounts: readonly WorkerMount[]): Promise<WorkerHost>;
 }
 
 export interface WorkerLoaderOptions {
 	backend: WorkerLoaderBackend;
 	pool: DynamicWorkerPool;
+	// A mount's host directory must be in this directory.
+	projectRoot: string;
 	onDiagnostic(message: string): void;
+}
+
+// Orange's own files are under this guest path.
+const reservedGuestRoot = "/open-orange";
+
+// Mounts are an Orange extension to the Worker Loader code object, so a dynamic Worker can run a
+// directory of files, such as a Next.js standalone build, with no module per file. Only the
+// parent Worker's code callback sets them; the dynamic Worker cannot. A host directory must be in
+// the project and is always read-only.
+function normalizeMounts(value: unknown, projectRoot: string): WorkerMount[] {
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) throw new TypeError("Dynamic Worker mounts must be an array.");
+	const root = realpathSync(projectRoot);
+	const seen = new Set<string>();
+	return value.map((entry: unknown): WorkerMount => {
+		if (!isRecord(entry) || typeof entry.guestPath !== "string") {
+			throw new TypeError("Each dynamic Worker mount must be an object with a guestPath string.");
+		}
+		const guestPath = posix.normalize(entry.guestPath);
+		if (!posix.isAbsolute(guestPath) || guestPath === "/" || guestPath.endsWith("/")) {
+			throw new TypeError(`Mount guestPath ${JSON.stringify(entry.guestPath)} must be an absolute path other than "/".`);
+		}
+		if (guestPath === reservedGuestRoot || guestPath.startsWith(`${reservedGuestRoot}/`)) {
+			throw new TypeError(`Mount guestPath ${JSON.stringify(entry.guestPath)} is in ${reservedGuestRoot}, which OpenOrange reserves.`);
+		}
+		if (seen.has(guestPath)) throw new TypeError(`Two dynamic Worker mounts use guestPath ${guestPath}.`);
+		seen.add(guestPath);
+		if (entry.readOnly !== undefined && entry.readOnly !== (entry.hostPath !== undefined)) {
+			throw new TypeError(
+				`Mount ${guestPath}: a hostPath mount is always read-only, and a mount without hostPath is always writable.`,
+			);
+		}
+		if (entry.hostPath === undefined) return { guestPath };
+		if (typeof entry.hostPath !== "string") throw new TypeError(`Mount ${guestPath}: hostPath must be a string.`);
+		let hostPath: string;
+		try {
+			hostPath = realpathSync(resolve(root, entry.hostPath));
+		} catch (error: unknown) {
+			throw new TypeError(`Mount ${guestPath}: cannot read hostPath ${JSON.stringify(entry.hostPath)}: ${errorMessage(error)}`);
+		}
+		const inside = relative(root, hostPath);
+		if (inside.startsWith("..") || isAbsolute(inside)) {
+			throw new TypeError(
+				`Mount ${guestPath}: hostPath ${JSON.stringify(entry.hostPath)} is outside the project directory ${root}.`,
+			);
+		}
+		if (!statSync(hostPath).isDirectory()) {
+			throw new TypeError(`Mount ${guestPath}: hostPath ${JSON.stringify(entry.hostPath)} is not a directory.`);
+		}
+		return { guestPath, hostPath };
+	});
 }
 
 // Workerd caps a Dynamic Worker's code at 64 MiB and its env at 1 MiB. Those are Cloudflare quotas,
@@ -192,10 +252,11 @@ interface PreparedCode {
 	env: unknown;
 	mainModule: string;
 	modules: DynamicModule[];
+	mounts: WorkerMount[];
 	outbound: unknown;
 }
 
-function prepareCode(code: unknown): PreparedCode {
+function prepareCode(code: unknown, projectRoot: string): PreparedCode {
 	if (!isRecord(code)) throw new TypeError("Dynamic Worker code must be an object.");
 	if (typeof code.compatibilityDate !== "string") {
 		throw new TypeError("Dynamic Worker code must have a compatibilityDate string.");
@@ -204,13 +265,14 @@ function prepareCode(code: unknown): PreparedCode {
 		throw new TypeError("Dynamic Worker code must have a mainModule string.");
 	}
 	const modules = normalizeModules(code.mainModule, code.modules);
+	const mounts = normalizeMounts(code.mounts, projectRoot);
 	const env = code.env ?? {};
 	if (!isRecord(env)) throw new TypeError("Dynamic Worker env must be an object.");
 	let outbound: unknown;
 	if (code.globalOutbound === undefined) outbound = "network";
 	else if (code.globalOutbound === null) outbound = "blocked";
 	else outbound = code.globalOutbound;
-	return { env, mainModule: code.mainModule, modules, outbound };
+	return { env, mainModule: code.mainModule, modules, mounts, outbound };
 }
 
 interface LoaderSession {
@@ -384,18 +446,21 @@ class DynamicWorker {
 		let host: WorkerHost | undefined;
 		try {
 			const prepared = await this.#getCode();
-			host = await this.#options.backend.open(prepared.outbound === "network");
+			host = await this.#options.backend.open(prepared.outbound === "network", prepared.mounts);
 			const { bundleRoot } = host;
-			const moduleRoot = posix.join(host.root, "modules");
+			// Linked modules go through the bundle mount too. Writing them into the VM costs one
+			// sidecar file write each, which took 18 s for 1,310 data-module wrappers.
+			const linkedDirectory = ".open-orange-linked";
+			const moduleRoot = posix.join(bundleRoot, linkedDirectory);
 			await host.writeBundle(
 				prepared.modules.map((module) => ({ content: module.content, module: module.name, path: module.name })),
 			);
 			const linked = await linkModules(prepared.modules, prepared.mainModule, host.moduleRewrites, bundleRoot);
-			await host.writeFiles(
+			await host.writeBundle(
 				[...linked.files].map(([file, source]) => ({
 					content: source,
 					module: linked.moduleNames[file],
-					path: posix.join(moduleRoot, file),
+					path: posix.join(linkedDirectory, file),
 				})),
 			);
 			const envelope = encodeLoaderValue({
@@ -719,7 +784,7 @@ export class WorkerLoader {
 		if (typeof getCode !== "function") {
 			throw new TypeError("WorkerLoader.get() requires a code callback.");
 		}
-		const prepare = async (): Promise<PreparedCode> => prepareCode(await getCode());
+		const prepare = async (): Promise<PreparedCode> => prepareCode(await getCode(), this.#options.projectRoot);
 		if (name === null || name === undefined) {
 			return new WorkerStub(new UnnamedWorkerHandle(() => this.#create("(anonymous)", prepare, () => undefined)));
 		}
@@ -747,7 +812,7 @@ export class WorkerLoader {
 	// Like workerd, load() copies the code before it returns, so later changes
 	// to the caller's buffers do not reach the Worker, and invalid code throws here.
 	load(code: unknown): WorkerStub {
-		const prepared = prepareCode(code);
+		const prepared = prepareCode(code, this.#options.projectRoot);
 		return new WorkerStub(
 			new UnnamedWorkerHandle(() => this.#create("(anonymous)", async () => prepared, () => undefined)),
 		);

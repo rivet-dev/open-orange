@@ -430,6 +430,38 @@ const routes = {
 		const written = await writer.write(path);
 		return { reader: await reader.read(path), writer: written };
 	},
+	// A dynamic Worker reads a project directory that the parent mounts read-only,
+	// and writes to a mount without hostPath. Mounts that the runtime refuses
+	// reject the call that loads the Worker.
+	async mounts(env) {
+		const code = (mounts) => () => ({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			mounts,
+			modules: {
+				"main.js": `
+					import { createRequire } from "node:module";
+					const fs = createRequire(import.meta.url)("fs");
+					const attempt = (run) => { try { return run(); } catch (error) { return error.code ?? error.message; } };
+					export default {
+						probe() {
+							return {
+								read: fs.readFileSync("/data/hello.txt", "utf8"),
+								readOnly: attempt(() => { fs.writeFileSync("/data/hello.txt", "changed"); return "written"; }) !== "written",
+								scratch: fs.statSync("/scratch").isDirectory(),
+							};
+						},
+					};
+				`,
+			},
+		});
+		const probe = (name, mounts) => settle(env.LOADER.get(name, code(mounts)).getEntrypoint().probe({}));
+		return {
+			mounted: await probe("mounted", [{ guestPath: "/data", hostPath: "mounted" }, { guestPath: "/scratch" }]),
+			outside: await probe("outside", [{ guestPath: "/data", hostPath: ".." }]),
+			reserved: await probe("reserved", [{ guestPath: "/open-orange/data" }]),
+		};
+	},
 	// Loads `n` dynamic Workers at once, alternating the VM network mode.
 	async pool(env, _ctx, request) {
 		const n = Number(new URL(request.url).searchParams.get("n"));

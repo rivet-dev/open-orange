@@ -33,8 +33,9 @@ const exitWaitMs = 5_000;
 type NetworkMode = "deny" | "network";
 
 interface BootedVm {
-	// The host directory that the VM mounts read-only at `bundleRoot`.
-	bundleDirectory: string;
+	// The host directory that the VM mounts read-only at `bundleRoot`. A VM
+	// hosted by the main agentOS runtime has no host mount, so it has none.
+	bundleDirectory?: string;
 	moduleRewrites: Record<string, string>;
 	vm: WorkerVm;
 }
@@ -273,25 +274,31 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		loaded: () => void,
 	): WorkerHost {
 		const { bundleDirectory, moduleRewrites, vm } = booted;
+		// A hosted VM accepts writes only under its Worker root.
+		const hostedBundleRoot = posix.join(root, "bundle");
+		const writeVmFiles = async (files: readonly WorkerFile[]): Promise<void> => {
+			for (const file of files) assertFitsAgentOsFileMessage(file);
+			const results = await vm.filesystem.writeFiles(
+				files.map((file) => ({ content: file.content, path: file.path })),
+			);
+			const failed = results.find((result) => !result.success);
+			if (failed !== undefined) {
+				throw new Error(`Failed to write ${failed.path} into the agentOS VM: ${failed.error ?? "unknown error"}`);
+			}
+		};
 		return {
-			bundleRoot,
+			bundleRoot: bundleDirectory === undefined ? hostedBundleRoot : bundleRoot,
 			loaded,
 			moduleRewrites,
 			remove,
 			root,
 			spawn,
 			// The bytes reach the VM through its bundle mount, so no file is one sidecar message.
-			writeBundle: (files) => writeHostFiles(bundleDirectory, files),
-			async writeFiles(files): Promise<void> {
-				for (const file of files) assertFitsAgentOsFileMessage(file);
-				const results = await vm.filesystem.writeFiles(
-					files.map((file) => ({ content: file.content, path: file.path })),
-				);
-				const failed = results.find((result) => !result.success);
-				if (failed !== undefined) {
-					throw new Error(`Failed to write ${failed.path} into the agentOS VM: ${failed.error ?? "unknown error"}`);
-				}
-			},
+			writeBundle: (files) =>
+				bundleDirectory === undefined
+					? writeVmFiles(files.map((file) => ({ ...file, path: posix.join(hostedBundleRoot, file.path) })))
+					: writeHostFiles(bundleDirectory, files),
+			writeFiles: writeVmFiles,
 		};
 	}
 
@@ -345,7 +352,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 							`OpenOrange cannot dispose the agentOS VM of a dynamic Worker: ${errorMessage(error)}`,
 						);
 					});
-					if (value !== undefined) await removeHostDirectory(value.bundleDirectory);
+					if (value?.bundleDirectory !== undefined) await removeHostDirectory(value.bundleDirectory);
 				})();
 				return disposed;
 			},

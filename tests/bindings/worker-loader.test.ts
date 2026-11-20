@@ -93,6 +93,8 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			assert.deepEqual(await get("http"), {
 				cookies: { body: "cookies", cookies: ["a=1", "b=2"], header: null, status: 200 },
 				get: { body: "hello node", cookies: [], header: "GET /hi?x=1", status: 201 },
+				implicit: { body: "flushed", cookies: [], header: "implicit", status: 203 },
+				incoming: { fields: [null, "", {}], socket: true },
 				kinds: { instances: [true, true, true], statusMessage: "Accepted" },
 				post: { body: "echo ping", cookies: [], header: null, status: 200 },
 			});

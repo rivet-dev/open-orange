@@ -301,6 +301,22 @@ const routes = {
 							}));
 							return;
 						}
+						if (req.url === "/incoming") {
+							// Node.js' own constructor, which subclasses such as OpenNext's call.
+							const copy = new http.IncomingMessage(req.socket);
+							res.end(JSON.stringify({ fields: [copy.method, copy.url, copy.headers], socket: copy.socket === req.socket }));
+							return;
+						}
+						if (req.url === "/implicit") {
+							// Next.js sends early hints, then flushes the head with _implicitHeader().
+							res.writeEarlyHints({ link: "</style.css>; rel=preload" }, () => {
+								res.statusCode = 203;
+								res.setHeader("x-node", "implicit");
+								res._implicitHeader();
+								res.end("flushed");
+							});
+							return;
+						}
 						if (req.url === "/cookies") {
 							res.setHeader("set-cookie", ["a=1", "b=2"]);
 							res.end("cookies");
@@ -330,6 +346,8 @@ const routes = {
 		return {
 			cookies: await describe(await worker.fetch("https://example.com/cookies")),
 			get: await describe(await worker.fetch("https://example.com/hi?x=1")),
+			implicit: await describe(await worker.fetch("https://example.com/implicit")),
+			incoming: JSON.parse(await (await worker.fetch("https://example.com/incoming")).text()),
 			kinds: JSON.parse(await (await worker.fetch("https://example.com/kinds")).text()),
 			post: await describe(await worker.fetch("https://example.com/echo", { body: "ping", method: "POST" })),
 		};

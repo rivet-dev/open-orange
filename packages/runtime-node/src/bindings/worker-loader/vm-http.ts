@@ -157,8 +157,19 @@ class VmIncomingMessage extends Readable {
 	url: string;
 	#reader: ReadableStreamDefaultReader<Uint8Array> | null;
 
-	constructor(request: Request, socket: EventEmitter) {
+	constructor(request: Request | EventEmitter | undefined, socket?: EventEmitter) {
 		super();
+		if (!(request instanceof Request)) {
+			// Node.js' own signature is `new IncomingMessage(socket)`; subclasses such
+			// as OpenNext's build a request this way and fill in the fields themselves.
+			this.method = null as unknown as string;
+			this.url = "";
+			this.rawHeaders = [];
+			this.headers = {};
+			this.socket = request ?? socketStub();
+			this.#reader = null;
+			return;
+		}
 		const url = new URL(request.url);
 		this.method = request.method;
 		this.url = url.pathname + url.search;
@@ -169,7 +180,7 @@ class VmIncomingMessage extends Readable {
 			this.rawHeaders.push("transfer-encoding", "chunked");
 		}
 		this.headers = headersObject(this.rawHeaders);
-		this.socket = socket;
+		this.socket = socket ?? socketStub();
 		this.#reader = request.body?.getReader() ?? null;
 	}
 
@@ -303,6 +314,16 @@ class VmServerResponse extends Writable {
 
 	flushHeaders(): void {
 		this.#sendHead();
+	}
+
+	// Node calls this when a write or end() comes before writeHead(). Next.js calls it directly.
+	_implicitHeader(): void {
+		this.#sendHead();
+	}
+
+	// workerd has no informational responses, so 103 Early Hints are dropped.
+	writeEarlyHints(_hints: Record<string, HeaderValue>, callback?: () => void): void {
+		if (callback !== undefined) queueMicrotask(callback);
 	}
 
 	writeContinue(): void {}

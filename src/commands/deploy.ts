@@ -804,7 +804,7 @@ async function writeRuntimePackageJson(projectRoot: string, workerDirectory: str
 function imageOnlyWhenUsed(uses: { usesSandbox: boolean; usesWorkerLoader: boolean }): ReadonlySet<string> {
 	const omitted = new Set<string>();
 	if (!uses.usesSandbox) omitted.add("@rivet-dev/sandbox-adapter");
-	if (!uses.usesSandbox && !uses.usesWorkerLoader) omitted.add("@rivet-dev/agentos-core");
+	if (!uses.usesSandbox && !uses.usesWorkerLoader) omitted.add("@rivet-dev/agentos");
 	return omitted;
 }
 

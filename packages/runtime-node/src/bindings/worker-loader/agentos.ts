@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix, resolve, sep } from "node:path";
 import { PassThrough } from "node:stream";
 
-import type { AgentOs } from "@rivet-dev/agentos-core";
+import type { AgentOs } from "@rivet-dev/agentos";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
@@ -366,7 +366,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 				return [specifier, posix.join(runtimeRoot, file)];
 			}),
 		);
-		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos-core");
+		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos");
 		const bundleDirectory = await createHostDirectory();
 		try {
 			// The guest reads Orange's runtime from the host, read-only, so a VM

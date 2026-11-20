@@ -27,7 +27,7 @@
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "3.1153.0",
-		"@rivet-dev/agentos-core": "0.4.9",
+		"@rivet-dev/agentos": "0.5.0-rc.1",
 		"@rivet-dev/durable-object-migrator": "1.0.3",
 		"@rivet-dev/sandbox-adapter": "0.5.7",
 		"capnweb": "0.12.0",
@@ -40,7 +40,7 @@
 		"itty-time": "2.0.2",
 		"mime": "4.1.1",
 		"nodemailer": "^10.3.1",
-		"rivetkit": "3.1.2-rc.1",
+		"rivetkit": "3.1.2-rc.2",
 		"undici": "8.10.2",
 		"urlpattern-polyfill": "10.1.0",
 		"ws": "8.21.0",

@@ -3,10 +3,10 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isRecord } from "../bindings/unknown-values.js";
 
-export const PINNED_RIVETKIT_BRANCH = "v3.1.2-rc.1";
+export const PINNED_RIVETKIT_BRANCH = "v3.1.2-rc.2";
 export const PINNED_RIVETKIT_COMMIT =
-	"e5ed3911ebff8ddc35c08b3f6c6eb3f795d042f9";
-export const PINNED_RIVETKIT_VERSION = "3.1.2-rc.1";
+	"252d4afecb4e99a1f1d7a115727d6b1fa3080e77";
+export const PINNED_RIVETKIT_VERSION = "3.1.2-rc.2";
 export const PINNED_RIVETKIT_SUPPORTED_HOSTS =
 	"Linux x64/arm64 (glibc or musl) and macOS x64/arm64";
 

@@ -700,7 +700,7 @@ export async function copyD1Export(
 					io.log(`Imported ${megabytes(step.offset)} of ${megabytes(step.size)}.`);
 				}
 			},
-			{ ORANGE_MIGRATE_WORKER_URL: "http://unused.invalid", WORKER_MIGRATOR_TOKEN: token },
+			{ ORANGE_MIGRATE_WORKER_URL: file.url, WORKER_MIGRATOR_TOKEN: token },
 		);
 	} finally {
 		await file.close();

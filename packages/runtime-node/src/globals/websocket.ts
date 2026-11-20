@@ -58,6 +58,12 @@ if (!isWebSocketConstructor(maybeNativeWebSocket)) {
 }
 const NativeWebSocket = maybeNativeWebSocket;
 
+/** Runtime-owned transports use the platform socket directly, under its network policy. */
+export function createRuntimeWebSocket(url: string, protocols: string[]): WebSocketValue {
+	return new NativeWebSocket(url, protocols);
+}
+
+
 type PairMessage = string | ArrayBuffer;
 type WebSocketListener = object | Function;
 

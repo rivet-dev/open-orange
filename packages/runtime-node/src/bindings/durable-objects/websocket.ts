@@ -1,4 +1,5 @@
 import { startOutboundWork } from "../../internal/outbound-work.js";
+import { portableRivetPackage } from "../../internal/portable-rivet.js";
 import {
 	type RivetActorHandle,
 	type RivetWebSocket,
@@ -44,6 +45,7 @@ interface WebSocketPreparationEnvelope {
 }
 
 interface WebSocketPreparationResult {
+	disconnectFrameVersion?: 1;
 	headers: HeaderEntries;
 	statusText: string;
 	token: string;
@@ -84,6 +86,7 @@ function requirePreparationResult(value: unknown): WebSocketPreparationResult {
 		headers: headerEntries(value.headers),
 		statusText: value.statusText,
 		token: value.token,
+		...(value.disconnectFrameVersion === 1 ? { disconnectFrameVersion: 1 as const } : {}),
 	};
 }
 
@@ -182,8 +185,9 @@ export async function fetchDurableObjectWebSocketStub(
 	}
 	const preparedPayload: unknown = await preparedResponse.json();
 	const prepared = requirePreparationResult(preparedPayload);
+	const token = prepared.token;
 	const path = new URL(durableObjectPrivateRoutes.webSocket, "http://actor");
-	path.searchParams.set(webSocketUpgradeTokenParameter, prepared.token);
+	path.searchParams.set(webSocketUpgradeTokenParameter, token);
 	const transport = await actor.webSocket(`${path.pathname}${path.search}`);
 	// A WebSocket that one object opens to another keeps the first one running while it is open.
 	const ended = startOutboundWork("outbound-websocket");
@@ -192,14 +196,18 @@ export async function fetchDurableObjectWebSocketStub(
 	try {
 		coupleWebSocket(
 			pair[1],
-			createDurableObjectClientWebSocketTransport(transport, async (close) => {
-				const response = await actor.fetch(disconnectRequest(prepared.token, close));
-				if (!response.ok) {
-					throw new Error(
-						`Durable Object WebSocket disconnect failed with status ${response.status}`,
-					);
-				}
-			}),
+			createDurableObjectClientWebSocketTransport(
+				transport,
+				async (close) => {
+					const response = await actor.fetch(disconnectRequest(token, close));
+					if (!response.ok) {
+						throw new Error(
+							`Durable Object WebSocket disconnect failed with status ${response.status}`,
+						);
+					}
+				},
+				prepared.disconnectFrameVersion === 1 ? token : undefined,
+			),
 		);
 	} catch (error) {
 		if (transport.readyState < WebSocket.READY_STATE_CLOSING) {
@@ -264,7 +272,12 @@ export async function prepareDurableObjectWebSocket(
 					statusText: result.statusText,
 				});
 			}
-			return OrangeResponse.json(generation.webSocketUpgrades.retain(result));
+			return OrangeResponse.json({
+				...generation.webSocketUpgrades.retain(result),
+				// The WASM registry uses the paired Rust remote backend's ordered Close.
+				// Ordinary Node retains its pinned Engine and existing HTTP notification.
+				...(portableRivetPackage() === undefined ? {} : { disconnectFrameVersion: 1 }),
+			});
 		});
 	});
 }
@@ -285,7 +298,7 @@ export function attachDurableObjectWebSocket(
 	try {
 		const socket = generation.webSocketUpgrades.claim(token);
 		const userSocket = generation.hibernatableWebSockets.getUserSocket(socket);
-		const actorTransport = new DurableObjectActorWebSocketTransport(transport);
+		const actorTransport = new DurableObjectActorWebSocketTransport(transport, token);
 		const host = generation.webSocketHost;
 		host.trackClientClose(token, actorTransport);
 		if (userSocket === undefined) {

@@ -10,6 +10,7 @@ import type { Theme } from "../cli/theme.js";
 import { loadWranglerConfiguration } from "../config/load-wrangler.js";
 import { resolveDeploymentStorage } from "../runtime/deployment.js";
 import { spawnRuntime } from "../runtime/spawn.js";
+import { runtimeKind } from "../runtime/runtime-kind.js";
 import { bundleForServe, serveSession } from "../serve/session.js";
 
 export interface ServeCommandIo {
@@ -35,6 +36,7 @@ export function renderServeHelp(theme: Theme): string {
 		option("-e, --env <name>", "Environment from the configuration"),
 		option("--port <port>", "Port to listen on. Default PORT, then 8080."),
 		option("--ip <host>", "Host to listen on. Default 0.0.0.0."),
+		option("--runtime <runtime>", "node or agentos. Default OPENORANGE_RUNTIME, then node."),
 		`\n${theme.bold("Environment")}`,
 		`  ${theme.dim("RIVET_ENDPOINT, RIVET_TOKEN, RIVET_NAMESPACE  Set by the Rivet cluster (RIVET_ENDPOINT required)")}`,
 	].join("\n");
@@ -66,9 +68,11 @@ async function executeServeCommand(
 			env: { short: "e", type: "string" },
 			ip: { type: "string" },
 			port: { type: "string" },
+			runtime: { type: "string" },
 		},
 		strict: true,
 	});
+	const selectedRuntime = runtimeKind(values.runtime);
 	const endpoint = process.env.RIVET_ENDPOINT;
 	if (endpoint === undefined || endpoint.length === 0) {
 		throw new ExpectedFailure(
@@ -98,6 +102,7 @@ async function executeServeCommand(
 		const directory = await mkdtemp(join(tmpdir(), "open-orange-serve-"));
 		try {
 			return await serveSession({
+				runtime: selectedRuntime,
 				configs,
 				directory,
 				endpoint,
@@ -118,9 +123,10 @@ async function executeServeCommand(
 	const { deploymentIdentity, rivetStoragePath } = await resolveDeploymentStorage(config);
 	const bundleDirectory = await mkdtemp(join(tmpdir(), "open-orange-serve-"));
 	try {
-		const { additionalModules, bundlePath } = await bundleForServe(config, bundleDirectory);
+		const { additionalModules, bundlePath } = await bundleForServe(config, bundleDirectory, selectedRuntime);
 		await stopEsbuild();
 		const runtime = await spawnRuntime({
+			runtime: runtimeKind(values.runtime),
 			...(additionalModules === undefined ? {} : { additionalModules }),
 			...(config.assets === undefined ? {} : { assets: config.assets }),
 			bindingConfigurations: config.bindings,

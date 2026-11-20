@@ -9,6 +9,7 @@ import { runtimeModuleRewrites } from "../build/rewrite-module-imports.js";
 import type { ResolvedWranglerConfiguration } from "../config/load-wrangler.js";
 import { resolveDeploymentStorages } from "../runtime/deployment.js";
 import { spawnRuntime, type RuntimeProcess } from "../runtime/spawn.js";
+import { runtimeKind, type RuntimeKind } from "../runtime/runtime-kind.js";
 import type { RuntimeSessionWorker } from "../../packages/runtime-node/src/process-protocol.js";
 import { primaryRivetPoolName } from "../../packages/runtime-node/src/session/workers.js";
 import { forwardedHostSecretVariable, startFront, type FrontTarget, type RunningFront } from "./front.js";
@@ -20,7 +21,7 @@ export interface ServeBundle {
 }
 
 /** Bundles a Worker for production, as `wrangler deploy` builds it. */
-export async function bundleForServe(config: ResolvedWranglerConfiguration, directory: string): Promise<ServeBundle> {
+export async function bundleForServe(config: ResolvedWranglerConfiguration, directory: string, runtime: RuntimeKind = runtimeKind()): Promise<ServeBundle> {
 	if (config.entrypoint === undefined) throw new Error("orange serve needs a Worker entrypoint");
 	const additionalModules =
 		config.additionalModuleSearch === undefined
@@ -32,7 +33,7 @@ export async function bundleForServe(config: ResolvedWranglerConfiguration, dire
 	const { outputPath, ruleModules } = await bundleWorker({
 		additionalModules,
 		entrypoint: config.entrypoint,
-		moduleRewrites: runtimeModuleRewrites(),
+		moduleRewrites: runtimeModuleRewrites(runtime),
 		moduleRules: config.moduleRules,
 		...(config.noBundle ? {} : { nodeEnv: process.env.NODE_ENV || "production" }),
 		outputPath: join(directory, "worker.mjs"),
@@ -46,6 +47,7 @@ export async function bundleForServe(config: ResolvedWranglerConfiguration, dire
 }
 
 export interface ServeSessionOptions {
+	runtime?: RuntimeKind;
 	configs: readonly ResolvedWranglerConfiguration[];
 	directory: string;
 	endpoint: string;
@@ -79,7 +81,7 @@ export async function serveSession(options: ServeSessionOptions): Promise<number
 	if (primaryStorage === undefined) throw new Error("orange serve received no Worker configuration");
 	const bundles: ServeBundle[] = [];
 	for (const [index, config] of options.configs.entries()) {
-		bundles.push(await bundleForServe(config, join(options.directory, String(index))));
+		bundles.push(await bundleForServe(config, join(options.directory, String(index)), options.runtime));
 	}
 	// esbuild's service process keeps the memory of the largest build, which a small runner
 	// node needs for the Workers.
@@ -113,6 +115,7 @@ export async function serveSession(options: ServeSessionOptions): Promise<number
 			const prefix = `[${config.workerName}] `;
 			const serving = index === 0 && !front;
 			const runtime = await spawnRuntime({
+				...(options.runtime === undefined ? {} : { runtime: options.runtime }),
 				...(bundle.additionalModules === undefined ? {} : { additionalModules: bundle.additionalModules }),
 				...(config.assets === undefined ? {} : { assets: config.assets }),
 				bindingConfigurations: config.bindings,

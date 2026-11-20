@@ -12,6 +12,7 @@ import {
 	type InstalledRivetKitBuild,
 } from "./rivetkit-build.js";
 import { isRecord } from "../bindings/unknown-values.js";
+import { assertPortableRivetBuild, portableRivetOptions, portableRivetPackage, selectedRivetRequire } from "./portable-rivet.js";
 
 export interface RivetWebSocket {
 	addEventListener(
@@ -60,12 +61,24 @@ export interface RivetSynchronousSqliteTransaction
 	rollbackSync(): void;
 }
 
+export interface RivetSqliteStatement {
+	sql: string;
+	params?: RivetSqliteBindings;
+}
+export interface RivetSqliteWriteAdmission extends RivetSynchronousSqliteExecutor {
+	admitWriteBatch(statements: RivetSqliteStatement[]): void;
+	commitDeferred(): number;
+	whenSettled(): Promise<void>;
+	rollback(): Promise<void>;
+}
+
 export interface RivetSqliteDatabase extends RivetSynchronousSqliteExecutor {
+	beginWriteAdmission?(timeoutMs?: number, name?: string): RivetSqliteWriteAdmission | undefined;
 	beginTransactionSync(
 		timeoutMs?: number,
 		name?: string,
 	): RivetSynchronousSqliteTransaction;
-	/** Ticket of the latest local commit. Synchronous writes return before they are durable. */
+	/** Latest commit ticket, including admitted remote commits. whenDurable waits for the real ACK. */
 	commitTicket(): number;
 	/** Resolves once `ticket` and every earlier commit are durable. Rejects once the database broke. */
 	whenDurable(ticket: number): Promise<void>;
@@ -80,6 +93,11 @@ export interface RivetNativeDatabaseProvider {
 export interface RivetDatabaseProviderContext {
 	actorId: string;
 	nativeDatabaseProvider?: RivetNativeDatabaseProvider;
+	kv?: {
+		batchGet(keys: Uint8Array[]): Promise<(Uint8Array | undefined)[]>;
+		batchPut(entries: [Uint8Array, Uint8Array][]): Promise<void>;
+		deleteRange(start: Uint8Array, end: Uint8Array): Promise<void>;
+	};
 }
 
 // RivetKit opens an actor's SQLite in deferred-commit mode only when its database provider carries
@@ -386,6 +404,9 @@ export interface CreateRivetRegistryOptions {
 	// An external Engine, such as `https://<namespace>:<token>@api.rivet.dev`.
 	// With it, the registry starts no local Engine.
 	endpoint?: string;
+	// Internal ownership from the local Engine lease, retained when guest
+	// transport uses an endpoint. Explicit external endpoints never recover actors.
+	localEngine?: { endpoint: string; startedAt: number };
 	namespace: string;
 	// The envoy pool that serves this registry's actors.
 	poolName?: string;
@@ -475,7 +496,7 @@ function loadRivetKitSpecifier<Module>(specifier: string): Module {
 		}
 		// SAFETY: assertPinnedRivetKitBuild() checked that the installed RivetKit is the pinned
 		// build, and the Module views above describe that build's exports. require() is untyped.
-		return requireFromOrange(specifier) as Module;
+		return (selectedRivetRequire() ?? requireFromOrange)(specifier) as Module;
 	} finally {
 		if (workerNavigatorDescriptor === undefined) {
 			Reflect.deleteProperty(globalThis, "navigator");
@@ -505,10 +526,11 @@ function useWsForActorWebSockets(): void {
 	};
 	let importWebSocket: unknown;
 	try {
-		const clientEntrypoint = requireFromOrange.resolve("rivetkit/client");
+		const require = selectedRivetRequire() ?? requireFromOrange;
+		const clientEntrypoint = require.resolve("rivetkit/client");
 		// RivetKit resolves `ws` from its own files. Without it, the client would have no WebSocket.
 		createRequire(clientEntrypoint).resolve("ws");
-		const loader: unknown = requireFromOrange(
+		const loader: unknown = require(
 			join(dirname(clientEntrypoint), "..", "common", "websocket.cjs"),
 		);
 		importWebSocket = isRecord(loader) ? loader.importWebSocket : undefined;
@@ -534,8 +556,13 @@ function useWsForActorWebSockets(): void {
 }
 
 function loadRivetKitPackage(): RivetKitModule {
-	assertPinnedRivetKitBuild();
+	assertSelectedRivetKitBuild();
 	return loadRivetKitSpecifier("rivetkit");
+}
+
+function assertSelectedRivetKitBuild(installedBuild?: InstalledRivetKitBuild): void {
+	if (installedBuild !== undefined || portableRivetPackage() === undefined) assertPinnedRivetKitBuild(installedBuild);
+	else assertPortableRivetBuild();
 }
 
 // Rivet's gateway authenticates every call to an Orange actor with the caller's Rivet token
@@ -557,7 +584,7 @@ export function createRivetInternalActorDefinition<State = Record<string, unknow
 export function createRivetRawDatabaseProvider(
 	migrate: (database: RivetRawDatabase) => Promise<void>,
 ): RivetRawDatabaseProvider {
-	assertPinnedRivetKitBuild();
+	assertSelectedRivetKitBuild();
 	return loadRivetKitSpecifier<RivetKitDbModule>("rivetkit/db").db({ onMigrate: migrate });
 }
 
@@ -565,9 +592,10 @@ export function createRivetRawDatabaseProvider(
 export function createRivetRegistry(
 	options: CreateRivetRegistryOptions,
 ): RivetRegistry {
-	assertPinnedRivetKitBuild(options.installedBuild);
+	assertSelectedRivetKitBuild(options.installedBuild);
+	const endpoint = options.endpoint ?? options.localEngine?.endpoint;
 	const registry = loadRivetKitSpecifier<RivetKitModule>("rivetkit").setup({
-			...(options.endpoint === undefined
+			...(endpoint === undefined
 				? {
 						engineHost: options.engineHost,
 						enginePort: options.enginePort,
@@ -575,14 +603,14 @@ export function createRivetRegistry(
 						...tokenOption(),
 					}
 				: {
-						endpoint: options.endpoint,
+						endpoint: endpoint,
 						startEngine: false,
 						// The runtime took RIVET_TOKEN out of the environment, so RivetKit cannot read it.
-						...(new URL(options.endpoint).password.length > 0 ? {} : tokenOption()),
+						...(new URL(endpoint).password.length > 0 ? {} : tokenOption()),
 					}),
 			// RivetKit 3 reads the pool under `node` and silently drops the 2.x `envoy` key.
 			...(options.poolName === undefined ? {} : { node: { poolName: options.poolName } }),
-			...namespaceOption(options.endpoint, options.namespace),
+			...namespaceOption(endpoint, options.namespace),
 			noWelcome: true,
 			// Orange starts Services itself, as it starts the Engine (see services-process.ts).
 			startServices: false,
@@ -597,6 +625,7 @@ export function createRivetRegistry(
 			// "local" runs SQLite in this process and stores its pages in the Engine,
 			// so the data survives a runner that restarts on an empty disk.
 			sqlite: "local",
+			...portableRivetOptions(),
 			use: options.use,
 		});
 	let services: ServicesProcess | undefined;
@@ -617,11 +646,11 @@ export function createRivetRegistry(
 				await registry.startAndWait();
 				return;
 			}
-			const startedAt = Date.now();
-			const endpoint = `http://${engineHost}:${options.enginePort}`;
+			const startedAt = options.localEngine?.startedAt ?? Date.now();
+			const endpoint = options.localEngine?.endpoint ?? `http://${engineHost}:${options.enginePort}`;
 			// Services boots while the registry starts.
 			services =
-				options.services === undefined
+				options.localEngine !== undefined || options.services === undefined
 					? undefined
 					: startServices({
 							...options.services,
@@ -635,7 +664,7 @@ export function createRivetRegistry(
 				await services?.stop();
 				throw error;
 			}
-			if (services !== undefined) {
+			if (options.services !== undefined) {
 				// Streams of a Services process that a crash or a kill ended stay routed to it until
 				// the Engine's lost threshold passes, as Orange's own actors do.
 				await sleepActorsOfExitedHosts({
@@ -648,7 +677,7 @@ export function createRivetRegistry(
 			}
 			await sleepActorsOfExitedHosts({
 				actorNames: Object.keys(options.use),
-				endpoint: `http://${engineHost}:${options.enginePort}`,
+				endpoint,
 				namespace: options.namespace,
 				// RivetKit resolves the envoy pool the same way when none is given.
 				poolName: options.poolName ?? process.env.RIVET_POOL ?? "default",
@@ -673,7 +702,7 @@ interface SleepActorsOfExitedHostsOptions {
 // request waits for the Engine to restart it on this process's envoy instead.
 // Only actors of this process's envoy pool are swept. In a multi-Worker session, actors
 // with the same name in another Worker's pool run on that Worker's live envoy.
-async function sleepActorsOfExitedHosts(
+export async function sleepActorsOfExitedHosts(
 	options: SleepActorsOfExitedHostsOptions,
 ): Promise<void> {
 	// RivetKit authenticates to a local Engine with RIVET_TOKEN or the token `default`.
@@ -693,8 +722,10 @@ async function sleepActorsOfExitedHosts(
 				// Actors that this process's envoy started became connectable after startup.
 				if (
 					actor.pool === options.poolName &&
-					actor.connectableTs !== null &&
-					actor.connectableTs < options.startedAt
+                    // Engines without lifecycle timestamps still expose creation time.
+                    // Local startup owns this pool; only pre-start actors are recovered.
+                    (actor.connectableTs ?? actor.createTs) !== undefined &&
+                    (actor.connectableTs ?? actor.createTs)! < options.startedAt
 				) {
 					staleActorIds.push(actor.actorId);
 				}
@@ -702,25 +733,40 @@ async function sleepActorsOfExitedHosts(
 			cursor = page.actors.length > 0 ? page.cursor : undefined;
 		} while (cursor !== undefined);
 	}
+	// Recovery shares the guest's socket budget with its live registry transports.
+	// Settle all admitted work before a startup failure can clean up the backend.
+	let nextActor = 0;
+	let failed = false;
+	let failure: unknown;
 	await Promise.all(
-		staleActorIds.map(async (actorId) => {
-			const url = new URL(
-				`/actors/${encodeURIComponent(actorId)}/sleep`,
-				options.endpoint,
-			);
-			url.searchParams.set("namespace", options.namespace);
-			await requestEngineApi(url, {
-				body: "{}",
-				headers: { authorization, "content-type": "application/json" },
-				method: "POST",
-			});
+		Array.from({ length: Math.min(4, staleActorIds.length) }, async () => {
+			while (!failed && nextActor < staleActorIds.length) {
+				const actorId = staleActorIds[nextActor++]!;
+				try {
+					const url = new URL(
+						`/actors/${encodeURIComponent(actorId)}/sleep`,
+						options.endpoint,
+					);
+					url.searchParams.set("namespace", options.namespace);
+					await requestEngineApi(url, {
+						body: "{}",
+						headers: { authorization, "content-type": "application/json" },
+						method: "POST",
+					});
+				} catch (error) {
+					if (!failed) failure = error;
+					failed = true;
+				}
+			}
 		}),
 	);
+	if (failed) throw failure;
 }
 
 interface EngineActor {
 	actorId: string;
 	connectableTs: number | null;
+    createTs: number | undefined;
 	pool: string;
 }
 
@@ -753,6 +799,7 @@ function parseEngineActor(actor: unknown): EngineActor {
 	return {
 		actorId: actor.actor_id,
 		connectableTs: actor.connectable_ts,
+        createTs: typeof actor.create_ts === "number" ? actor.create_ts : undefined,
 		pool: actor.pool,
 	};
 }
@@ -791,7 +838,7 @@ function isTransientEngineStorageError(body: string): boolean {
 export function createRivetActorClient(
 	options: CreateRivetActorClientOptions,
 ): RivetActorClient {
-	assertPinnedRivetKitBuild();
+	assertSelectedRivetKitBuild();
 	// Gateway calls that are in flight when the client is disposed, or that Worker code starts
 	// afterwards, fail at once. The local Engine waits for every open gateway call before it exits,
 	// so one call that never ends would hold `orange dev` until the Engine's forced shutdown.

@@ -19,7 +19,7 @@ import { errorMessage, isRecord } from "../unknown-values.js";
 export const aiBaseUrlVariable = "ORANGE_AI_BASE_URL";
 export const aiApiKeyVariable = "ORANGE_AI_API_KEY";
 export const openRouterApiKeyVariable = "OPENROUTER_API_KEY";
-const defaultBaseUrl = "https://openrouter.ai/api/v1";
+export const defaultBaseUrl = "https://openrouter.ai/api/v1";
 
 // Cloudflare error codes, so the client builds the same `<code>: <message>`
 // text as on Cloudflare.

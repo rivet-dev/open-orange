@@ -17,6 +17,7 @@ import {
 import type { RuntimeSessionWorker } from "../../packages/runtime-node/src/process-protocol.js";
 import { resolveDeploymentStorages } from "../runtime/deployment.js";
 import { spawnRuntime, type RuntimeProcess } from "../runtime/spawn.js";
+import { runtimeKind, type RuntimeKind } from "../runtime/runtime-kind.js";
 import { booleanValue, optionValue, splitOption } from "./arguments.js";
 import {
 	createJsonReporter,
@@ -44,6 +45,7 @@ interface ParsedDevArguments {
 	logLevel?: string;
 	port: number;
 	remote: boolean;
+	runtime: RuntimeKind;
 	scriptPath?: string;
 	testScheduled: boolean;
 }
@@ -94,9 +96,11 @@ export function parseDevArguments(args: readonly string[]): ParsedDevArguments {
 		json: false,
 		port: 8787,
 		remote: false,
+		runtime: "node",
 		testScheduled: false,
 	};
 	const positionals: string[] = [];
+	let runtimeSelected = false;
 	let afterSeparator = false;
 
 	for (let index = 0; index < args.length; index += 1) {
@@ -129,6 +133,11 @@ export function parseDevArguments(args: readonly string[]): ParsedDevArguments {
 		} else if (name === "--ip" || name === "--host") {
 			const option = optionValue(args, index, name, value);
 			parsed.host = option.value;
+			index = option.index;
+		} else if (name === "--runtime") {
+			const option = optionValue(args, index, name, value);
+			parsed.runtime = runtimeKind(option.value);
+			runtimeSelected = true;
 			index = option.index;
 		} else if (name === "--port") {
 			const option = optionValue(args, index, name, value);
@@ -176,6 +185,7 @@ export function parseDevArguments(args: readonly string[]): ParsedDevArguments {
 		}
 		parsed.scriptPath = positionals[0];
 	}
+	if (!runtimeSelected) parsed.runtime = runtimeKind();
 	return parsed;
 }
 
@@ -233,7 +243,7 @@ async function prepareWorker(
 	config: ResolvedWranglerConfiguration,
 	deploymentIdentity: string,
 	directory: string,
-	output: { buildOutput: NodeJS.WriteStream; reporter: DevReporter; theme: Theme },
+	output: { buildOutput: NodeJS.WriteStream; reporter: DevReporter; theme: Theme; runtime: RuntimeKind },
 ): Promise<PreparedWorker> {
 	const { reporter } = output;
 	if (config.build !== undefined) {
@@ -268,7 +278,7 @@ async function prepareWorker(
 	const bundle = await bundleWorker({
 		additionalModules,
 		entrypoint: config.entrypoint,
-		moduleRewrites: runtimeModuleRewrites(),
+		moduleRewrites: runtimeModuleRewrites(output.runtime),
 		moduleRules: config.moduleRules,
 		...(config.noBundle ? {} : { nodeEnv: process.env.NODE_ENV || "development" }),
 		outputPath: join(directory, "worker.mjs"),
@@ -379,6 +389,7 @@ async function executeDevCommand(
 					join(temporaryDirectory, String(index)),
 					{
 					buildOutput: parsed.json ? process.stderr : process.stdout,
+						runtime: parsed.runtime,
 					reporter,
 					theme,
 				}),
@@ -404,15 +415,15 @@ async function executeDevCommand(
 				config.bindings.some((binding) => binding.type === "d1" || binding.type === "kv_namespace"),
 		);
 		reporter.phase(usesRivet ? "Starting Rivet engine…" : "Starting Worker…");
-		// The runtimes start one at a time, so the first one starts the shared
-		// Engine and the others reuse it.
-		for (const [index, worker] of prepared.entries()) {
+        let stoppedDuringStartup = false;
+        const startWorker = async (index: number, worker: PreparedWorker): Promise<void> => {
 			const { config } = worker;
 			const prefix = configs.length > 1 ? `[${config.workerName}] ` : "";
 			if (index > 0) reporter.phase(`Starting Worker ${config.workerName}…`);
 			let runtime: RuntimeProcess;
 			try {
 				runtime = await spawnRuntime({
+					runtime: parsed.runtime,
 					...(worker.additionalModules === undefined ? {} : { additionalModules: worker.additionalModules }),
 					...(config.assets === undefined ? {} : { assets: config.assets }),
 					bindingConfigurations: config.bindings,
@@ -458,18 +469,33 @@ async function executeDevCommand(
 			} catch (error: unknown) {
 				// Ctrl-C reaches the runtime too, so it exits before readiness.
 				if (stops.requested()) {
-					reporter.stopping();
-					return 130;
+                    stoppedDuringStartup = true;
+                    return;
 				}
 				throw error;
 			}
-			runtimes.push(runtime);
+			runtimes[index] = runtime;
 			const entry = sessionWorkers.find((candidate) => candidate.name === config.workerName);
 			if (entry !== undefined && runtime.internalAddress !== undefined) {
 				entry.internalAddress = runtime.internalAddress;
 			}
-			for (const started of runtimes) started.updateSessionWorkers(sessionWorkers);
-		}
+			for (const started of runtimes) started?.updateSessionWorkers(sessionWorkers);
+        };
+        // The agentOS backend coalesces the shared Engine start independently
+        // of Worker readiness. Let two Workers recover their actors together;
+        // serial readiness would repeat the Engine's dead-runner wait per pool.
+        const startupConcurrency = parsed.runtime === "agentos" ? 2 : 1;
+        for (let offset = 0; offset < prepared.length; offset += startupConcurrency) {
+            const outcomes = await Promise.allSettled(
+                prepared.slice(offset, offset + startupConcurrency).map((worker, index) => startWorker(offset + index, worker)),
+            );
+            const failure = outcomes.find((outcome) => outcome.status === "rejected");
+            if (failure?.status === "rejected") throw failure.reason;
+            if (stoppedDuringStartup) {
+                reporter.stopping();
+                return 130;
+            }
+        }
 
 		const [primary] = runtimes;
 		if (primary === undefined) throw new Error("open-orange dev started no Worker runtime");
@@ -526,7 +552,7 @@ async function executeDevCommand(
 		reporter.dispose();
 		hotkeys?.dispose();
 		stops.dispose();
-		await Promise.all(runtimes.map((runtime) => runtime.stop()));
+		await Promise.all(runtimes.flatMap((runtime) => runtime === undefined ? [] : [runtime.stop()]));
 		await rm(temporaryDirectory, { force: true, recursive: true });
 	}
 }

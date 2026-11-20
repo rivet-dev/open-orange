@@ -17,6 +17,7 @@ import {
 	DurableObjectAlarmScheduler,
 	DurableObjectAlarmStore,
 	durableObjectAlarmAction,
+	durableObjectAlarmTable,
 } from "./alarm-storage.js";
 import { createDurableObjectAbortError } from "./abort.js";
 import type { ConfiguredDurableObjectClass } from "./classes.js";
@@ -31,11 +32,15 @@ import {
 	storeForkedDurableObjectFacet,
 } from "./facet-clone.js";
 import {
+	cloneDurableObjectFacetActor,
 	createDurableObjectFacets,
 	type DurableObjectFacetHost,
 	durableObjectFacetActions,
 	durableObjectFacetAlarmController,
 	durableObjectFacetChanged,
+	durableObjectFacetCloneTable,
+	durableObjectFacetIncarnationTable,
+	durableObjectFacetKey,
 	readDurableObjectFacet,
 	storeDurableObjectFacet,
 } from "./facets.js";
@@ -49,6 +54,16 @@ import {
 	readDurableObjectMetadata,
 	writeDurableObjectMetadata,
 } from "./metadata.js";
+import { copyForkedFacets, forkDurableObjectFromSource, markOrangeForkFacetsCopied } from "./orange-fork-source.js";
+import {
+	durableObjectOrangeForkActions,
+	finishOrangeFork,
+	orangeForkInput,
+	type PendingOrangeFork,
+	readDurableObjectForkChain,
+	readPendingOrangeFork,
+	storeForkedDurableObject,
+} from "./orange-fork.js";
 import { durableObjectPrivateRoutes, generationRetiredError } from "./routes.js";
 import {
 	DurableObjectRpcHttpTarget,
@@ -303,6 +318,11 @@ interface DurableObjectActorShape {
 	/** Runs instead of `onCreate` in an actor that is a fork of another one. */
 	onFork?(database: RivetSqliteDatabase, fork: RivetActorFork): void;
 	/**
+	 * The ID of the object whose actor has `key`, for `ctx.orange.forkChain` and `onOrangeFork`.
+	 * Only a root object's actor has one: facets fork through `ctx.facets.clone()`.
+	 */
+	orangeForkSourceId?(key: readonly string[], name: string | undefined): DurableObjectId;
+	/**
 	 * Whether the actor holds its object in a slot: built at the first call, replaced in place by
 	 * facet resets, and empty while a clone destination has no class.
 	 */
@@ -324,6 +344,13 @@ function createActorDefinition(
 		webSocketHost: DurableObjectAcceptedWebSocketHost,
 	): Promise<DurableObjectGeneration> => {
 		const object = shape.resolveObject(context);
+		const pendingFork =
+			shape.orangeForkSourceId === undefined || context?.db === undefined
+				? undefined
+				: readPendingOrangeFork(context.db);
+		if (pendingFork?.facets === true && context?.db !== undefined && context.actorId !== undefined) {
+			await copyForkedFacets(facetHost, context.db, context.actorId, object.className);
+		}
 		let alarmScheduler: DurableObjectAlarmController | undefined;
 		// Workerd drops a broken object without running more of its code, and the next event
 		// gets a fresh instance from durable state. RivetKit's provider-level abort breaks the
@@ -411,6 +438,16 @@ function createActorDefinition(
 			orderCoordinator,
 			stateRuntime: {
 				...(object.id === undefined ? {} : { id: object.id }),
+				...(shape.orangeForkSourceId === undefined || database === undefined
+					? {}
+					: {
+							forkChain: () =>
+								readDurableObjectForkChain(database).map((link) => ({
+									forkedAt: link.forkedAt,
+									id: shape.orangeForkSourceId!(link.key, link.name),
+									...(link.name === undefined ? {} : { name: link.name }),
+								})),
+						}),
 				keepAwake,
 				props: object.props ?? {},
 				requestReset,
@@ -420,6 +457,9 @@ function createActorDefinition(
 			webSocketHost,
 		});
 		await generation.ready;
+		if (pendingFork !== undefined && database !== undefined && shape.orangeForkSourceId !== undefined) {
+			await runOrangeForkHook(generation, database, pendingFork, shape.orangeForkSourceId);
+		}
 		webSocketHost.rebind(generation);
 		return generation;
 	};
@@ -466,6 +506,17 @@ function createActorDefinition(
 					() => Promise.reject(error),
 					true,
 				);
+			}
+			// RivetKit runs a fork's `onFork` after createVars, and the copy's object must start on the
+			// storage that `onFork` prepared: its own name, and the fork for `onOrangeFork`. So a fork
+			// that `onFork` has not recorded yet builds its object at the first call instead. RivetKit's
+			// chain already ends with that fork here, and Orange's ends with it once `onFork` ran.
+			if (
+				shape.orangeForkSourceId !== undefined &&
+				context?.db !== undefined &&
+				(context.forkChain?.length ?? 0) > readDurableObjectForkChain(context.db).length
+			) {
+				return new DurableObjectGenerationSlot(requireActorContext(context), buildGeneration, true);
 			}
 			// The first object is built here, so a constructor that fails fails the actor's start.
 			const slot = new DurableObjectGenerationSlot(context, buildGeneration, true);
@@ -548,14 +599,34 @@ function durableObjectClassShape(
 	deploymentIdentity: string,
 	storage: DurableObjectClassStorageConfiguration | undefined,
 	userClass: ConfiguredDurableObjectClass,
+	facetHost: DurableObjectFacetHost | undefined,
 ): DurableObjectActorShape {
 	if (storage !== undefined && storage.storageBackend !== "sqlite") {
 		throw new Error(
 			`Durable Object class ${className} uses unsupported storage backend ${String(storage.storageBackend)}`,
 		);
 	}
+	const actorName = durableObjectActorName(deploymentIdentity, className);
 	return {
 		actions: {
+			// `orange.fork()` runs in the original's actor. See orange-fork-source.ts.
+			[durableObjectOrangeForkActions.fork]: async (context, request) => {
+				if (facetHost === undefined) throw new Error("Durable Object forks need the facet host");
+				const slot = requireDurableObjectGenerationSlot(context.vars);
+				return await forkDurableObjectFromSource(
+					{
+						actorId: requireActorId(context),
+						actorName,
+						className,
+						database: requireActorDatabase(context),
+						host: facetHost,
+						readInObject: (read) => slot.readStorage(read),
+					},
+					request,
+				);
+			},
+			[durableObjectOrangeForkActions.facetsCopied]: (context) =>
+				markOrangeForkFacetsCopied(requireActorDatabase(context)),
 			...(isMigratingFromCloudflare()
 				? {
 						// Waits for the copy of an object that needs one. A failed copy is returned, not thrown,
@@ -605,6 +676,17 @@ function durableObjectClassShape(
 		onCreate: (database, input) => {
 			const name = durableObjectNameFromInput(input);
 			if (name !== undefined) writeDurableObjectMetadata(database, "name", name);
+		},
+		onFork: (database, fork) =>
+			storeForkedDurableObject(database, fork, {
+				alarm: durableObjectAlarmTable,
+				facetClones: durableObjectFacetCloneTable,
+				facets: durableObjectFacetIncarnationTable,
+			}),
+		orangeForkSourceId: (key, name) => {
+			const id = durableObjectIdFromActorKey(key, name, deploymentIdentity, className);
+			if (id === undefined) throw new TypeError("A forked Durable Object has no source key");
+			return id;
 		},
 		resetsInProcess: false,
 		resolveObject: (context) => ({
@@ -981,6 +1063,13 @@ function facetCloneActor(
 	return { actorId: context.actorId, database: requireActorDatabase(context), host };
 }
 
+function requireActorId(context: RivetActorRequestContext): string {
+	if (context.actorId === undefined) {
+		throw new Error("The pinned RivetKit runtime did not provide the actor ID");
+	}
+	return context.actorId;
+}
+
 function requireActorDatabase(
 	context: RivetActorRequestContext,
 ): RivetSqliteDatabase {
@@ -1000,6 +1089,35 @@ function durableObjectNameFromInput(input: unknown): string | undefined {
 		throw new TypeError("RivetKit provided an invalid Durable Object create input");
 	}
 	return name;
+}
+
+/**
+ * Runs the copy's `onOrangeFork(fork)` once, after its constructor and before any other event, as
+ * RivetKit's `onFork` runs before `onWake`. The record that the fork is pending goes away in the
+ * same turn, so a hook that throws runs again at the next start, like RivetKit's.
+ */
+async function runOrangeForkHook(
+	generation: DurableObjectGeneration,
+	database: DurableObjectTurnDatabase,
+	pending: PendingOrangeFork,
+	sourceId: (key: readonly string[], name: string | undefined) => DurableObjectId,
+): Promise<void> {
+	const fork = {
+		forkedAt: pending.forkedAt,
+		id: sourceId(pending.key, pending.name),
+		input: orangeForkInput(pending),
+		...(pending.name === undefined ? {} : { name: pending.name }),
+	};
+	try {
+		await generation.stateController.runEvent(async () => {
+			const hook: unknown = Reflect.get(generation.instance, "onOrangeFork");
+			if (typeof hook === "function") await Reflect.apply(hook, generation.instance, [fork]);
+			finishOrangeFork(database);
+		});
+	} catch (error: unknown) {
+		await disposeDurableObjectGeneration(generation);
+		throw error;
+	}
 }
 
 function durableObjectIdFromActorKey(
@@ -1153,6 +1271,7 @@ export function createDurableObjectActorDefinitions(
 					options.deploymentIdentity,
 					storage,
 					userClass,
+					options.facetHost,
 				),
 			),
 			...(storage === undefined

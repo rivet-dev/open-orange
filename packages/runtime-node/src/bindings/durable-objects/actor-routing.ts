@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
 import type { RivetActorClient } from "../../internal/rivetkit.js";
+import { forkDurableObjectActor } from "./orange-fork.js";
 import {
 	durableObjectActorInput,
 	durableObjectStorageName,
 	type DurableObjectStubDescriptor,
+	type ForkDurableObjectActor,
 	type ResolveDurableObjectActor,
 } from "./namespace.js";
 
@@ -68,4 +70,19 @@ export function createDurableObjectActorResolver(
 			durableObjectActorKey(descriptor),
 			durableObjectActorInput(descriptor),
 		);
+}
+
+/** Forks objects' actors through `client`, for `orange.fork()`. */
+export function createDurableObjectActorForker(
+	client: () => RivetActorClient,
+): ForkDurableObjectActor {
+	return (source, target, input) =>
+		forkDurableObjectActor(client(), {
+			actorName: durableObjectActorName(source.deploymentIdentity, source.className),
+			input,
+			// The copy keeps a name only up to 1024 bytes, as an object started by name does.
+			name: durableObjectActorInput(target)?.name,
+			sourceKey: durableObjectActorKey(source),
+			targetKey: durableObjectActorKey(target),
+		});
 }

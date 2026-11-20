@@ -48,9 +48,23 @@ export interface DurableObjectStateRuntime {
 	readonly id?: DurableObjectId | string;
 	/** `ctx.props`. Workerd gives an object without props `{}`. */
 	readonly props?: unknown;
+	/** The forks behind a root object, oldest first, for `ctx.orange.forkChain`. */
+	forkChain?(): readonly DurableObjectForkLink[];
 	keepAwake?(promise: Promise<unknown>): void;
 	requestReset?(error: Error): void;
 	waitUntil?(promise: Promise<unknown>): void;
+}
+
+/** One fork behind an object: the object it was forked from, and when. See orange-fork.ts. */
+export interface DurableObjectForkLink {
+	readonly forkedAt: number;
+	readonly id: DurableObjectId;
+	readonly name?: string;
+}
+
+/** `ctx.orange`: OpenOrange's extensions to DurableObjectState. Cloudflare has no `orange`. */
+export interface DurableObjectStateOrange {
+	readonly forkChain: readonly DurableObjectForkLink[];
 }
 
 /** Lifetime controls that only Orange's own internal objects use. */
@@ -197,6 +211,18 @@ export class DurableObjectStateController {
 	get props(): unknown {
 		this.#assertActive();
 		return this.#runtime.props ?? {};
+	}
+
+	/** Undefined for an object that cannot fork, such as a facet. */
+	get orange(): DurableObjectStateOrange | undefined {
+		this.#assertActive();
+		const forkChain = this.#runtime.forkChain;
+		if (forkChain === undefined) return undefined;
+		return {
+			get forkChain(): readonly DurableObjectForkLink[] {
+				return Object.freeze(forkChain().map((link) => Object.freeze({ ...link })));
+			},
+		};
 	}
 
 	get retiredSignal(): AbortSignal {
@@ -441,6 +467,11 @@ class InitialDurableObjectState implements DurableObjectState {
 
 	get props(): unknown {
 		return this.#controller.props;
+	}
+
+	// OpenOrange's extensions. A getter on the prototype, so the state's own keys stay workerd's.
+	get orange(): DurableObjectStateOrange | undefined {
+		return this.#controller.orange;
 	}
 
 	// The Cloudflare types say DurableObjectId, but workerd returns the string for a facet that

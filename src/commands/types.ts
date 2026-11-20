@@ -154,6 +154,35 @@ function generatedTypesResult(value: unknown): GeneratedTypesResult {
 	return { content: value.content, runtime: value.runtime };
 }
 
+// OpenOrange's extensions to the runtime types, such as `env.MY_DO.orange.fork()`. They merge into
+// Cloudflare's own declarations, so `orange types` adds them after the runtime types it generates.
+const orangeExtensionTypes = `
+// Begin OpenOrange extension types
+// Cloudflare does not have these. See https://openorange.dev/docs/extensions/fork-durable-objects/
+interface DurableObjectNamespace<T extends Rpc.DurableObjectBranded | undefined = undefined> {
+	readonly orange: {
+		/** Copies the object \`source\` into a new object and returns its stub. */
+		fork(
+			source: DurableObjectId,
+			options?: { name?: string; id?: DurableObjectId; input?: unknown },
+		): Promise<DurableObjectStub<T>>;
+	};
+}
+interface DurableObjectState<Props = unknown> {
+	readonly orange: {
+		/** Every object this one was forked from, oldest first. */
+		readonly forkChain: readonly { id: DurableObjectId; name?: string; forkedAt: number }[];
+	};
+}
+/** What \`onOrangeFork(fork)\` receives in a forked object. */
+interface OrangeForkInfo<Input = unknown> {
+	id: DurableObjectId;
+	name?: string;
+	forkedAt: number;
+	input: Input | undefined;
+}
+`;
+
 async function readExisting(path: string): Promise<string | undefined> {
 	try {
 		return await readFile(path, "utf8");
@@ -220,6 +249,8 @@ async function executeTypesCommand(
 		}
 		content = `${content.slice(0, markerIndex + marker.length)}${fresh.runtime}`;
 	}
+	// The extensions refer to the runtime types, so they come only with them.
+	if (parsed.includeRuntime) content += orangeExtensionTypes;
 	if (parsed.check) {
 		if (existing !== content) {
 			io.error(`Generated types are out of date: ${outputPath}`);

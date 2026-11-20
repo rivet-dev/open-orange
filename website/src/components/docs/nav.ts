@@ -48,6 +48,8 @@ const SECTIONS: Section[] = [
 			},
 		],
 	},
+	// What OpenOrange adds on top of Cloudflare's APIs. Code that uses these runs on OpenOrange only.
+	{ title: 'OpenOrange extensions', ids: ['extensions/fork-durable-objects'] },
 	{
 		title: 'Reference',
 		ids: ['/docs/compatibility/', 'operations/monitoring', 'operations/debugging', 'operations/limits', 'operations/production-checklist'],

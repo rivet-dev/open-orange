@@ -1,14 +1,18 @@
 import type { RivetSynchronousSqliteExecutor } from "../../internal/rivetkit.js";
 
 /** Values that Orange keeps for an object in the object's own SQLite, beside user data. */
-// `clone` names the row copy that filled a facet, and `fork` the fork that made it.
+// `clone` names the row copy that filled a facet, and `fork` the fork that made it. `forkChain`
+// lists the `orange.fork()` forks behind an object, and `orangeFork` holds the one that made it
+// until its copy finished. See orange-fork.ts.
 export type DurableObjectMetadataKey =
 	| "clone"
 	| "cloudflareImport"
 	| "facet"
 	| "fork"
+	| "forkChain"
 	| "hibernation"
-	| "name";
+	| "name"
+	| "orangeFork";
 
 export const durableObjectMetadataTable = "_rivet_openorange_metadata";
 
@@ -18,6 +22,7 @@ const tableExistsSql = `SELECT 1 FROM sqlite_master WHERE type = 'table' AND nam
 const createTableSql = `CREATE TABLE IF NOT EXISTS ${metadataTable} (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID`;
 const selectSql = `SELECT value FROM ${metadataTable} WHERE key = ?`;
 const upsertSql = `INSERT INTO ${metadataTable} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`;
+const deleteSql = `DELETE FROM ${metadataTable} WHERE key = ?`;
 
 /** Returns undefined when the object has no value for `key`. */
 export function readDurableObjectMetadata(
@@ -41,4 +46,12 @@ export function writeDurableObjectMetadata(
 ): void {
 	database.executeSync(createTableSql);
 	database.executeSync(upsertSql, [key, JSON.stringify(value)]);
+}
+
+export function deleteDurableObjectMetadata(
+	database: RivetSynchronousSqliteExecutor,
+	key: DurableObjectMetadataKey,
+): void {
+	if (database.executeSync(tableExistsSql).rows.length === 0) return;
+	database.executeSync(deleteSql, [key]);
 }

@@ -15,6 +15,8 @@ export const durableObjectAlarmAction = "__openorange_alarm";
 
 const tableExistsSql =
 	"SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_cf_ALARM'";
+/** The table that holds an object's alarm, as workerd names it. */
+export const durableObjectAlarmTable = "_cf_ALARM";
 const createTableSql =
 	"CREATE TABLE IF NOT EXISTS _cf_ALARM (id INTEGER PRIMARY KEY CHECK (id = 1), scheduled_time INTEGER NOT NULL, token TEXT NOT NULL)";
 const tableColumnsSql = "PRAGMA table_info('_cf_ALARM')";

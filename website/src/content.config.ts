@@ -5,7 +5,7 @@ import { glob } from 'astro/loaders';
 // place, so builds need the whole repository. Entry ids are paths without the
 // extension, and `modules/index.mdx` becomes `modules`.
 const docs = defineCollection({
-	loader: glob({ base: '../docs', pattern: ['*.mdx', 'modules/*.mdx', 'operations/*.mdx', 'internals/*.mdx'] }),
+	loader: glob({ base: '../docs', pattern: ['*.mdx', 'modules/*.mdx', 'operations/*.mdx', 'extensions/*.mdx', 'internals/*.mdx'] }),
 	schema: z.object({ title: z.string(), description: z.string() }),
 });
 

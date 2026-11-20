@@ -104,6 +104,8 @@ export interface RivetActorRequestContext {
 	conns?: ReadonlyMap<string, RivetActorConnection>;
 	db?: RivetSqliteDatabase;
 	destroy?(): void;
+	/** RivetKit's forks behind this actor, oldest first. On a fork's first start it already ends with that fork, before `onFork` runs. */
+	forkChain?: readonly { readonly actorId: string; readonly forkedAt: number; readonly key: readonly string[] }[];
 	keepAwake?<Value>(promise: Promise<Value>): Promise<Value>;
 	key?: string[];
 	request?: Request;
@@ -202,6 +204,10 @@ export const unlimitedActionTimeoutMs = 2 ** 31 - 1;
 export interface RivetActorFork {
 	/** The source actor's ID. */
 	readonly actorId: string;
+	/** The source actor's key. */
+	readonly key?: readonly string[];
+	/** When the fork was made, in milliseconds since the epoch. */
+	readonly forkedAt?: number;
 	/** The `input` passed to the fork. It comes from the caller, so validate it. */
 	readonly input: unknown;
 }

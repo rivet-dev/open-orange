@@ -31,7 +31,7 @@ type MdxModule = { Content: (props: Record<string, unknown>) => unknown; getHead
 // imports each file as an MDX module instead of calling `render(entry)`:
 // Astro 5 loses `render()`'s module map when `--outDir` is outside the site
 // directory (it builds into `.astro/` and empties it), and this works either way.
-const modules = import.meta.glob<MdxModule>(['../../../../docs/*.mdx', '../../../../docs/modules/*.mdx', '../../../../docs/operations/*.mdx', '../../../../docs/internals/*.mdx']);
+const modules = import.meta.glob<MdxModule>(['../../../../docs/*.mdx', '../../../../docs/modules/*.mdx', '../../../../docs/operations/*.mdx', '../../../../docs/extensions/*.mdx', '../../../../docs/internals/*.mdx']);
 
 export async function getStaticPaths() {
 	const entries = await getCollection('docs');

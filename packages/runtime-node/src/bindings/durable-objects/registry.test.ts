@@ -7,6 +7,7 @@ import {
 } from "../../modules/cloudflare-workers/durable-object.js";
 import { durableObjectActorKey, durableObjectActorName } from "./actor-routing.js";
 import { durableObjectAlarmAction } from "./alarm-storage.js";
+import { durableObjectOrangeForkActions } from "./orange-fork.js";
 import { createDurableObjectIdScope } from "./id.js";
 import { durableObjectNamespaceKey } from "./namespace.js";
 import { runtimeActorRequest } from "./test-actor-handle.js";
@@ -87,7 +88,11 @@ test("generates one deterministic collision-safe Rivet actor per class", () => {
 		Object.keys(
 			registrations.get(counterName)?.definition.config.actions ?? {},
 		),
-		[durableObjectAlarmAction],
+		[
+			durableObjectOrangeForkActions.fork,
+			durableObjectOrangeForkActions.facetsCopied,
+			durableObjectAlarmAction,
+		],
 	);
 	assert.equal(
 		typeof registrations.get(counterName)?.definition.config.db.createClient,

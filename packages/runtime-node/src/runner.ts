@@ -72,6 +72,7 @@ import {
 	type ResolveDurableObjectActor,
 } from "./bindings/durable-objects/namespace.js";
 import {
+	createDurableObjectActorForker,
 	createDurableObjectActorResolver,
 	durableObjectActorName,
 } from "./bindings/durable-objects/actor-routing.js";
@@ -475,6 +476,8 @@ async function createBindings(
 	const internalNamespaces = new Map<string, DurableObjectNamespace>();
 	const sharedClassNames = new Set<string>();
 	const poolResolvers = new Map<string, ResolveDurableObjectActor>();
+	// `orange.fork()` on the Worker's own Durable Object namespaces. Orange's internal ones have none.
+	const forkActor = createDurableObjectActorForker(resolveClient);
 	const internalNamespace = (className: string): DurableObjectNamespace => {
 		let namespace = internalNamespaces.get(className);
 		if (namespace === undefined) {
@@ -659,6 +662,7 @@ async function createBindings(
 				value = createDurableObjectNamespace({
 					className: configuration.className,
 					deploymentIdentity: target.deploymentIdentity,
+					forkActor: createDurableObjectActorForker(() => resolvePoolClient(target.poolName)),
 					resolveActor: poolResolver,
 				});
 				break;
@@ -728,6 +732,7 @@ async function createBindings(
 		const namespace = createDurableObjectNamespace({
 			className: binding.className,
 			deploymentIdentity: message.deploymentIdentity,
+			forkActor,
 			resolveActor,
 		});
 		bindings.push({ name: binding.binding, value: namespace });
@@ -745,6 +750,7 @@ async function createBindings(
 				createDurableObjectNamespace({
 					className,
 					deploymentIdentity: message.deploymentIdentity,
+					forkActor,
 					resolveActor,
 				}),
 			);

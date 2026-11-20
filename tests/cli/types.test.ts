@@ -44,6 +44,8 @@ test("generates and freshness-checks self-contained Worker types", async () => {
 		assert.match(content, /interface Env/);
 		assert.match(content, /TOML_SECRET: SecretsStoreSecret/);
 		assert.match(content, /Runtime types generated with workerd@/);
+		assert.match(content, /Begin OpenOrange extension types/);
+		assert.match(content, /readonly orange: \{\n\t\t\/\*\* Copies the object/);
 
 		const current = captureIo();
 		assert.equal(

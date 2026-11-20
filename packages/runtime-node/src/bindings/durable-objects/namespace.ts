@@ -189,6 +189,8 @@ export interface DurableObjectStubDescriptor {
 export interface CreateDurableObjectNamespaceOptions {
 	className: string;
 	deploymentIdentity: string;
+	/** Forks objects for `orange.fork()`. A namespace without it has no `orange`. */
+	forkActor?: ForkDurableObjectActor;
 	jurisdiction?: DurableObjectJurisdiction;
 	resolveActor?: ResolveDurableObjectActor;
 }
@@ -196,6 +198,30 @@ export interface CreateDurableObjectNamespaceOptions {
 export type ResolveDurableObjectActor = (
 	descriptor: DurableObjectStubDescriptor,
 ) => RivetActorHandle;
+
+/** Forks the actor of the object `source` to the actor of `target`. See actor-routing.ts. */
+export type ForkDurableObjectActor = (
+	source: DurableObjectStubDescriptor,
+	target: DurableObjectStubDescriptor,
+	input: unknown,
+) => Promise<void>;
+
+export interface DurableObjectNamespaceForkOptions {
+	/** The copy's name: `getByName(name)` reaches it. */
+	name?: string;
+	/** The copy's ID. Without `name` or `id`, the copy gets a new unique ID. */
+	id?: DurableObjectId;
+	/** A structured-clone value for the copy's `onOrangeFork()`. */
+	input?: unknown;
+}
+
+/** OpenOrange's extensions to a Durable Object namespace. Cloudflare has no `orange`. */
+export interface DurableObjectNamespaceOrange<T> {
+	fork(
+		source: DurableObjectId,
+		options?: DurableObjectNamespaceForkOptions,
+	): Promise<DurableObjectStub<T>>;
+}
 
 interface DurableObjectStubState {
 	descriptor: DurableObjectStubDescriptor;
@@ -470,6 +496,46 @@ export function createDurableObjectNamespace<T = undefined>(
 			return idScope.newUniqueId({ jurisdiction: idOptions?.jurisdiction ?? undefined });
 		},
 	};
+	const forkActor = options.forkActor;
+	if (forkActor !== undefined) {
+		const orange: DurableObjectNamespaceOrange<T> = {
+			async fork(source, forkOptions) {
+				idScope.assertId(source);
+				const target = forkTarget(idScope, forkOptions);
+				const descriptor = (id: DurableObjectId): DurableObjectStubDescriptor => ({
+					className: options.className,
+					deploymentIdentity: options.deploymentIdentity,
+					id,
+					...(id.jurisdiction === undefined ? {} : { jurisdiction: id.jurisdiction }),
+				});
+				await forkActor(descriptor(source), descriptor(target), forkOptions?.input);
+				return get(target);
+			},
+		};
+		// Not enumerable, so `Object.keys(env.MY_DO)` stays what workerd returns.
+		Object.defineProperty(namespace, "orange", { configurable: true, enumerable: false, value: orange });
+	}
 	namespaceClassNames.set(namespace, options.className);
 	return namespace;
+}
+
+function forkTarget(
+	idScope: ReturnType<typeof createDurableObjectIdScope>,
+	options: DurableObjectNamespaceForkOptions | undefined,
+): DurableObjectId {
+	if (options === undefined) return idScope.newUniqueId();
+	if (!isRecord(options)) throw new TypeError("orange.fork() options must be an object");
+	const { id, name } = options as DurableObjectNamespaceForkOptions;
+	if (id !== undefined && name !== undefined) {
+		throw new TypeError("orange.fork() takes a name or an id, not both");
+	}
+	if (name !== undefined) {
+		if (typeof name !== "string") throw new TypeError("orange.fork() name must be a string");
+		return idScope.idFromName(name);
+	}
+	if (id !== undefined) {
+		idScope.assertId(id);
+		return id;
+	}
+	return idScope.newUniqueId();
 }

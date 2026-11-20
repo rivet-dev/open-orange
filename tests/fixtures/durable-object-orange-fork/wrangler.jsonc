@@ -1,0 +1,10 @@
+{
+	"name": "durable-object-orange-fork-e2e",
+	"main": "./worker.js",
+	"compatibility_date": "2026-09-03",
+	"compatibility_flags": [],
+	"durable_objects": {
+		"bindings": [{ "name": "DOC", "class_name": "Doc" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Doc"] }]
+}

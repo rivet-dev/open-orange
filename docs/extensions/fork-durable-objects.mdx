@@ -1,0 +1,266 @@
+---
+title: Fork Durable Objects
+description: Copy a Durable Object, with all of its storage, into a new object that runs on its own.
+---
+
+# Fork Durable Objects
+
+A fork copies a Durable Object into a new object. The copy starts with everything the original had
+stored, then the two run separately: a write to one never shows up in the other. Use forks to
+branch an agent's conversation, to try something risky on a copy of real data, or to duplicate a
+document.
+
+Forking is an OpenOrange extension. Cloudflare has no fork API, so code that forks runs on
+OpenOrange only.
+
+## Quickstart
+
+<Steps>
+
+<Step title="Fork an object">
+
+Get a stub for the object to copy, then pass its ID to `orange.fork()` with a name for the new
+object. `orange.fork()` returns a stub for the new object:
+
+```ts
+const baseStub = env.COUNTERS.getByName("bob");
+const newStub = await env.COUNTERS.orange.fork(baseStub.id, { name: "bob-copy" });
+```
+
+`baseStub` still reaches the original, and `env.COUNTERS.getByName("bob-copy")` now reaches the
+new object.
+
+</Step>
+
+<Step title="Run it">
+
+Run the [counters Worker](#the-full-counters-worker) with `orange dev`. Its routes are
+`POST /counters/<name>/increment`, `GET /counters/<name>`, and
+`POST /counters/<name>/fork?to=<newName>`, which runs the fork above. Increment `bob` twice:
+
+```sh
+$ curl -s -X POST http://127.0.0.1:8787/counters/bob/increment
+{"name":"bob","count":1}
+$ curl -s -X POST http://127.0.0.1:8787/counters/bob/increment
+{"name":"bob","count":2}
+```
+
+Fork `bob` into `bob-copy`. The new counter starts with bob's count:
+
+```sh
+$ curl -s -X POST http://127.0.0.1:8787/counters/bob/fork?to=bob-copy
+{"name":"bob-copy","count":2}
+```
+
+Increment the new counter. It counts on from its own total:
+
+```sh
+$ curl -s -X POST http://127.0.0.1:8787/counters/bob-copy/increment
+{"name":"bob-copy","count":3}
+```
+
+Read `bob` again. The new counter's increment never reached it, so it is still 2:
+
+```sh
+$ curl -s http://127.0.0.1:8787/counters/bob
+{"name":"bob","count":2}
+```
+
+</Step>
+
+</Steps>
+
+## Set up the copy
+
+To give the copy something to start with, pass `input`. Add an `onOrangeFork()` method to your
+class: it runs once in the copy, after the constructor and before the copy handles any call.
+
+```ts
+export class Agent extends DurableObject<Env> {
+	// Forks this agent and returns the new agent's ID.
+	async branch(label: string): Promise<string> {
+		const newStub = await this.env.AGENT.orange.fork(this.ctx.id, { input: { label } });
+		return newStub.id.toString();
+	}
+
+	onOrangeFork(fork: OrangeForkInfo<{ label: string }>) {
+		// The hook runs again if it throws, so it replaces the row instead of adding one.
+		this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS branch (id INTEGER PRIMARY KEY CHECK (id = 1), label TEXT)");
+		this.ctx.storage.sql.exec("INSERT OR REPLACE INTO branch (id, label) VALUES (1, ?)", fork.input?.label ?? null);
+	}
+}
+```
+
+An object can fork itself, as `branch()` does. The copy includes the writes that the object made
+earlier in the same call.
+
+## Find the original
+
+`this.ctx.orange.forkChain` lists the objects this one was forked from, oldest first. It is empty
+for an object that was never forked.
+
+```ts
+const original = this.ctx.orange.forkChain.at(-1)?.id; // the object this one was copied from
+```
+
+## Add the TypeScript types
+
+`orange types` generates `worker-configuration.d.ts` like `wrangler types` does, and adds the
+types for `orange.fork()`, `onOrangeFork()`, and `ctx.orange`:
+
+```sh
+$ orange types
+Generated types: /path/to/counters/worker-configuration.d.ts
+```
+
+<AiContext summary="API reference, what gets copied, errors, and limits">
+
+#### The full counters Worker
+
+The Worker that the quickstart runs. Each counter is a Durable Object that keeps its count in
+SQLite.
+
+```jsonc wrangler.jsonc
+{
+	"name": "counters",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-03",
+	"durable_objects": {
+		"bindings": [{ "name": "COUNTERS", "class_name": "Counter" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Counter"] }]
+}
+```
+
+```ts src/index.ts
+import { DurableObject } from "cloudflare:workers";
+
+interface Env {
+	COUNTERS: DurableObjectNamespace<Counter>;
+}
+
+export class Counter extends DurableObject<Env> {
+	constructor(ctx: DurableObjectState, env: Env) {
+		super(ctx, env);
+		ctx.storage.sql.exec(
+			"CREATE TABLE IF NOT EXISTS counter (id INTEGER PRIMARY KEY CHECK (id = 1), count INTEGER NOT NULL)",
+		);
+	}
+
+	increment(): number {
+		return this.ctx.storage.sql
+			.exec<{ count: number }>(
+				"INSERT INTO counter (id, count) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET count = count + 1 RETURNING count",
+			)
+			.one().count;
+	}
+
+	get(): number {
+		return this.ctx.storage.sql.exec<{ count: number }>("SELECT count FROM counter").toArray()[0]?.count ?? 0;
+	}
+}
+
+export default {
+	async fetch(request, env): Promise<Response> {
+		const url = new URL(request.url);
+		const [collection, name, action] = url.pathname.split("/").slice(1);
+		if (collection !== "counters" || !name) return new Response("Not found", { status: 404 });
+		const counter = env.COUNTERS.getByName(name);
+
+		// GET /counters/<name> returns the count.
+		if (request.method === "GET" && action === undefined) {
+			return Response.json({ name, count: await counter.get() });
+		}
+
+		// POST /counters/<name>/increment adds one and returns the new count.
+		if (request.method === "POST" && action === "increment") {
+			return Response.json({ name, count: await counter.increment() });
+		}
+
+		// POST /counters/<name>/fork?to=<newName> copies the counter into a new counter named <newName>.
+		if (request.method === "POST" && action === "fork") {
+			const newName = url.searchParams.get("to") ?? `${name}-copy`;
+			const baseStub = env.COUNTERS.getByName(name);
+			const newStub = await env.COUNTERS.orange.fork(baseStub.id, { name: newName });
+			return Response.json({ name: newName, count: await newStub.get() });
+		}
+
+		return new Response("Not found", { status: 404 });
+	},
+} satisfies ExportedHandler<Env>;
+```
+
+#### API
+
+| API | Description |
+| --- | --- |
+| `env.MY_DO.orange.fork(source, options?)` | Copies the object with the ID `source` into a new object, and returns a stub for the copy once it exists. Works on any Durable Object namespace of your Worker, including `ctx.exports` and a binding with `script_name`. |
+| `options.name` | The copy's name. `getByName(name)` reaches the copy, and the copy's `ctx.id.name` is `name`. |
+| `options.id` | The copy's ID, such as one from `newUniqueId()`. Pass `name` or `id`, not both. With neither, the copy gets a new unique ID and no name. |
+| `options.input` | Any structured-clone value. The copy's `onOrangeFork()` receives it. |
+| `onOrangeFork(fork)` | An optional method on your class. It runs once in the copy, after the constructor, and calls to the copy wait for it. If it throws, it runs again before the next call, so make it safe to run twice. |
+| `fork.id`, `fork.name` | The original's ID and name. |
+| `fork.forkedAt` | When the fork was made, in milliseconds since the epoch. |
+| `fork.input` | The `input` passed to `fork()`, or `undefined`. |
+| `ctx.orange.forkChain` | Every object this one was forked from, oldest first, each with `id`, `name`, and `forkedAt`. `ctx.orange` is `undefined` in a facet. |
+
+The API mirrors [Rivet's actor forks](https://rivet.dev/actors/docs/forking/):
+
+| Rivet | OpenOrange |
+| --- | --- |
+| `client.doc.fork(actorId, { key, input })` | `env.DOC.orange.fork(id, { name, input })` |
+| `onFork(c, fork)` | `onOrangeFork(fork)` |
+| `fork.actorId`, `fork.key` | `fork.id`, `fork.name` |
+| `c.forkChain` | `ctx.orange.forkChain` |
+
+#### What gets copied
+
+| State | Copied |
+| --- | --- |
+| SQL and key-value storage | Yes, everything the original had stored when the fork started |
+| Writes made earlier in the call that forks | Yes. A fork waits for them, as any outgoing call from an object does. |
+| Facets | Yes, as they were when the fork started. Calls from the original to its facets wait until every facet is copied. A facet that writes on its own while the fork runs, such as from a call it started earlier, can carry those writes into the copy. |
+| A pending alarm | No. The original keeps it. |
+| Class fields and other in-memory state | No. The copy runs its constructor. |
+| WebSockets | No. Clients stay connected to the original. |
+
+The copy has its own `ctx.id` and `ctx.id.name`.
+
+#### Errors
+
+`fork()` throws an `Error` whose `name` is `OrangeForkError`. Its `code` is one of:
+
+| `code` | Cause |
+| --- | --- |
+| `duplicate_key` | An object with the copy's ID already exists. Forking is not idempotent, so a retry with the same `name` fails this way instead of making a second copy. |
+| `not_found`, `fork_failed` | The original has never run, so it has nothing to copy. |
+| `fork_pending` | The fork took longer than 30 seconds. The copy appears once it finishes. |
+| `fork_too_deep` | The original is already 16 forks deep. |
+| `fork_unavailable` | The Rivet Engine cannot fork. Forks need Rivet Engine 3.1 or later. |
+
+#### Limits
+
+| Limit | Value |
+| --- | --- |
+| Forks of forks | 16 deep |
+| Time for one fork | 30 seconds, then `fork_pending` |
+
+#### How it works
+
+Each Durable Object is a Rivet Actor, so a fork is a Rivet actor fork. The copy shares the
+original's storage and stores only what it writes afterwards, so forking a large object costs the
+same as forking a small one. The fork runs inside the original object, which wakes it if it was
+asleep: it commits the original's writes, forks the original's actor, then forks each of its
+facets under the copy, as `ctx.facets.clone()` does. Before the copy runs, Orange gives it its own
+name, records the fork in `forkChain`, and drops the alarm. The Rivet Engine sometimes asks to
+retry a fork while its storage is busy; Orange retries up to 8 times, waiting from 100 ms and
+doubling.
+
+#### Conformance
+
+Cloudflare has no fork API, so there is no Cloudflare behavior to compare with. The end-to-end
+tests in `tests/durable-objects/durable-object-orange-fork.test.ts` cover the copy and its
+independence, forks of forks, unnamed copies, an object that forks itself, alarms, facets, errors,
+and a restart.
+
+</AiContext>

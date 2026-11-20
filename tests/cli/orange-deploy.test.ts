@@ -382,7 +382,7 @@ test("an image installs agentOS and the sandbox providers only for a Worker that
 			const manifest = JSON.parse(await readFile(join(deployDirectory(project), "context", "orange", "package.json"), "utf8"));
 			const lockfile = await readFile(join(deployDirectory(project), "context", "orange", "pnpm-lock.yaml"), "utf8");
 			// The frozen install in the image fails unless the lockfile's root lists the same packages.
-			for (const name of ["@rivet-dev/agentos-core", "@rivet-dev/sandbox-adapter"]) {
+			for (const name of ["@rivet-dev/agentos", "@rivet-dev/sandbox-adapter"]) {
 				assert.equal(name in manifest.dependencies, lockfile.includes(`\n      '${name}':\n`), name);
 			}
 			return Object.keys(manifest.dependencies);
@@ -390,13 +390,13 @@ test("an image installs agentOS and the sandbox providers only for a Worker that
 
 		const plain = await imageDependencies();
 		assert.ok(plain.includes("rivetkit"));
-		assert.ok(!plain.includes("@rivet-dev/agentos-core"));
+		assert.ok(!plain.includes("@rivet-dev/agentos"));
 		assert.ok(!plain.includes("@rivet-dev/sandbox-adapter"));
 
 		const entrypoint = join(project.directory, "src", "index.ts");
 		await writeFile(entrypoint, `${await readFile(entrypoint, "utf8")}\nexport { getSandbox } from "@cloudflare/sandbox";\n`);
 		const sandbox = await imageDependencies();
-		assert.ok(sandbox.includes("@rivet-dev/agentos-core"));
+		assert.ok(sandbox.includes("@rivet-dev/agentos"));
 		assert.ok(sandbox.includes("@rivet-dev/sandbox-adapter"));
 	});
 });

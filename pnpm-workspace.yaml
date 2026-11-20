@@ -7,3 +7,8 @@ packages:
 # it reads the install state from this repository's pinned pnpm 10 as stale, so
 # every pnpm command would reinstall first.
 verifyDepsBeforeRun: false
+
+# @rivet-dev/agentos pins its own RivetKit for its hosted client, which Open Orange
+# does not use. One RivetKit keeps the type check and the install consistent.
+overrides:
+  rivetkit: $rivetkit

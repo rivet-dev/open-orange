@@ -3,7 +3,8 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"resolveJsonModule": true,
-		"skipLibCheck": false,
+		// skipLibCheck comes from tsconfig.base.json. agentOS 0.5 re-exports its hosted client from its root
+		// entry, and RivetKit's declarations behind it need lib DOM and an undeclared @standard-schema/spec.
 		"types": ["node"]
 	},
 	"include": ["src/**/*.ts", "scripts/**/*.ts", "tests/*/*.ts"]

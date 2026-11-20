@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix, resolve, sep } from "node:path";
 import { PassThrough } from "node:stream";
 
-import type { AgentOs } from "@rivet-dev/agentos-core";
+import type { AgentOs } from "@rivet-dev/agentos";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
@@ -48,7 +48,7 @@ interface OwnedVm {
 // A writable mount is an empty host directory next to the bundle, so disposing the VM
 // removes it with the bundle.
 async function workerMountConfigs(bundleDirectory: string, mounts: readonly WorkerMount[]) {
-	const { hostDirMount } = await import("@rivet-dev/agentos-core");
+	const { hostDirMount } = await import("@rivet-dev/agentos");
 	return Promise.all(
 		mounts.map(async (mount, index) => {
 			if (mount.hostPath !== undefined) return hostDirMount(mount.guestPath, mount.hostPath, { readOnly: true });
@@ -426,7 +426,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 				return [specifier, posix.join(runtimeRoot, file)];
 			}),
 		);
-		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos-core");
+		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos");
 		const bundleDirectory = await createHostDirectory();
 		try {
 			const workerMounts = await workerMountConfigs(bundleDirectory, mounts);

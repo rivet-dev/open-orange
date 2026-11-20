@@ -97,7 +97,9 @@ export async function compileConformanceTypeChecks(
 			moduleResolution: ts.ModuleResolutionKind.Bundler,
 			outDir: declarationDirectory,
 			rootDir: runtimeSourceRoot,
-			skipLibCheck: false,
+			// This step only emits the runtime's declarations. The runtime imports agentOS, whose root
+			// entry re-exports RivetKit declarations that need lib DOM, so its dependencies are not checked.
+			skipLibCheck: true,
 			strict: true,
 			target: ts.ScriptTarget.ESNext,
 			types: ["node"],

@@ -123,7 +123,7 @@
 		},
 		{
 			"product": "Sandboxes",
-			"orange": "@cloudflare/sandbox on the ORANGE_SANDBOX_PROVIDER backend: a local host directory (default), an embedded agentOS VM through @rivet-dev/agentos-core, or E2B, Daytona, or Freestyle through @rivet-dev/sandbox-adapter",
+			"orange": "@cloudflare/sandbox on the ORANGE_SANDBOX_PROVIDER backend: a local host directory (default), an embedded agentOS VM through @rivet-dev/agentos, or E2B, Daytona, or Freestyle through @rivet-dev/sandbox-adapter",
 			"status": "pluggable",
 			"note": "exec, files, processes, and preview URLs work. The image is ignored, and the local provider is not isolated. Sessions and the code interpreter throw, preview URLs need the local or agentOS provider, and agentOS VMs do not survive an orange dev restart.",
 			"evidence": ["docs/modules/sandbox.mdx", "packages/runtime-node/src/modules/cloudflare-sandbox/providers.ts"],

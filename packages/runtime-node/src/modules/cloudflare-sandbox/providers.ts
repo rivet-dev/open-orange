@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 
-import type { AgentOs } from "@rivet-dev/agentos-core";
+import type { AgentOs } from "@rivet-dev/agentos";
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { runtimeSettings } from "../../internal/runtime-settings.js";
 import type {
@@ -473,7 +473,7 @@ function agentOsProvider(): SandboxProvider {
 	const vms = new Map<string, Promise<AgentOs>>();
 	const disposers = new Map<string, () => void>();
 	const boot = async () => {
-		const { AgentOs } = await import("@rivet-dev/agentos-core");
+		const { AgentOs } = await import("@rivet-dev/agentos");
 		const vm = await AgentOs.create();
 		await vm.filesystem.mkdir("/workspace", { recursive: true });
 		return vm;

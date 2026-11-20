@@ -51,7 +51,7 @@ export async function buildWorkerLoaderVmBundle(
 			),
 		},
 		// The child never boots an agentOS VM itself.
-		external: ["@rivet-dev/agentos-core"],
+		external: ["@rivet-dev/agentos"],
 		format: "esm",
 		inject: [
 			resolve("packages/runtime-node/src/bindings/worker-loader/vm-shims.ts"),

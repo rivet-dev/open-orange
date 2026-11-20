@@ -21,7 +21,7 @@ import type { AgentOs } from "@rivet-dev/agentos";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
-import type { WorkerChild, WorkerFile, WorkerHost, WorkerLoaderBackend } from "./loader.js";
+import type { WorkerChild, WorkerFile, WorkerHost, WorkerLoaderBackend, WorkerMount } from "./loader.js";
 
 // Where the child and runtime modules live inside each VM.
 const runtimeRoot = "/open-orange/runtime";
@@ -43,6 +43,20 @@ interface BootedVm {
 interface OwnedVm {
 	booted: Promise<BootedVm>;
 	dispose(): Promise<void>;
+}
+
+// A writable mount is an empty host directory next to the bundle, so disposing the VM
+// removes it with the bundle.
+async function workerMountConfigs(bundleDirectory: string, mounts: readonly WorkerMount[]) {
+	const { hostDirMount } = await import("@rivet-dev/agentos");
+	return Promise.all(
+		mounts.map(async (mount, index) => {
+			if (mount.hostPath !== undefined) return hostDirMount(mount.guestPath, mount.hostPath, { readOnly: true });
+			const scratch = join(dirname(bundleDirectory), `scratch-${index}`);
+			await mkdir(scratch, { mode: 0o755 });
+			return hostDirMount(mount.guestPath, scratch, { readOnly: false });
+		}),
+	);
 }
 
 function bootError(error: unknown): Error {
@@ -162,9 +176,11 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		onRuntimeClose(() => this.#close());
 	}
 
-	async open(network: boolean): Promise<WorkerHost> {
+	async open(network: boolean, mounts: readonly WorkerMount[]): Promise<WorkerHost> {
 		if (this.#closed) throw new Error("The Worker Loader has stopped.");
 		const mode: NetworkMode = network ? "network" : "deny";
+		// A Worker with mounts boots its own VM, since agentOS mounts host directories at boot.
+		if (mounts.length > 0) return this.#openOwn(mode, mounts);
 		let pool = this.#pools.get(mode);
 		if (pool === undefined) {
 			pool = { mode, ready: [], waiting: undefined, warming: false };
@@ -184,7 +200,11 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			// The child is running even if the Worker fails before it is used.
 			return this.#host(() => this.#discard(ready), ready.booted, ready.root, () => child, loaded);
 		}
-		const owned = this.#boot(mode);
+		return this.#openOwn(mode, [], loaded);
+	}
+
+	async #openOwn(mode: NetworkMode, mounts: readonly WorkerMount[], loaded = (): void => undefined): Promise<WorkerHost> {
+		const owned = this.#boot(mode, mounts);
 		let booted: BootedVm;
 		try {
 			booted = await owned.booted;
@@ -329,8 +349,8 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		await ready.owned.dispose();
 	}
 
-	#boot(mode: NetworkMode): OwnedVm {
-		const booted = this.#create(mode);
+	#boot(mode: NetworkMode, mounts: readonly WorkerMount[] = []): OwnedVm {
+		const booted = this.#create(mode, mounts);
 		let disposed: Promise<void> | undefined;
 		const owned: OwnedVm = {
 			booted,
@@ -354,7 +374,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		return owned;
 	}
 
-	async #create(mode: NetworkMode): Promise<BootedVm> {
+	async #create(mode: NetworkMode, mounts: readonly WorkerMount[]): Promise<BootedVm> {
 		const bundlePath = resolve(this.#options.bundlePath());
 		const manifest: unknown = JSON.parse(await readFile(join(bundlePath, "manifest.json"), "utf8"));
 		if (!isRecord(manifest)) throw new Error("The agentOS runtime bundle manifest must be an object");
@@ -369,6 +389,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		const { AgentOs, hostDirMount } = await import("@rivet-dev/agentos");
 		const bundleDirectory = await createHostDirectory();
 		try {
+			const workerMounts = await workerMountConfigs(bundleDirectory, mounts);
 			// The guest reads Orange's runtime from the host, read-only, so a VM
 			// boots without a copy of it. The mount shows only the bundle directory.
 			// The Worker's bundle is mounted at boot too: agentOS fails the running
@@ -377,6 +398,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 				mounts: [
 					hostDirMount(runtimeRoot, bundlePath, { readOnly: true }),
 					hostDirMount(bundleRoot, bundleDirectory, { readOnly: true }),
+					...workerMounts,
 				],
 				permissions: { network: mode === "network" ? "allow" : "deny" },
 			});

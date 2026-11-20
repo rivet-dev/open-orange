@@ -123,6 +123,18 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 				user: { body: '{"id":"42"}', cookies: [], status: 200, type: "application/json; charset=utf-8" },
 			});
 
+			// A dynamic Worker reads a read-only project directory and
+			// sees its own empty scratch mount. A hostPath outside the project and a guestPath in
+			// Orange's reserved /open-orange fail the load. The project file is unchanged.
+			const mounts = await get("mounts");
+			assert.ok(isRecord(mounts), JSON.stringify(mounts));
+			assert.deepEqual(mounts.mounted, { value: { read: "mounted file\n", readOnly: true, scratch: true } });
+			const loadError = (value: unknown): string =>
+				isRecord(value) && isRecord(value.error) ? String(value.error.message) : JSON.stringify(value);
+			assert.match(loadError(mounts.outside), /hostPath "\.\." is outside the project directory/);
+			assert.match(loadError(mounts.reserved), /is in \/open-orange, which OpenOrange reserves/);
+			assert.equal(await readFile(join(project.directory, "mounted", "hello.txt"), "utf8"), "mounted file\n");
+
 			// A dynamic Worker sees only the env it was given, not the parent's
 			// globals, vars, or process.env.
 			assert.deepEqual(await get("isolation"), {

@@ -2,7 +2,7 @@ import { readAgentOsSourceEngineBuild } from "../../src/runtime/source-engine-bu
 import { createHash } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { glob, mkdir, readFile, writeFile } from "node:fs/promises";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -35,7 +35,10 @@ if (values["host-only"] && values["node-reference"]) throw new Error("A Node ref
 const nodeReferencePath = values["node-reference"] ? resolve(values["node-reference"]) : undefined;
 const nodeReferenceBytes = nodeReferencePath ? await readFile(nodeReferencePath) : undefined;
 const nodeReference = nodeReferenceBytes ? JSON.parse(nodeReferenceBytes.toString()) : undefined;
-const revision = (cwd: string) => execFileSync("jj", ["log", "-r", "@", "--no-graph", "-T", "commit_id"], { cwd, encoding: "utf8" }).trim();
+// Use jj when the checkout has one; a plain Git checkout reports HEAD.
+const revision = (cwd: string) => existsSync(join(cwd, ".jj"))
+	? execFileSync("jj", ["log", "-r", "@", "--no-graph", "-T", "commit_id"], { cwd, encoding: "utf8" }).trim()
+	: execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
 async function codeDigest(directory: string) {
 	const files: string[] = [];
 	for await (const file of glob(["**/*.js", "**/*.cjs", "**/*.mjs"], { cwd: directory })) files.push(file);

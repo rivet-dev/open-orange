@@ -164,6 +164,9 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	readonly #vms = new Set<OwnedVm>();
 	readonly #children = new Set<{ exited: Promise<void>; kill(): void }>();
 	readonly #pools = new Map<NetworkMode, VmPool>();
+	// One booted VM per mode with no child yet, for the next Worker with mounts.
+	// Its mounts are added before its child starts, so it boots before they are known.
+	readonly #bare = new Map<NetworkMode, OwnedVm>();
 	// The one prewarm in flight. Prewarms run one at a time, since every VM
 	// shares one agentOS sidecar with the dynamic Workers that are running.
 	#warming: Promise<void> | undefined;
@@ -179,8 +182,15 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 	async open(network: boolean, mounts: readonly WorkerMount[]): Promise<WorkerHost> {
 		if (this.#closed) throw new Error("The Worker Loader has stopped.");
 		const mode: NetworkMode = network ? "network" : "deny";
-		// A Worker with mounts boots its own VM, since agentOS mounts host directories at boot.
-		if (mounts.length > 0) return this.#openOwn(mode, mounts);
+		if (mounts.length > 0) {
+			const refill = (): void => {
+				setTimeout(() => this.prewarmMounted(network), refillDelayMs).unref();
+			};
+			const bare = this.#bare.get(mode);
+			if (bare === undefined) return this.#openOwn(mode, mounts, refill);
+			this.#bare.delete(mode);
+			return this.#openBare(bare, mounts, refill);
+		}
 		let pool = this.#pools.get(mode);
 		if (pool === undefined) {
 			pool = { mode, ready: [], waiting: undefined, warming: false };
@@ -208,6 +218,40 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		let booted: BootedVm;
 		try {
 			booted = await owned.booted;
+		} catch (error: unknown) {
+			await owned.dispose();
+			throw bootError(error);
+		}
+		const root = posix.join(workersRoot, randomUUID());
+		return this.#host(() => owned.dispose(), booted, root, () => this.#spawn(booted.vm, root, owned), loaded);
+	}
+
+	// Boots a VM ahead of the next Worker with mounts in this mode. The runtime
+	// calls it when it creates a Worker Loader binding, so the first such Worker
+	// does not wait for a VM boot.
+	prewarmMounted(network: boolean): void {
+		const mode: NetworkMode = network ? "network" : "deny";
+		if (this.#closed || this.#options.poolSize === 0 || this.#bare.has(mode)) return;
+		const owned = this.#boot(mode);
+		this.#bare.set(mode, owned);
+		owned.booted.catch((error: unknown) => {
+			if (this.#bare.get(mode) === owned) this.#bare.delete(mode);
+			void owned.dispose();
+			if (this.#closed) return;
+			this.#options.onDiagnostic(
+				`OpenOrange cannot prewarm an agentOS VM for dynamic Workers with mounts (${mode}): ${errorMessage(error)}. They boot their VM on demand instead.`,
+			);
+		});
+	}
+
+	async #openBare(owned: OwnedVm, mounts: readonly WorkerMount[], loaded: () => void): Promise<WorkerHost> {
+		let booted: BootedVm;
+		try {
+			booted = await owned.booted;
+			// In order, so a mount inside another mount lands on top of it.
+			for (const mount of await workerMountConfigs(booted.bundleDirectory, mounts)) {
+				await booted.vm.filesystem.mount(mount);
+			}
 		} catch (error: unknown) {
 			await owned.dispose();
 			throw bootError(error);

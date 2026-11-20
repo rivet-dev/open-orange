@@ -639,6 +639,8 @@ async function createBindings(
 					},
 				});
 				workerLoaders.push(loader);
+				// A Worker without `globalOutbound` has network access, the common case.
+				if (sharedWorkerLoaderBackend instanceof AgentOsWorkerLoaderBackend) sharedWorkerLoaderBackend.prewarmMounted(true);
 				value = loader;
 				break;
 			}

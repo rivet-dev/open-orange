@@ -134,7 +134,9 @@ function updateVersion(opts: ReleaseOpts) {
 }
 
 function runChecks(opts: ReleaseOpts) {
-	for (const script of ["typecheck", "build", "validate:examples"]) {
+	// test:unit starts no server, but it loads the installed RivetKit and fails when the pinned
+	// build in rivetkit-build.ts differs from it. A release with that mismatch exits at startup.
+	for (const script of ["typecheck", "build", "validate:examples", "test:unit"]) {
 		console.log(`==> pnpm ${script}`);
 		run("pnpm", [script], { cwd: opts.repoRoot, inherit: true });
 	}

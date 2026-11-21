@@ -86,6 +86,13 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			});
 			assert.match(dev.output(), /dynamic Worker stdout/);
 
+			// WebCrypto in a dynamic Worker reads every algorithm member, so an AES-GCM key generates
+			// and round-trips data.
+			assert.deepEqual(await get("crypto"), {
+				algorithm: { length: 256, name: "AES-GCM" },
+				plaintext: "secret",
+			});
+
 			// A dynamic Worker's node:http server answers fetches through
 			// cloudflare:node with its status, headers, cookies, and streamed body.
 			// Its requests, responses, and server are instances of the node:http

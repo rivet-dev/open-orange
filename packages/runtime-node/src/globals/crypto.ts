@@ -242,6 +242,9 @@ class MemberSnapshot {
 		return typeof name === "string" ? name.toUpperCase() : undefined;
 	}
 
+	// A plain object whose members are all own properties. A subtle crypto
+	// implementation that copies only own properties, such as the agentOS
+	// guest's bridge to the host, would lose members left on a prototype.
 	value(): unknown {
 		if (
 			typeof this.#source !== "object" ||
@@ -250,11 +253,8 @@ class MemberSnapshot {
 		) {
 			return this.#source;
 		}
-		const pinned: PropertyDescriptorMap = {};
-		for (const [member, value] of this.#values) {
-			pinned[member] = { value, enumerable: true };
-		}
-		return Object.create(this.#source, pinned);
+		for (const member of Object.keys(this.#source)) this.get(member);
+		return Object.fromEntries(this.#values);
 	}
 }
 
@@ -270,6 +270,14 @@ const encryptAlgorithmMembers = [
 	"label",
 ];
 const signAlgorithmMembers = ["name", "hash", "dataLength", "saltLength"];
+const generateKeyAlgorithmMembers = [
+	"name",
+	"hash",
+	"modulusLength",
+	"publicExponent",
+	"length",
+	"namedCurve",
+];
 const importKeyAlgorithmMembers = [
 	"name",
 	"hash",
@@ -536,7 +544,9 @@ Object.assign(workerSubtle, {
 		return nodeDecrypt(snapshot.value(), key, data);
 	},
 	async generateKey(algorithm: unknown, extractable: unknown, usages: unknown) {
-		const snapshot = new MemberSnapshot(algorithm);
+		const snapshot = new MemberSnapshot(algorithm).readAll(
+			generateKeyAlgorithmMembers,
+		);
 		if (snapshot.name() === legacyEd25519) {
 			const pair = await nodeGenerateKey(
 				legacyEd25519Algorithm(snapshot),

@@ -282,6 +282,28 @@ const routes = {
 			rpc: await worker.getEntrypoint("Named", { props: { label: "props" } }).run("Ada"),
 		};
 	},
+	// A dynamic Worker generates an AES-GCM key from a dictionary literal and round-trips data with it.
+	async crypto(env) {
+		const worker = env.LOADER.get("crypto", () => ({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `
+					export default {
+						async fetch() {
+							const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+							const iv = crypto.getRandomValues(new Uint8Array(12));
+							const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode("secret"));
+							const opened = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, sealed);
+							return Response.json({ algorithm: key.algorithm, plaintext: new TextDecoder().decode(opened) });
+						},
+					};
+				`,
+			},
+		}));
+		const response = await worker.getEntrypoint().fetch("https://example.com/");
+		return response.json();
+	},
 	// A dynamic Worker serves a node:http server through cloudflare:node.
 	async http(env) {
 		const worker = env.LOADER.get("http", () => ({

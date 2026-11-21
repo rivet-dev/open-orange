@@ -112,6 +112,7 @@ Hello from a dynamic Worker
 | A `node:http` server through `cloudflare:node` | Supported | An Express app serves requests. |
 | `mounts` | Orange extension | Mounts a project directory read-only, or an empty writable directory, into the VM. See [Mounts](#mounts). |
 | `vmLimits` | Orange extension | Gives the dynamic Worker's VM more V8 heap or CPU time than the agentOS default, up to a runtime cap. See [VM limits](#vm-limits). |
+| `idleTimeoutMs` | Orange extension | Sets this Worker's idle time before it stops, from 1 to 2147483647 ms, in place of `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS`. An idle Worker still gives up its slot when a new Worker needs one. A value out of range fails the load with a `TypeError`. |
 | Python modules and compiled `WebAssembly.Module` values | Not supported | Throw a `TypeError`. |
 | `getDurableObjectClass()` | Not supported | Throws a `NotSupportedError`. |
 | `connect()` on an entrypoint, or through a Fetcher `globalOutbound` | Not supported | Throws. |
@@ -130,7 +131,7 @@ agentOS's limits apply:
 | Linked modules in the VM | 64 MiB by default | agentOS's limit. Orange adds no check. |
 | `env` | No set limit. In a test with agentOS 0.4.1, 5 MiB worked. | At 10 MiB, the dynamic Worker exited with code 1. |
 | Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, `get()` or `load()` throws a `WorkerLoaderLimitError` that names the limit. At 80% of the limit, `orange dev` logs a warning. |
-| Idle time before a dynamic Worker stops | 30 seconds. Set `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` to change it, from 1 to 2147483647. | The dynamic Worker stops and frees its VM. The next call loads it again. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
+| Idle time before a dynamic Worker stops | 30 seconds. Set `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` to change it, from 1 to 2147483647, or `idleTimeoutMs` on one Worker's code object. | The dynamic Worker stops and frees its VM. The next call loads it again. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
 | Prewarmed VMs | 2 for each network mode by default, from 0 to 16 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
 | `vmLimits.heapMb` | 4096 by default. Set `ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB` to change it, from 1 to 65536. | The load throws a `WorkerLoaderLimitError` that names the setting. |
 | `vmLimits.cpuTimeMs` | 1800000 (30 minutes) by default. Set `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS` to change it, from 1 to 2147483647. | The load throws a `WorkerLoaderLimitError` that names the setting. |

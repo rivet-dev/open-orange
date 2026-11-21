@@ -294,6 +294,8 @@ interface PreparedCode {
 	mounts: WorkerMount[];
 	outbound: unknown;
 	vmLimits: WorkerVmLimits | undefined;
+	// Overrides the runtime idle timeout for this Worker, when set.
+	idleTimeoutMs: number | undefined;
 }
 
 function prepareCode(code: unknown, projectRoot: string, caps: VmLimitCaps): PreparedCode {
@@ -313,7 +315,20 @@ function prepareCode(code: unknown, projectRoot: string, caps: VmLimitCaps): Pre
 	if (code.globalOutbound === undefined) outbound = "network";
 	else if (code.globalOutbound === null) outbound = "blocked";
 	else outbound = code.globalOutbound;
-	return { env, mainModule: code.mainModule, modules, mounts, outbound, vmLimits };
+	return { env, idleTimeoutMs: normalizeIdleTimeout(code.idleTimeoutMs), mainModule: code.mainModule, modules, mounts, outbound, vmLimits };
+}
+
+// `idleTimeoutMs` is an Orange extension to the code object, so a Worker that keeps state between
+// requests, such as a dev server, outlives the runtime idle timeout. An idle Worker still gives up
+// its slot when a new Worker needs one, so a long timeout never raises the Worker limit.
+function normalizeIdleTimeout(value: unknown): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > maxTimerDelayMs) {
+		throw new TypeError(
+			`Dynamic Worker idleTimeoutMs must be an integer from 1 to ${maxTimerDelayMs}. Got: ${JSON.stringify(value)}`,
+		);
+	}
+	return value;
 }
 
 interface LoaderSession {
@@ -465,6 +480,7 @@ class DynamicWorker {
 	#idleTimer: NodeJS.Timeout | undefined;
 	#inFlight = 0;
 	#lastUsed = 0;
+	#idleTimeoutMs: number;
 	#orphaned = false;
 	#session: LoaderSession | undefined;
 	#terminated = false;
@@ -476,6 +492,7 @@ class DynamicWorker {
 		onExit: () => void,
 	) {
 		this.#getCode = getCode;
+		this.#idleTimeoutMs = options.pool.idleTimeoutMs;
 		this.#label = label;
 		this.#onExit = onExit;
 		this.#options = options;
@@ -507,6 +524,7 @@ class DynamicWorker {
 		let host: WorkerHost | undefined;
 		try {
 			const prepared = await this.#getCode();
+			this.#idleTimeoutMs = prepared.idleTimeoutMs ?? this.#options.pool.idleTimeoutMs;
 			host = await this.#options.backend.open(prepared.outbound === "network", prepared.mounts, prepared.vmLimits);
 			const { bundleRoot } = host;
 			// Linked modules go through the bundle mount too. Writing them into the VM costs one
@@ -566,7 +584,7 @@ class DynamicWorker {
 			this.#baseExports = session.stats().exports;
 			this.#session = session;
 			this.#lastUsed = performance.now();
-			this.#armIdleTimer(this.#options.pool.idleTimeoutMs);
+			this.#armIdleTimer(this.#idleTimeoutMs);
 			return session;
 		} catch (error: unknown) {
 			this.terminate();
@@ -604,7 +622,7 @@ class DynamicWorker {
 		clearTimeout(this.#idleTimer);
 		this.#idleTimer = setTimeout(() => {
 			const quietMs = performance.now() - this.#lastUsed;
-			const idleTimeoutMs = this.#options.pool.idleTimeoutMs;
+			const idleTimeoutMs = this.#idleTimeoutMs;
 			if (quietMs < idleTimeoutMs) this.#armIdleTimer(idleTimeoutMs - quietMs);
 			else if (this.idle) this.evict();
 			// A held result stub or stream keeps the Worker; look again later.

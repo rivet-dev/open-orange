@@ -318,6 +318,15 @@ test("stops idle dynamic Workers without interrupting calls in flight", async ()
 		assert.ok(isRecord(full) && isRecord(full.error), JSON.stringify(full));
 		assert.equal(full.error.name, "WorkerLoaderLimitError");
 		assert.match(String(full.error.message), /the limit is 2\. Raise ORANGE_WORKER_LOADER_MAX_WORKERS/);
+
+		// A Worker with idleTimeoutMs keeps running and keeps its state past the 1.5 s runtime
+		// timeout. An idleTimeoutMs out of range fails the load.
+		const kept = await dev.json("/idleTimeout");
+		assert.ok(isRecord(kept), JSON.stringify(kept));
+		assert.deepEqual(kept.counts, [1, 2]);
+		assert.equal(kept.loads, 1);
+		assert.ok(isRecord(kept.invalid) && isRecord(kept.invalid.error), JSON.stringify(kept.invalid));
+		assert.match(String(kept.invalid.error.message), /idleTimeoutMs must be an integer from 1 to 2147483647\. Got: 0/);
 	}, { environment });
 });
 

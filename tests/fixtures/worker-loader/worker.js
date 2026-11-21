@@ -592,6 +592,19 @@ const routes = {
 		return { errors, loaded };
 	},
 	// Runs with ORANGE_WORKER_LOADER_MAX_WORKERS=2 and ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS=1500.
+	// A Worker with its own idleTimeoutMs keeps its module state past the runtime idle timeout.
+	async idleTimeout(env) {
+		let loads = 0;
+		const getCode = () => {
+			loads += 1;
+			return { ...counterCode, idleTimeoutMs: 60_000 };
+		};
+		const counts = [await env.LOADER.get("kept", getCode).getEntrypoint().increment()];
+		await new Promise((resolve) => setTimeout(resolve, 2_500));
+		counts.push(await env.LOADER.get("kept", getCode).getEntrypoint().increment());
+		const invalid = await settle(Promise.resolve().then(() => env.LOADER.load({ ...counterCode, idleTimeoutMs: 0 }).getEntrypoint().increment()));
+		return { counts, invalid, loads };
+	},
 	async eviction(env) {
 		const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		let loads = 0;

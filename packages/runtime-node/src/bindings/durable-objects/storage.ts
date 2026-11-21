@@ -7,6 +7,7 @@ import {
 	type RivetSqliteDatabase,
 	type RivetSqliteExecuteResult,
 	type RivetSynchronousSqliteExecutor,
+	retryingSqliteDatabase,
 	rivetSqliteDeferredCommits,
 } from "../../internal/rivetkit.js";
 import {
@@ -1480,7 +1481,7 @@ export const durableObjectDatabaseProvider: RivetDatabaseProvider = {
 				"The pinned RivetKit runtime does not support synchronous SQLite",
 			);
 		}
-		return database;
+		return retryingSqliteDatabase(database);
 	},
 	onMigrate(): void {},
 };

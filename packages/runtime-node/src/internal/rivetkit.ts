@@ -73,6 +73,84 @@ export interface RivetSqliteDatabase extends RivetSynchronousSqliteExecutor {
 	abortGeneration?(reason: string): void;
 }
 
+// RivetKit 3.1.2-rc.2 raises these from a SQLite call while its background flush holds the writer,
+// where earlier releases blocked until the writer was free. The flush finishes on RivetKit's own
+// threads, so a synchronous caller blocks and retries, as before.
+const retryableSqliteCodes = new Set(["writer_busy", "storage_overloaded"]);
+export const sqliteBusyTimeoutSetting = "ORANGE_SQLITE_BUSY_TIMEOUT_MS";
+const defaultSqliteBusyTimeoutMs = 30_000;
+const maxSqliteBusyBackoffMs = 50;
+const busyWait = new Int32Array(new SharedArrayBuffer(4));
+
+export class SqliteBusyTimeoutError extends Error {
+	override name = "SqliteBusyTimeoutError";
+	constructor(timeoutMs: number, cause: unknown) {
+		super(
+			`The actor's SQLite writer stayed busy for ${timeoutMs} ms, the limit. Set ${sqliteBusyTimeoutSetting} to raise it.`,
+			{ cause },
+		);
+	}
+}
+
+function isRetryableSqliteError(error: unknown): boolean {
+	return (
+		isRecord(error) &&
+		error.group === "sqlite" &&
+		typeof error.code === "string" &&
+		retryableSqliteCodes.has(error.code)
+	);
+}
+
+function sqliteBusyTimeoutMs(): number {
+	const raw = process.env[sqliteBusyTimeoutSetting];
+	if (raw === undefined || raw === "") return defaultSqliteBusyTimeoutMs;
+	const value = Number(raw);
+	if (!Number.isSafeInteger(value) || value < 1) {
+		throw new RangeError(`${sqliteBusyTimeoutSetting} must be a positive integer of milliseconds. Got: ${JSON.stringify(raw)}`);
+	}
+	return value;
+}
+
+function retrySqliteBusy<Result>(run: () => Result, timeoutMs: number): Result {
+	const started = performance.now();
+	for (let backoffMs = 1; ; backoffMs = Math.min(backoffMs * 2, maxSqliteBusyBackoffMs)) {
+		try {
+			return run();
+		} catch (error: unknown) {
+			if (!isRetryableSqliteError(error)) throw error;
+			const left = timeoutMs - (performance.now() - started);
+			if (left <= 0) throw new SqliteBusyTimeoutError(timeoutMs, error);
+			Atomics.wait(busyWait, 0, 0, Math.min(backoffMs, left));
+		}
+	}
+}
+
+/** Retries each synchronous call that finds the SQLite writer busy, up to `timeoutMs` in total. */
+export function retryingSqliteDatabase(
+	database: RivetSqliteDatabase,
+	timeoutMs = sqliteBusyTimeoutMs(),
+): RivetSqliteDatabase {
+	const retry = <Result>(run: () => Result): Result => retrySqliteBusy(run, timeoutMs);
+	const retrying: RivetSqliteDatabase = {
+		execSync: (sql, callback) => retry(() => database.execSync(sql, callback)),
+		executeSync: (sql, params) => retry(() => database.executeSync(sql, params)),
+		beginTransactionSync(transactionTimeoutMs, name) {
+			const transaction = retry(() => database.beginTransactionSync(transactionTimeoutMs, name));
+			return {
+				commitSync: () => retry(() => transaction.commitSync()),
+				execSync: (sql, callback) => retry(() => transaction.execSync(sql, callback)),
+				executeSync: (sql, params) => retry(() => transaction.executeSync(sql, params)),
+				rollbackSync: () => retry(() => transaction.rollbackSync()),
+			};
+		},
+		commitTicket: () => database.commitTicket(),
+		whenDurable: (ticket) => database.whenDurable(ticket),
+	};
+	const abortGeneration = database.abortGeneration?.bind(database);
+	if (abortGeneration !== undefined) retrying.abortGeneration = abortGeneration;
+	return retrying;
+}
+
 export interface RivetNativeDatabaseProvider {
 	open(actorId: string): Promise<RivetSqliteDatabase>;
 }

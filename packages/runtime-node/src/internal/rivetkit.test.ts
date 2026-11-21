@@ -3,7 +3,14 @@ import { once } from "node:events";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import test from "node:test";
 
-import { createRivetActorClient, sleepActorsOfExitedHosts } from "./rivetkit.js";
+import {
+	createRivetActorClient,
+	type RivetSqliteDatabase,
+	type RivetSqliteExecuteResult,
+	retryingSqliteDatabase,
+	sleepActorsOfExitedHosts,
+	SqliteBusyTimeoutError,
+} from "./rivetkit.js";
 
 test("creates stateless get-or-create handles with the pinned RivetKit client", async () => {
 	const client = createRivetActorClient({
@@ -128,4 +135,46 @@ test("a failed sleep call stops new calls and waits for the calls already sent",
 			}
 		},
 	);
+});
+
+function fakeSqliteDatabase(executeSync: () => RivetSqliteExecuteResult): RivetSqliteDatabase {
+	const fail = (): never => {
+		throw new Error("not used");
+	};
+	return {
+		beginTransactionSync: fail,
+		commitTicket: () => 0,
+		execSync: fail,
+		executeSync,
+		whenDurable: async () => {},
+	};
+}
+
+const writerBusy = (): Error => Object.assign(new Error("SQLite writer is busy."), { code: "writer_busy", group: "sqlite" });
+
+test("a SQLite call that finds the writer busy returns its result once the writer is free", () => {
+	let calls = 0;
+	const database = retryingSqliteDatabase(
+		fakeSqliteDatabase(() => {
+			calls += 1;
+			if (calls <= 2) throw writerBusy();
+			return { changes: 0, columns: ["x"], rows: [[1]] };
+		}),
+		1_000,
+	);
+	assert.deepEqual(database.executeSync("SELECT 1").rows, [[1]]);
+});
+
+test("a SQLite writer busy past the limit fails with an error that names the setting", () => {
+	const database = retryingSqliteDatabase(
+		fakeSqliteDatabase(() => {
+			throw writerBusy();
+		}),
+		30,
+	);
+	assert.throws(() => database.executeSync("SELECT 1"), (error: unknown) => {
+		assert.ok(error instanceof SqliteBusyTimeoutError);
+		assert.match(error.message, /stayed busy for 30 ms, the limit\. Set ORANGE_SQLITE_BUSY_TIMEOUT_MS to raise it\./);
+		return true;
+	});
 });

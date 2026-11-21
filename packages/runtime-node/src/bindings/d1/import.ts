@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import type { DurableObjectTurnDatabase } from "../durable-objects/gates.js";
-import type { RivetSynchronousSqliteExecutor } from "../../internal/rivetkit.js";
+import { type RivetSynchronousSqliteExecutor, SqliteBusyTimeoutError } from "../../internal/rivetkit.js";
 
 // The D1 actor's side of `orange migrate d1`: it takes a D1 export statement by statement, in small
 // commits that each record how far into the export they reach, so a copy resumes at that byte after a
@@ -17,6 +17,7 @@ const longStatementTimeoutMs = 3_600_000;
  * D1 actor from its last durable state, so a step can resume from what is durable.
  */
 export const isStorageBusy = (error: unknown): boolean =>
+	error instanceof SqliteBusyTimeoutError ||
 	/durability_failed|resetting to its last durable state|storage is overloaded|write_refused|flush retry deadline/i.test(errorMessageOf(error));
 
 const errorMessageOf = (error: unknown): string => (error instanceof Error ? `${error.message} ${String(error.cause ?? "")}` : String(error));
@@ -174,6 +175,9 @@ export class D1Import {
 	async #commit(write: (transaction: RivetSynchronousSqliteExecutor) => void, timeoutMs?: number): Promise<void> {
 		const database = this.#database();
 		database.commitTurn();
+		// A batch that the client retries after a busy or overloaded writer starts once every
+		// earlier commit is durable.
+		await database.whenDurable(database.commitTicket());
 		const foreignKeys = Number(database.executeSync("PRAGMA foreign_keys").rows[0]?.[0] ?? 0);
 		database.executeSync("PRAGMA foreign_keys = OFF");
 		try {

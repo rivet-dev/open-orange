@@ -108,7 +108,9 @@ test("opens the actor's native synchronous SQLite database", async () => {
 		},
 	});
 
-	assert.equal(client, database);
+	const result = { changes: 0, columns: ["x"], rows: [[1]] };
+	database.results.set("SELECT 1", result);
+	assert.deepEqual(client.executeSync("SELECT 1"), result);
 	assert.deepEqual(opened, ["actor-id"]);
 	await durableObjectDatabaseProvider.onMigrate(client);
 	await assert.rejects(

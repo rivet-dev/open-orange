@@ -212,6 +212,14 @@ export class R2BucketObject {
 		return this.#state.storage.transactionSync(closure);
 	}
 
+	// RivetKit 3.1.2-rc.2 refuses a write while earlier commits still flush, and rolls its whole
+	// transaction back. Chunks are large and concurrent puts interleave, so each write starts once
+	// earlier writes are durable.
+	async #writeTransaction<T>(closure: () => T): Promise<T> {
+		await this.#state.storage.sync();
+		return this.#transaction(closure);
+	}
+
 	async fetch(request: Request): Promise<Response | OrangeResponse> {
 		const url = new URL(request.url);
 		try {
@@ -251,7 +259,7 @@ export class R2BucketObject {
 		const blobId = requiredParameter(url, "blob");
 		const index = Number(requiredParameter(url, "idx"));
 		const bytes = new Uint8Array(await request.arrayBuffer());
-		this.#transaction(() => {
+		await this.#writeTransaction(() => {
 			this.#sql().exec(
 				"INSERT OR REPLACE INTO blob_chunks (blob_id, idx, bytes) VALUES (?, ?, ?)",
 				blobId,
@@ -392,7 +400,7 @@ export class R2BucketObject {
 
 	async #put(body: unknown): Promise<Response> {
 		const request = parseR2CommitRequest(body);
-		const object = this.#transaction((): R2StoredObject | null => {
+		const object = await this.#writeTransaction((): R2StoredObject | null => {
 			const current = this.#objectRow(request.key);
 			if (request.onlyIf !== undefined && !conditionPasses(request.onlyIf, current)) {
 				return null;
@@ -420,7 +428,7 @@ export class R2BucketObject {
 	async #delete(body: unknown): Promise<Response> {
 		const keys = Reflect.get(Object(body), "keys");
 		if (!Array.isArray(keys)) throw new TypeError("R2 delete requires keys");
-		this.#transaction(() => {
+		await this.#writeTransaction(() => {
 			for (const key of keys) {
 				const row = this.#sql()
 					.exec<Pick<ObjectRow, "blob_id" | "multipart_upload_id">>(
@@ -535,7 +543,7 @@ export class R2BucketObject {
 	}
 
 	async #uploadPart(request: R2PartRequest): Promise<Response> {
-		const etag = this.#transaction(() => {
+		const etag = await this.#writeTransaction(() => {
 			if (this.#uploadRow(request.key, request.uploadId)?.state !== uploadInProgress) {
 				throw R2StorageError.of("NoSuchUpload");
 			}
@@ -569,7 +577,7 @@ export class R2BucketObject {
 	// https://github.com/cloudflare/workers-sdk/blob/be87ff0382c53a294e948e49419d25d653c50e86/packages/miniflare/src/workers/r2/bucket.worker.ts#L453-L582
 	async #completeMultipartUpload(body: unknown): Promise<Response> {
 		const request = parseR2CompleteRequest(body);
-		const object = this.#transaction(() => {
+		const object = await this.#writeTransaction(() => {
 			const upload = this.#uploadRow(request.key, request.uploadId);
 			if (upload === undefined) throw R2StorageError.of("InternalError");
 			if (upload.state !== uploadInProgress) throw R2StorageError.of("NoSuchUpload");
@@ -653,7 +661,7 @@ export class R2BucketObject {
 
 	async #abortMultipartUpload(body: unknown): Promise<Response> {
 		const request = parseR2UploadRequest(body);
-		this.#transaction(() => {
+		await this.#writeTransaction(() => {
 			const upload = this.#uploadRow(request.key, request.uploadId);
 			if (upload === undefined) throw R2StorageError.of("InternalError");
 			// Aborting an aborted or completed upload is a no-op.

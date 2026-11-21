@@ -78,7 +78,9 @@ export interface RivetSqliteDatabase extends RivetSynchronousSqliteExecutor {
 // threads, so a synchronous caller blocks and retries, as before.
 const retryableSqliteCodes = new Set(["writer_busy", "storage_overloaded"]);
 export const sqliteBusyTimeoutSetting = "ORANGE_SQLITE_BUSY_TIMEOUT_MS";
-const defaultSqliteBusyTimeoutMs = 30_000;
+// The wait blocks the whole Node.js thread, so it stays short: long enough for a flush to finish,
+// and short enough that a stuck writer fails the call instead of freezing every other object.
+const defaultSqliteBusyTimeoutMs = 1_000;
 const maxSqliteBusyBackoffMs = 50;
 const busyWait = new Int32Array(new SharedArrayBuffer(4));
 

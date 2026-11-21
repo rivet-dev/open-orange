@@ -366,18 +366,16 @@ export class DurableObjectStateController {
 		return runWithWorkerTmp(this.#tmp, () => runWithOutputGate(database.outputGate, operation));
 	}
 
-	dispose(): void {
+	/** Stops the object and resolves once its open turn committed. */
+	dispose(): Promise<void> {
 		this.#active = false;
 		// Work of an object that is gone must not keep its actor awake, and its timers don't run.
 		cancelTimers(this.#tmp);
 		this.#releaseActor();
 		this.#tmp.end();
 		this.#retiredController.abort(new Error("Durable Object generation is no longer active"));
-		try {
-			this.#database?.commitTurn();
-		} catch {
-			// A failed commit already broke the object, and its next generation loads durable state.
-		}
+		// A failed commit already broke the object, and its next generation loads durable state.
+		return this.#database?.commitTurn().catch(() => {}) ?? Promise.resolve();
 	}
 
 	/**
@@ -713,23 +711,25 @@ export function createDurableObjectGeneration(
 export async function disposeDurableObjectGeneration(
 	generation: DurableObjectGeneration,
 ): Promise<void> {
-	generation.stateController.dispose();
+	const committed = generation.stateController.dispose();
 	generation.hibernationLifecycle.dispose();
 	generation.webSocketUpgrades.dispose();
 	generation.hibernatableWebSockets.dispose();
 	await generation.rpcContinuations.dispose();
+	await committed;
 }
 
 export async function hibernateDurableObjectGeneration(
 	generation: DurableObjectGeneration,
 ): Promise<void> {
-	generation.stateController.dispose();
+	const committed = generation.stateController.dispose();
 	generation.hibernationLifecycle.dispose();
 	generation.webSocketUpgrades.dispose((socket) =>
 		generation.hibernatableWebSockets.isResponseSocketHibernatable(socket),
 	);
 	generation.hibernatableWebSockets.releaseForSleep();
 	await generation.rpcContinuations.dispose();
+	await committed;
 }
 
 function isDurableObjectGeneration(

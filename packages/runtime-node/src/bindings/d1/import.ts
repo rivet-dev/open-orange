@@ -174,10 +174,9 @@ export class D1Import {
 	// most the transaction it was in. Foreign keys are off: rows arrive in the export's order.
 	async #commit(write: (transaction: RivetSynchronousSqliteExecutor) => void, timeoutMs?: number): Promise<void> {
 		const database = this.#database();
-		database.commitTurn();
-		// A batch that the client retries after a busy or overloaded writer starts once every
-		// earlier commit is durable.
-		await database.whenDurable(database.commitTicket());
+		// A batch, also one that the client retries after a busy or overloaded writer, starts
+		// once every earlier commit is durable, so its own commit is never refused.
+		await database.waitForDurability();
 		const foreignKeys = Number(database.executeSync("PRAGMA foreign_keys").rows[0]?.[0] ?? 0);
 		database.executeSync("PRAGMA foreign_keys = OFF");
 		try {
@@ -192,7 +191,7 @@ export class D1Import {
 				throw error;
 			}
 		} finally {
-			database.commitTurn();
+			await database.commitTurn();
 			database.executeSync(`PRAGMA foreign_keys = ${foreignKeys === 0 ? "OFF" : "ON"}`);
 		}
 		await database.whenDurable(database.commitTicket());

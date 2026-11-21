@@ -50,6 +50,8 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	#turnConfirmed = false;
 	#turnStartTicket = 0;
 	#turnCommitted: PromiseWithResolvers<number> | undefined;
+	// The commit of the open turn while it waits for earlier commits to become durable.
+	#turnCommit: Promise<void> | undefined;
 	#outputTicket = 0;
 	#durableTicket = 0;
 	#pendingDurability: { promise: Promise<void>; ticket: number } | undefined;
@@ -155,14 +157,31 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 
 	/**
 	 * Begins an explicit transaction for `storage.transaction()`. Workerd starts one only after
-	 * the open implicit transaction committed locally.
+	 * the open implicit transaction committed locally. It also starts once every earlier commit
+	 * is durable, so its own commit is never refused; see commitTurn().
 	 * https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/io/actor-sqlite.c%2B%2B#L845-L860
 	 */
+	async beginTransaction(
+		timeoutMs?: number,
+		name?: string,
+	): Promise<RivetSynchronousSqliteTransaction> {
+		// A write that runs while this waits opens a new turn, which must commit first.
+		while (this.#turn !== undefined || this.#database.commitTicket() > this.#durableTicket) {
+			await this.commitTurn();
+			await this.#waitUntilDurable(this.#database.commitTicket());
+		}
+		return this.beginTransactionSync(timeoutMs, name);
+	}
+
+	/** Begins an explicit transaction. The caller has committed the turn; see beginTransaction(). */
 	beginTransactionSync(
 		timeoutMs?: number,
 		name?: string,
 	): RivetSynchronousSqliteTransaction {
-		this.commitTurn();
+		this.#assertNotBroken();
+		if (this.#turn !== undefined) {
+			throw new Error("An explicit transaction cannot begin while the turn transaction is open");
+		}
 		const transaction = this.#database.beginTransactionSync(timeoutMs, name);
 		this.#explicitTransaction = transaction;
 		return this.#guardTransaction(transaction);
@@ -240,8 +259,58 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		return this.#database.whenDurable(ticket);
 	}
 
-	/** Commits the open turn transaction locally. A failed commit breaks the object. */
-	commitTurn(): void {
+	/**
+	 * Commits the open turn transaction locally and resolves when it committed. A failed commit
+	 * breaks the object and rejects.
+	 *
+	 * RivetKit 3.1.2-rc.2 never lets a synchronous commit wait. While earlier commits still flush,
+	 * it refuses one that would grow their backlog past its cap with `sqlite.storage_overloaded`,
+	 * and the refusal rolls the whole turn back. So the turn commits only once every earlier
+	 * commit is durable, and writes made meanwhile join it. The open turn holds RivetKit's writer,
+	 * so nothing else commits in between and commits stay in order. The wait ends when the flush
+	 * ends, or breaks the object when RivetKit gives up on storage.
+	 */
+	commitTurn(): Promise<void> {
+		if (this.#broken !== undefined) return Promise.reject(this.#broken);
+		const turn = this.#turn;
+		if (turn === undefined) return Promise.resolve();
+		if (this.#turnCommit !== undefined) return this.#turnCommit;
+		if (this.#database.commitTicket() <= this.#durableTicket) {
+			try {
+				this.#commitTurnNow();
+			} catch (error: unknown) {
+				return Promise.reject(error);
+			}
+			return Promise.resolve();
+		}
+		const commit = this.#commitTurnWhenDurable(turn);
+		this.#turnCommit = commit;
+		// A failure broke the object, which gated outputs and later calls observe.
+		commit.catch(() => {});
+		return commit;
+	}
+
+	async #commitTurnWhenDurable(turn: RivetSynchronousSqliteTransaction): Promise<void> {
+		try {
+			for (
+				let ticket = this.#database.commitTicket();
+				ticket > this.#durableTicket;
+				ticket = this.#database.commitTicket()
+			) {
+				await this.#waitUntilDurable(ticket);
+			}
+		} finally {
+			this.#turnCommit = undefined;
+		}
+		// A rollback or reset discarded the turn meanwhile.
+		if (this.#turn !== turn) {
+			this.#assertNotBroken();
+			return;
+		}
+		this.#commitTurnNow();
+	}
+
+	#commitTurnNow(): void {
 		this.#assertNotBroken();
 		if (this.#turn === undefined) return;
 		// Waiters added so far wait for writes that this commit runs.
@@ -270,6 +339,8 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		this.#settleCommitBoundaryWaiters(waiters, true);
 		if (confirmed) this.#holdOutputUntilDurable(this.#turnStartTicket);
 		committed?.resolve(this.#outputTicket);
+		// Learns when this commit is durable, so the next turn commits without waiting once it is.
+		this.#waitUntilDurable(this.#database.commitTicket()).catch(() => {});
 	}
 
 	// Commits always run outside user savepoints: transactionSync() closes its savepoint before the
@@ -307,7 +378,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	 * https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/actor-state.c%2B%2B#L780-L793
 	 */
 	async waitForDurability(): Promise<void> {
-		this.commitTurn();
+		await this.commitTurn();
 		await this.#waitUntilDurable(this.#database.commitTicket());
 	}
 
@@ -317,7 +388,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	 * https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/io/worker-entrypoint.c%2B%2B#L515-L524
 	 */
 	async waitForOutputGate(): Promise<void> {
-		this.commitTurn();
+		await this.commitTurn();
 		await this.#waitForOutputLock();
 	}
 
@@ -442,11 +513,8 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/io/actor-sqlite.c%2B%2B#L353-L357
 		setImmediate(() => {
 			if (this.#turn !== turn) return;
-			try {
-				this.commitTurn();
-			} catch {
-				// commitTurn already broke the object; gated outputs observe it.
-			}
+			// A failed commit broke the object; gated outputs observe it.
+			this.commitTurn().catch(() => {});
 		});
 		return turn;
 	}

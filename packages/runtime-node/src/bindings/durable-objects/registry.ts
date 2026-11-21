@@ -787,8 +787,8 @@ class DurableObjectGenerationSlot {
 		const current = this.#current;
 		if (current === undefined) return read();
 		const generation = await current;
-		return await generation.stateController.runEvent(() => {
-			generation.database?.commitTurn();
+		return await generation.stateController.runEvent(async () => {
+			await generation.database?.commitTurn();
 			return read();
 		});
 	}

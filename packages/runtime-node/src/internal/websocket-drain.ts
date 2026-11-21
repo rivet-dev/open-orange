@@ -17,7 +17,10 @@ const drainSpacingMs = 10;
 const maximumDrainWindowMs = 10_000;
 
 /** Closes one WebSocket. Resolves when it is closed or given up on. */
-export type WebSocketDrainCloser = () => Promise<void>;
+export type WebSocketDrainCloser = (() => Promise<void>) & {
+	/** A client may disconnect before its scheduled drain starts. */
+	readonly closed?: Promise<void>;
+};
 
 export function webSocketDrainWindowMs(sockets: number): number {
 	return Math.min(maximumDrainWindowMs, sockets * drainSpacingMs);
@@ -28,8 +31,21 @@ export async function drainWebSockets(closers: readonly WebSocketDrainCloser[]):
 	const windowMs = webSocketDrainWindowMs(closers.length);
 	await Promise.all(
 		closers.map(async (close) => {
-			await delay(Math.random() * windowMs);
-			await close();
+			if (close.closed === undefined) {
+				await delay(Math.random() * windowMs);
+				await close();
+				return;
+			}
+			const waiting = new AbortController();
+			try {
+				const due = await Promise.race([
+					delay(Math.random() * windowMs, undefined, { signal: waiting.signal }).then(() => true),
+					close.closed.then(() => false),
+				]);
+				if (due) await close();
+			} finally {
+				waiting.abort();
+			}
 		}),
 	);
 }

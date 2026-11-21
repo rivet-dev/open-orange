@@ -136,7 +136,7 @@ agentOS's limits apply:
 | Prewarmed VMs | 2 for each network mode by default, from 0 to 16 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
 | `vmLimits.heapMb` | 4096 by default. Set `ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB` to change it, from 1 to 65536. | The load throws a `WorkerLoaderLimitError` that names the setting. |
 | `vmLimits.cpuTimeMs` | 1800000 (30 minutes) by default. Set `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS` to change it, from 1 to 2147483647. | The load throws a `WorkerLoaderLimitError` that names the setting. |
-| Bytes that one WebSocket holds for a side that has not taken them, in each direction. One message counts in full. | 4194304 (4 MiB) by default. Set `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES` to change it, from 1 to 16777216. | The socket closes with code 1011 and the reason `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES exceeded`. Orange logs a `WorkerLoaderLimitError` that names the setting. |
+| Bytes that one WebSocket holds for a side that has not taken them, in each direction. One message counts in full. | 4194304 (4 MiB) by default. Set `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES` to change it, from 1 to 8388608 (8 MiB). | The socket closes with code 1011 and the reason `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES exceeded`. Orange logs a `WorkerLoaderLimitError` that names the setting. |
 
 Each running dynamic Worker uses about 54 MiB. Prewarmed VMs that no Worker
 has claimed do not count toward `ORANGE_WORKER_LOADER_MAX_WORKERS`, and the
@@ -247,6 +247,10 @@ export default httpServerHandler({ port: 8080 });
 - The WebSocket API has no backpressure. Each side counts the bytes that the
   other side has not taken yet, and closes the socket above the limit in
   [Limits](#limits). A message larger than the limit closes it too.
+- The dynamic Worker's process decodes each message in its V8 heap. In a test
+  with the default 128 MiB heap, a 6 MiB message passed, and an 8 MiB message
+  ended the process with a V8 heap error. With `vmLimits.heapMb: 1024`, an
+  8 MiB message passed.
 - A 101 response passes only as the result of a call. Inside another value,
   such as an array of responses, it fails the call.
 

@@ -16,8 +16,9 @@ import { WorkerLoaderLimitError } from "./errors.js";
 
 export const maxWebSocketBufferSetting = "ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES";
 export const defaultMaxWebSocketBufferBytes = 4 * 1024 * 1024;
-// Cap'n Web ends a session that receives a message above 32 MiB, and base64 adds a third.
-export const maxWebSocketBufferBytesCap = 16 * 1024 * 1024;
+// One message is one write to the dynamic Worker's stdin, which agentOS limits to 16 MiB, and
+// base64 adds a third. A write above that limit ends the Worker's process.
+export const maxWebSocketBufferBytesCap = 8 * 1024 * 1024;
 
 // One limit for the process: the runtime's setting in the parent, and the value that the parent
 // passed at start in the dynamic Worker.

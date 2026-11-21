@@ -323,13 +323,6 @@ export class DurableObjectStateController {
 		operation: () => Result | Promise<Result>,
 	): Promise<Result> {
 		this.#assertActive();
-		// RivetKit 3.1.2-rc.2 refuses a synchronous commit, or a large statement, while earlier
-		// commits still flush, and SQLite then rolls the whole transaction back. Each event starts
-		// once earlier commits are durable, as every commit was before rc.2, so it never meets that.
-		// The input gate is checked after this wait, so a critical section that opened meanwhile
-		// still holds the event.
-		await this.#database?.waitForDurability();
-		this.#assertActive();
 		for (
 			let held = this.#inputGate.held();
 			held !== undefined;

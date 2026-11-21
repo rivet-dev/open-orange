@@ -42,7 +42,6 @@ export interface InternalObjectState {
 	readonly storage: {
 		readonly sql: SqlStorage;
 		transactionSync<T>(closure: () => T): T;
-		sync(): Promise<void>;
 	};
 }
 

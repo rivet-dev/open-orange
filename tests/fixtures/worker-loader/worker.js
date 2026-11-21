@@ -462,6 +462,31 @@ const routes = {
 			reserved: await probe("reserved", [{ guestPath: "/open-orange/data" }]),
 		};
 	},
+	// A dynamic Worker holds about 300 MiB of JavaScript heap, more than the agentOS default.
+	async vmLimits(env) {
+		const code = (vmLimits) => () => ({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			vmLimits,
+			modules: {
+				"main.js": `
+					export default {
+						grow() {
+							const keep = [];
+							for (let i = 0; i < 300; i++) keep.push(new Array(131072).fill(i));
+							return keep.length;
+						},
+					};
+				`,
+			},
+		});
+		const grow = (name, vmLimits) => settle(env.LOADER.get(name, code(vmLimits)).getEntrypoint().grow({}));
+		return {
+			defaults: await grow("heap-default", undefined),
+			larger: await grow("heap-larger", { heapMb: 1024 }),
+			overCap: await grow("heap-over-cap", { heapMb: 1_000_000 }),
+		};
+	},
 	// Loads `n` dynamic Workers at once, alternating the VM network mode.
 	async pool(env, _ctx, request) {
 		const n = Number(new URL(request.url).searchParams.get("n"));

@@ -21,7 +21,7 @@ import type { AgentOs } from "@rivet-dev/agentos-core";
 
 import { onRuntimeClose } from "../../internal/close-hooks.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
-import type { WorkerChild, WorkerFile, WorkerHost, WorkerLoaderBackend, WorkerMount } from "./loader.js";
+import type { WorkerChild, WorkerFile, WorkerHost, WorkerLoaderBackend, WorkerMount, WorkerVmLimits } from "./loader.js";
 
 // Where the child and runtime modules live inside each VM.
 const runtimeRoot = "/open-orange/runtime";
@@ -179,9 +179,11 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		onRuntimeClose(() => this.#close());
 	}
 
-	async open(network: boolean, mounts: readonly WorkerMount[]): Promise<WorkerHost> {
+	async open(network: boolean, mounts: readonly WorkerMount[], vmLimits?: WorkerVmLimits): Promise<WorkerHost> {
 		if (this.#closed) throw new Error("The Worker Loader has stopped.");
 		const mode: NetworkMode = network ? "network" : "deny";
+		// agentOS sets limits only in `AgentOs.create()`, so a pooled VM cannot take them.
+		if (vmLimits !== undefined) return this.#openOwn(mode, mounts, undefined, vmLimits);
 		if (mounts.length > 0) {
 			const refill = (): void => {
 				setTimeout(() => this.prewarmMounted(network), refillDelayMs).unref();
@@ -213,8 +215,13 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		return this.#openOwn(mode, [], loaded);
 	}
 
-	async #openOwn(mode: NetworkMode, mounts: readonly WorkerMount[], loaded = (): void => undefined): Promise<WorkerHost> {
-		const owned = this.#boot(mode, mounts);
+	async #openOwn(
+		mode: NetworkMode,
+		mounts: readonly WorkerMount[],
+		loaded = (): void => undefined,
+		vmLimits?: WorkerVmLimits,
+	): Promise<WorkerHost> {
+		const owned = this.#boot(mode, mounts, vmLimits);
 		let booted: BootedVm;
 		try {
 			booted = await owned.booted;
@@ -407,8 +414,8 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		await ready.owned.dispose();
 	}
 
-	#boot(mode: NetworkMode, mounts: readonly WorkerMount[] = []): OwnedVm {
-		const booted = this.#create(mode, mounts);
+	#boot(mode: NetworkMode, mounts: readonly WorkerMount[] = [], vmLimits?: WorkerVmLimits): OwnedVm {
+		const booted = this.#create(mode, mounts, vmLimits);
 		let disposed: Promise<void> | undefined;
 		const owned: OwnedVm = {
 			booted,
@@ -432,7 +439,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		return owned;
 	}
 
-	async #create(mode: NetworkMode, mounts: readonly WorkerMount[]): Promise<BootedVm> {
+	async #create(mode: NetworkMode, mounts: readonly WorkerMount[], vmLimits?: WorkerVmLimits): Promise<BootedVm> {
 		const bundlePath = resolve(this.#options.bundlePath());
 		const manifest: unknown = JSON.parse(await readFile(join(bundlePath, "manifest.json"), "utf8"));
 		if (!isRecord(manifest)) throw new Error("The agentOS runtime bundle manifest must be an object");
@@ -459,6 +466,9 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 					...workerMounts,
 				],
 				permissions: { network: mode === "network" ? "allow" : "deny" },
+				...(vmLimits === undefined
+					? {}
+					: { limits: { jsRuntime: { cpuTimeLimitMs: vmLimits.cpuTimeMs, v8HeapLimitMb: vmLimits.heapMb } } }),
 			});
 			return { bundleDirectory, moduleRewrites, vm };
 		} catch (error: unknown) {

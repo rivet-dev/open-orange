@@ -64,10 +64,19 @@ export interface WorkerMount {
 	hostPath?: string;
 }
 
+// Larger limits for the dynamic Worker's VM than the agentOS defaults. An omitted member keeps the
+// agentOS default.
+export interface WorkerVmLimits {
+	// The V8 heap of the Worker's process.
+	heapMb?: number;
+	// The CPU time of the Worker's process over its whole life, not per request.
+	cpuTimeMs?: number;
+}
+
 // Where dynamic Worker processes run. `network` is false for
 // `globalOutbound: null` or a Fetcher, which never need direct network access.
 export interface WorkerLoaderBackend {
-	open(network: boolean, mounts: readonly WorkerMount[]): Promise<WorkerHost>;
+	open(network: boolean, mounts: readonly WorkerMount[], vmLimits?: WorkerVmLimits): Promise<WorkerHost>;
 }
 
 export interface WorkerLoaderOptions {
@@ -127,6 +136,36 @@ function normalizeMounts(value: unknown, projectRoot: string): WorkerMount[] {
 		}
 		return { guestPath, hostPath };
 	});
+}
+
+// `vmLimits` is an Orange extension to the Worker Loader code object, like `mounts`, so a parent can
+// give a dynamic Worker that runs a build tool, such as a Next.js dev server, more heap and CPU time.
+// Cloudflare's own `limits` (cpuMs, subRequests) are per request and are not this. Each member is
+// bounded by a runtime setting, so a code callback cannot take more than the host allows.
+function normalizeVmLimits(value: unknown, caps: VmLimitCaps): WorkerVmLimits | undefined {
+	if (value === undefined) return undefined;
+	if (!isRecord(value)) throw new TypeError("Dynamic Worker vmLimits must be an object.");
+	const member = (name: "heapMb" | "cpuTimeMs", cap: number, setting: string): number | undefined => {
+		const raw = value[name];
+		if (raw === undefined) return undefined;
+		if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 1) {
+			throw new TypeError(`Dynamic Worker vmLimits.${name} must be a positive integer. Got: ${JSON.stringify(raw)}`);
+		}
+		if (raw > cap) {
+			throw new WorkerLoaderLimitError(
+				`Dynamic Worker vmLimits.${name} is ${raw}, above the runtime cap of ${cap}. Set ${setting} to raise the cap.`,
+			);
+		}
+		return raw;
+	};
+	for (const name of Object.keys(value)) {
+		if (name !== "heapMb" && name !== "cpuTimeMs") {
+			throw new TypeError(`Dynamic Worker vmLimits has an unknown member ${JSON.stringify(name)}. Use heapMb or cpuTimeMs.`);
+		}
+	}
+	const heapMb = member("heapMb", caps.maxVmHeapMb, maxVmHeapSetting);
+	const cpuTimeMs = member("cpuTimeMs", caps.maxVmCpuTimeMs, maxVmCpuTimeSetting);
+	return { ...(heapMb === undefined ? {} : { heapMb }), ...(cpuTimeMs === undefined ? {} : { cpuTimeMs }) };
 }
 
 // Workerd caps a Dynamic Worker's code at 64 MiB and its env at 1 MiB. Those are Cloudflare quotas,
@@ -254,9 +293,10 @@ interface PreparedCode {
 	modules: DynamicModule[];
 	mounts: WorkerMount[];
 	outbound: unknown;
+	vmLimits: WorkerVmLimits | undefined;
 }
 
-function prepareCode(code: unknown, projectRoot: string): PreparedCode {
+function prepareCode(code: unknown, projectRoot: string, caps: VmLimitCaps): PreparedCode {
 	if (!isRecord(code)) throw new TypeError("Dynamic Worker code must be an object.");
 	if (typeof code.compatibilityDate !== "string") {
 		throw new TypeError("Dynamic Worker code must have a compatibilityDate string.");
@@ -266,13 +306,14 @@ function prepareCode(code: unknown, projectRoot: string): PreparedCode {
 	}
 	const modules = normalizeModules(code.mainModule, code.modules);
 	const mounts = normalizeMounts(code.mounts, projectRoot);
+	const vmLimits = normalizeVmLimits(code.vmLimits, caps);
 	const env = code.env ?? {};
 	if (!isRecord(env)) throw new TypeError("Dynamic Worker env must be an object.");
 	let outbound: unknown;
 	if (code.globalOutbound === undefined) outbound = "network";
 	else if (code.globalOutbound === null) outbound = "blocked";
 	else outbound = code.globalOutbound;
-	return { env, mainModule: code.mainModule, modules, mounts, outbound };
+	return { env, mainModule: code.mainModule, modules, mounts, outbound, vmLimits };
 }
 
 interface LoaderSession {
@@ -282,8 +323,19 @@ interface LoaderSession {
 
 export const maxWorkersSetting = "ORANGE_WORKER_LOADER_MAX_WORKERS";
 export const idleTimeoutSetting = "ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS";
+export const maxVmHeapSetting = "ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB";
+export const maxVmCpuTimeSetting = "ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS";
 const defaultMaxWorkers = 32;
 const defaultIdleTimeoutMs = 30_000;
+// The largest `vmLimits` a code callback may ask for, unless the runtime settings raise them.
+const defaultMaxVmHeapMb = 4_096;
+const defaultMaxVmCpuTimeMs = 30 * 60_000;
+const maxVmHeapMb = 65_536;
+
+interface VmLimitCaps {
+	maxVmCpuTimeMs: number;
+	maxVmHeapMb: number;
+}
 const warnRatio = 0.8;
 
 // A new dynamic Worker needs a slot, and every running one holds a slot until it stops.
@@ -318,14 +370,19 @@ function positiveIntegerSetting(
 export class DynamicWorkerPool {
 	readonly idleTimeoutMs: number;
 	readonly maxWorkers: number;
+	readonly vmLimitCaps: VmLimitCaps;
 	// Least recently used first.
 	readonly #live = new Set<DynamicWorker>();
 	readonly #warn: (message: string) => void;
 	#warned = false;
 
-	constructor(limits: { idleTimeoutMs: number; maxWorkers: number }, warn: (message: string) => void) {
+	constructor(
+		limits: { idleTimeoutMs: number; maxWorkers: number; vmLimitCaps?: VmLimitCaps },
+		warn: (message: string) => void,
+	) {
 		this.idleTimeoutMs = limits.idleTimeoutMs;
 		this.maxWorkers = limits.maxWorkers;
+		this.vmLimitCaps = limits.vmLimitCaps ?? { maxVmCpuTimeMs: defaultMaxVmCpuTimeMs, maxVmHeapMb: defaultMaxVmHeapMb };
 		this.#warn = warn;
 	}
 
@@ -337,6 +394,10 @@ export class DynamicWorkerPool {
 			{
 				idleTimeoutMs: positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs),
 				maxWorkers: positiveIntegerSetting(settings, maxWorkersSetting, defaultMaxWorkers, Number.MAX_SAFE_INTEGER),
+				vmLimitCaps: {
+					maxVmCpuTimeMs: positiveIntegerSetting(settings, maxVmCpuTimeSetting, defaultMaxVmCpuTimeMs, maxTimerDelayMs),
+					maxVmHeapMb: positiveIntegerSetting(settings, maxVmHeapSetting, defaultMaxVmHeapMb, maxVmHeapMb),
+				},
 			},
 			warn,
 		);
@@ -446,7 +507,7 @@ class DynamicWorker {
 		let host: WorkerHost | undefined;
 		try {
 			const prepared = await this.#getCode();
-			host = await this.#options.backend.open(prepared.outbound === "network", prepared.mounts);
+			host = await this.#options.backend.open(prepared.outbound === "network", prepared.mounts, prepared.vmLimits);
 			const { bundleRoot } = host;
 			// Linked modules go through the bundle mount too. Writing them into the VM costs one
 			// sidecar file write each, which took 18 s for 1,310 data-module wrappers.
@@ -784,7 +845,7 @@ export class WorkerLoader {
 		if (typeof getCode !== "function") {
 			throw new TypeError("WorkerLoader.get() requires a code callback.");
 		}
-		const prepare = async (): Promise<PreparedCode> => prepareCode(await getCode(), this.#options.projectRoot);
+		const prepare = async (): Promise<PreparedCode> => prepareCode(await getCode(), this.#options.projectRoot, this.#options.pool.vmLimitCaps);
 		if (name === null || name === undefined) {
 			return new WorkerStub(new UnnamedWorkerHandle(() => this.#create("(anonymous)", prepare, () => undefined)));
 		}
@@ -812,7 +873,7 @@ export class WorkerLoader {
 	// Like workerd, load() copies the code before it returns, so later changes
 	// to the caller's buffers do not reach the Worker, and invalid code throws here.
 	load(code: unknown): WorkerStub {
-		const prepared = prepareCode(code, this.#options.projectRoot);
+		const prepared = prepareCode(code, this.#options.projectRoot, this.#options.pool.vmLimitCaps);
 		return new WorkerStub(
 			new UnnamedWorkerHandle(() => this.#create("(anonymous)", async () => prepared, () => undefined)),
 		);

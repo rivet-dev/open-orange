@@ -135,6 +135,14 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			assert.match(loadError(mounts.reserved), /is in \/open-orange, which OpenOrange reserves/);
 			assert.equal(await readFile(join(project.directory, "mounted", "hello.txt"), "utf8"), "mounted file\n");
 
+			// A Worker that needs more heap than the agentOS default fails, and runs with
+			// vmLimits.heapMb. A request above the runtime cap fails the load and names the setting.
+			const vmLimits = await get("vmLimits");
+			assert.ok(isRecord(vmLimits), JSON.stringify(vmLimits));
+			assert.ok(isRecord(vmLimits.defaults) && "error" in vmLimits.defaults, JSON.stringify(vmLimits.defaults));
+			assert.deepEqual(vmLimits.larger, { value: 300 });
+			assert.match(loadError(vmLimits.overCap), /vmLimits\.heapMb is 1000000, above the runtime cap of 4096\. Set ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB/);
+
 			// A dynamic Worker sees only the env it was given, not the parent's
 			// globals, vars, or process.env.
 			assert.deepEqual(await get("isolation"), {

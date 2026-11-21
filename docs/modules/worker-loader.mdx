@@ -111,6 +111,7 @@ Hello from a dynamic Worker
 | Wasm exception handling with exnref (`try_table`, `throw_ref`), as Rust `panic=unwind` builds use | Supported | On by default, as in workerd. See [The VM runtime](#the-vm-runtime). |
 | A `node:http` server through `cloudflare:node` | Supported | An Express app serves requests. |
 | `mounts` | Orange extension | Mounts a project directory read-only, or an empty writable directory, into the VM. See [Mounts](#mounts). |
+| `vmLimits` | Orange extension | Gives the dynamic Worker's VM more V8 heap or CPU time than the agentOS default, up to a runtime cap. See [VM limits](#vm-limits). |
 | Python modules and compiled `WebAssembly.Module` values | Not supported | Throw a `TypeError`. |
 | `getDurableObjectClass()` | Not supported | Throws a `NotSupportedError`. |
 | `connect()` on an entrypoint, or through a Fetcher `globalOutbound` | Not supported | Throws. |
@@ -131,6 +132,8 @@ agentOS's limits apply:
 | Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, `get()` or `load()` throws a `WorkerLoaderLimitError` that names the limit. At 80% of the limit, `orange dev` logs a warning. |
 | Idle time before a dynamic Worker stops | 30 seconds. Set `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` to change it, from 1 to 2147483647. | The dynamic Worker stops and frees its VM. The next call loads it again. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
 | Prewarmed VMs | 2 for each network mode by default, from 0 to 16 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
+| `vmLimits.heapMb` | 4096 by default. Set `ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB` to change it, from 1 to 65536. | The load throws a `WorkerLoaderLimitError` that names the setting. |
+| `vmLimits.cpuTimeMs` | 1800000 (30 minutes) by default. Set `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS` to change it, from 1 to 2147483647. | The load throws a `WorkerLoaderLimitError` that names the setting. |
 
 Each running dynamic Worker uses about 54 MiB. Prewarmed VMs that no Worker
 has claimed do not count toward `ORANGE_WORKER_LOADER_MAX_WORKERS`, and the
@@ -238,6 +241,34 @@ env.LOADER.get("next", () => ({
 - A mount that breaks a rule fails the load with a `TypeError` that names it.
 - `orange deploy` does not ship mounted directories yet.
 
+#### VM limits
+
+`vmLimits` is an Orange extension to the code object. It gives one dynamic
+Worker's VM more than the agentOS defaults (a 128 MiB V8 heap and 30 seconds
+of CPU time for the Worker's process), for work such as a bundler or a dev
+server:
+
+```js
+env.LOADER.get("next-dev", () => ({
+  compatibilityDate: "2026-01-01",
+  mainModule: "worker.js",
+  modules: { "worker.js": workerCode },
+  vmLimits: { heapMb: 4096, cpuTimeMs: 30 * 60_000 },
+}));
+```
+
+- `heapMb` is the V8 heap of the Worker's process. `cpuTimeMs` is the CPU time
+  of that process over its whole life, not per request. An omitted member keeps
+  the agentOS default.
+- Each member is a positive integer, at most the runtime cap in
+  [Limits](#limits). A member above the cap fails the load with a
+  `WorkerLoaderLimitError`. Another value or member fails it with a `TypeError`.
+- Only the parent Worker's code callback sets `vmLimits`.
+- A Worker with `vmLimits` boots its own VM, because agentOS sets limits only
+  when it creates a VM. It does not use the prewarmed pool.
+- Cloudflare's `limits` (`cpuMs`, `subRequests`) are per request. Orange
+  accepts and ignores them.
+
 #### The VM runtime
 
 - The agentOS VM runs Node.js 22.
@@ -274,6 +305,7 @@ env.LOADER.get("next", () => ({
 | `connect()` through a Fetcher `globalOutbound` | `OpenOrange does not support connect() through a dynamic Worker's globalOutbound fetcher. Use fetch() instead.` |
 | A VM that cannot boot | `OpenOrange cannot boot the agentOS VM for a dynamic Worker: <message>. Dynamic Workers never run on the host.` |
 | A new dynamic Worker when the limit is reached and none is idle | `WorkerLoaderLimitError`: `OpenOrange cannot start another dynamic Worker: <n> are running, none is idle, and the limit is <limit>. Raise ORANGE_WORKER_LOADER_MAX_WORKERS or let calls finish first.` |
+| `vmLimits` above the runtime cap | `WorkerLoaderLimitError`: `Dynamic Worker vmLimits.heapMb is <n>, above the runtime cap of <cap>. Set ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB to raise the cap.` (`cpuTimeMs` names `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS`) |
 | A JavaScript or CommonJS module over 16 MiB | `RangeError`: `Dynamic Worker file <name> is <n> bytes. agentOS writes one file into its VM as one message of at most 16777216 bytes (16 MiB). Split the module.` |
 
 #### Deviations

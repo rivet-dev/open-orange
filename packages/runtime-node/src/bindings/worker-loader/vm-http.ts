@@ -22,6 +22,7 @@ import {
 	normalizeListenArgs,
 	portMapper,
 } from "../../modules/node-http/port-mapper.js";
+import { upgradeToWebSocket } from "./vm-http-upgrade.js";
 
 export * from "node:http";
 export { ClientRequest, get, request };
@@ -365,18 +366,44 @@ class VmServerResponse extends Writable {
 	}
 }
 
+// workerd exposes the Worker env, ctx, and cf on the request.
+function setCloudflare(req: VmIncomingMessage, request: Request, env: unknown, ctx: unknown): void {
+	const cloudflare: Record<string, unknown> = { ctx, env };
+	if ("cf" in request) cloudflare.cf = request.cf;
+	Reflect.set(req, "cloudflare", cloudflare);
+}
+
+// Like Node.js, a server without an "upgrade" listener gets the request as an ordinary one.
+function isWebSocketUpgrade(server: http.Server, request: Request): boolean {
+	return (
+		request.method === "GET" &&
+		request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+		server.listenerCount("upgrade") > 0
+	);
+}
+
+function dispatchUpgrade(server: http.Server, request: Request, env: unknown, ctx: unknown): Promise<Response> {
+	// The frames of the socket are not compressed, so the server must not negotiate an extension.
+	const headers = new Headers(request.headers);
+	headers.delete("sec-websocket-extensions");
+	const offered = new Request(request, { headers });
+	return upgradeToWebSocket((socket, head) => {
+		const req = new VmIncomingMessage(offered, socket);
+		setCloudflare(req, request, env, ctx);
+		server.emit("upgrade", req, socket, head);
+	});
+}
+
 function dispatchToServer(
 	server: http.Server,
 	request: Request,
 	env: unknown,
 	ctx: unknown,
 ): Promise<Response> {
+	if (isWebSocketUpgrade(server, request)) return dispatchUpgrade(server, request, env, ctx);
 	return new Promise<Response>((resolve, reject) => {
 		const req = new VmIncomingMessage(request, socketStub());
-		// workerd exposes the Worker env, ctx, and cf on the request.
-		const cloudflare: Record<string, unknown> = { ctx, env };
-		if ("cf" in request) cloudflare.cf = request.cf;
-		Reflect.set(req, "cloudflare", cloudflare);
+		setCloudflare(req, request, env, ctx);
 		const res = new VmServerResponse(req, request, resolve);
 		res.once("close", () => {
 			if (!res.headersSent) reject(new Error("The response closed before it sent headers."));

@@ -76,6 +76,26 @@ function withoutDependencyEdges(lockfile: string, names: ReadonlySet<string>): s
 	return out.join("\n");
 }
 
+// The lockfile's `overrides`. pnpm's frozen install refuses a lockfile whose overrides differ from
+// the configuration it reads, and the image has no pnpm-workspace.yaml, so `orange deploy` writes
+// these into the image's package.json.
+export function lockfileOverrides(lockfile: string): Record<string, string> {
+	const lines = lockfile.split("\n");
+	const start = lines.indexOf("overrides:");
+	const overrides: Record<string, string> = {};
+	if (start === -1) return overrides;
+	for (const line of lines.slice(start + 1)) {
+		const entry = /^ {2}(\S.*?): (.+)$/.exec(line);
+		if (entry === null) {
+			if (line.trim().length === 0) continue;
+			break;
+		}
+		const unquote = (text: string) => text.replace(/^'(.*)'$/, "$1");
+		overrides[unquote(entry[1] ?? "")] = unquote(entry[2] ?? "");
+	}
+	return overrides;
+}
+
 // The same lockfile without some of the root importer's dependencies, for an image that does not
 // need them. pnpm's frozen install accepts it while the image's package.json omits the same names.
 // Their packages stay in `packages` and `snapshots`, and pnpm installs only what is reachable.

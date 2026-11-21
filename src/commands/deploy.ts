@@ -10,7 +10,7 @@ import { parseArgs, parseEnv } from "node:util";
 
 import { type AdditionalModuleSearch, findAdditionalModules } from "../build/additional-modules.js";
 import { bundleWorker, isUserBuildFailure, type ModuleRule } from "../build/bundle-worker.js";
-import { withoutRootDependencies } from "../build/image-lockfile.js";
+import { lockfileOverrides, withoutRootDependencies } from "../build/image-lockfile.js";
 import { runCustomBuild } from "./dev.js";
 import { customBuildDoneVariable } from "./serve.js";
 import { unresolvedRuntimeModules } from "../build/rewrite-module-imports.js";
@@ -831,6 +831,8 @@ async function copyRunningOrange(
 	}
 	const manifest: unknown = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
 	const record = typeof manifest === "object" && manifest !== null ? manifest : {};
+	const lockfileText = await readFile(lockfile, "utf8");
+	const overrides = lockfileOverrides(lockfileText);
 	await mkdir(orangeDirectory, { recursive: true });
 	await writeFile(
 		join(orangeDirectory, "package.json"),
@@ -842,8 +844,12 @@ async function copyRunningOrange(
 				dependencies: Object.fromEntries(
 					Object.entries(Reflect.get(record, "dependencies") ?? {}).filter(([name]) => !omitted.has(name)),
 				),
-				// The image is linux/amd64 on glibc, so other native builds stay out.
-				pnpm: { supportedArchitectures: { cpu: ["x64"], libc: ["glibc"], os: ["linux"] } },
+				pnpm: {
+					// The frozen install needs the same overrides that the lockfile was resolved with.
+					...(Object.keys(overrides).length > 0 ? { overrides } : {}),
+					// The image is linux/amd64 on glibc, so other native builds stay out.
+					supportedArchitectures: { cpu: ["x64"], libc: ["glibc"], os: ["linux"] },
+				},
 			},
 			null,
 			2,
@@ -851,7 +857,7 @@ async function copyRunningOrange(
 	);
 	await writeFile(
 		join(orangeDirectory, "pnpm-lock.yaml"),
-		withoutRootDependencies(await readFile(lockfile, "utf8"), omitted),
+		withoutRootDependencies(lockfileText, omitted),
 	);
 	if (!fromSource) await cp(dist, join(orangeDirectory, "dist"), { recursive: true });
 	const packageManager = Reflect.get(record, "packageManager");

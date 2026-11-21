@@ -1196,7 +1196,7 @@ class DurableObjectStorageImplementation implements DurableObjectStorage {
 	async #synchronizeAlarm(): Promise<void> {
 		if (this.#alarmScheduler === undefined) return;
 		// The scheduler must see the alarm only after the write that set it committed.
-		this.#database.commitTurn();
+		await this.#database.commitTurn();
 		await this.#alarmScheduler.synchronize(this.#committedAlarmStore.get());
 	}
 

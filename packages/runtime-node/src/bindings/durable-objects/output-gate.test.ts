@@ -66,7 +66,8 @@ class HeldDurabilityDatabase implements RivetSqliteDatabase {
 
 	beginTransactionSync(): RivetSynchronousSqliteTransaction {
 		this.#database.exec("BEGIN");
-		return {
+		const transaction: RivetSynchronousSqliteTransaction = {
+			commit: async () => transaction.commitSync(),
 			commitSync: () => {
 				this.#database.exec("COMMIT");
 				this.#commits += 1;
@@ -75,6 +76,7 @@ class HeldDurabilityDatabase implements RivetSqliteDatabase {
 			executeSync: (sql, params) => this.executeSync(sql, params),
 			rollbackSync: () => this.#database.exec("ROLLBACK"),
 		};
+		return transaction;
 	}
 
 	execSync(sql: string): void {

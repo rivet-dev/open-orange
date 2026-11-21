@@ -106,6 +106,10 @@ class TestSqliteTransaction implements RivetSynchronousSqliteTransaction {
 		this.#executor = executor;
 	}
 
+	async commit(): Promise<void> {
+		this.commitSync();
+	}
+
 	commitSync(): void {
 		this.#executor.database.exec("COMMIT");
 		this.#executor.commits += 1;

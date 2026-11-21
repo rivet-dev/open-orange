@@ -56,6 +56,8 @@ export interface RivetSynchronousSqliteExecutor {
 
 export interface RivetSynchronousSqliteTransaction
 	extends RivetSynchronousSqliteExecutor {
+	/** Commits and waits while earlier commits still flush. `commitSync()` refuses then. */
+	commit(): Promise<void>;
 	commitSync(): void;
 	rollbackSync(): void;
 }

@@ -130,8 +130,22 @@ for (const kind of kinds) {
 
 			// When the server's "upgrade" listener answers with an HTTP response instead of a
 			// handshake, the client's upgrade fails with that status.
+			// One that ends the socket without an HTTP response fails the upgrade too.
 			if (kind === "node") {
 				await assert.rejects(openWebSocket(`${dev.origin}/node/a/refuse`), /Unexpected server response: 403/);
+				await assert.rejects(openWebSocket(`${dev.origin}/node/a/unauthorized`), /Unexpected server response: 500/);
+
+				// The subprotocol that the server picks reaches the client.
+				const chosen = new WebSocket(`${dev.origin.replace(/^http/, "ws")}/node/a/socket`, ["chat"]);
+				await withDeadline(
+					new Promise((resolveOpen, rejectOpen) => {
+						chosen.addEventListener("open", resolveOpen);
+						chosen.addEventListener("error", rejectOpen);
+					}),
+					"WebSocket open with a subprotocol",
+				);
+				assert.equal(chosen.protocol, "chat");
+				chosen.close();
 			}
 		});
 	});

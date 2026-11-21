@@ -19,6 +19,11 @@ server.on("upgrade", (req, socket, head) => {
 		socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 2\r\n\r\nno");
 		return;
 	}
+	// Next.js answers an upgrade from a disallowed origin like this, with no HTTP response.
+	if (req.url.endsWith("/unauthorized")) {
+		socket.end("Unauthorized");
+		return;
+	}
 	const name = req.cloudflare.env.NAME;
 	sockets.handleUpgrade(req, socket, head, (ws) => {
 		ws.send(`hello ${name}`);

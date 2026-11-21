@@ -8,6 +8,9 @@ import { compileConformanceTypeChecks } from "./typescript.js";
 
 const execFileAsync = promisify(execFile);
 
+// `orange types` adds this block after Wrangler's runtime types. See src/commands/types.ts.
+const orangeExtensionTypesMarker = "\n// Begin OpenOrange extension types\n";
+
 export interface GeneratedBindingExpectation {
 	bindingName: string;
 	factoryName: "secrets_store_secret" | "version_metadata";
@@ -106,7 +109,12 @@ export async function checkGeneratedTypesFixtures(
 					},
 				);
 				const orangeOutput = await readFile(outputPath, "utf8");
-				if (orangeOutput !== wranglerOutput) {
+				// Orange writes Wrangler's output unchanged, then its own extension types, such as
+				// `orange.fork()`. The binding checks below compile the extensions too.
+				if (
+					!orangeOutput.startsWith(wranglerOutput) ||
+					!orangeOutput.slice(wranglerOutput.length).startsWith(orangeExtensionTypesMarker)
+				) {
 					errors.push(
 						`generated types fixture ${fixture.id} differs between Wrangler and Orange`,
 					);

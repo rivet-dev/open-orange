@@ -658,6 +658,8 @@ export function createRivetRegistry(
 	};
 }
 
+const sleepCallConcurrency = 4;
+
 interface SleepActorsOfExitedHostsOptions {
 	actorNames: readonly string[];
 	endpoint: string;
@@ -673,7 +675,7 @@ interface SleepActorsOfExitedHostsOptions {
 // request waits for the Engine to restart it on this process's envoy instead.
 // Only actors of this process's envoy pool are swept. In a multi-Worker session, actors
 // with the same name in another Worker's pool run on that Worker's live envoy.
-async function sleepActorsOfExitedHosts(
+export async function sleepActorsOfExitedHosts(
 	options: SleepActorsOfExitedHostsOptions,
 ): Promise<void> {
 	// RivetKit authenticates to a local Engine with RIVET_TOKEN or the token `default`.
@@ -702,20 +704,35 @@ async function sleepActorsOfExitedHosts(
 			cursor = page.actors.length > 0 ? page.cursor : undefined;
 		} while (cursor !== undefined);
 	}
+	// A restart can find thousands of stale actors. A few workers send the sleep calls, so the
+	// Engine does not get one connection per actor. After a failure, no new call starts, and the
+	// calls already sent finish before the failure propagates.
+	let nextActor = 0;
+	let failed = false;
+	let failure: unknown;
 	await Promise.all(
-		staleActorIds.map(async (actorId) => {
-			const url = new URL(
-				`/actors/${encodeURIComponent(actorId)}/sleep`,
-				options.endpoint,
-			);
-			url.searchParams.set("namespace", options.namespace);
-			await requestEngineApi(url, {
-				body: "{}",
-				headers: { authorization, "content-type": "application/json" },
-				method: "POST",
-			});
+		Array.from({ length: Math.min(sleepCallConcurrency, staleActorIds.length) }, async () => {
+			while (!failed && nextActor < staleActorIds.length) {
+				const actorId = staleActorIds[nextActor++]!;
+				try {
+					const url = new URL(
+						`/actors/${encodeURIComponent(actorId)}/sleep`,
+						options.endpoint,
+					);
+					url.searchParams.set("namespace", options.namespace);
+					await requestEngineApi(url, {
+						body: "{}",
+						headers: { authorization, "content-type": "application/json" },
+						method: "POST",
+					});
+				} catch (error) {
+					if (!failed) failure = error;
+					failed = true;
+				}
+			}
 		}),
 	);
+	if (failed) throw failure;
 }
 
 interface EngineActor {

@@ -47,7 +47,6 @@ export interface WorkerHost {
 	readonly bundleRoot: string;
 	// Where the dynamic Worker imports each runtime module from.
 	readonly moduleRewrites: Readonly<Record<string, string>>;
-	writeFiles(files: readonly WorkerFile[]): Promise<void>;
 	// Puts `files`, with paths relative to `bundleRoot`, in the bundle.
 	writeBundle(files: readonly WorkerFile[]): Promise<void>;
 	spawn(): Promise<WorkerChild>;

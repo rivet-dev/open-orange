@@ -68,21 +68,6 @@ function bootError(error: unknown): Error {
 }
 
 
-// agentOS writes one file into the VM as one message to its sidecar. In a test with agentOS 0.4.1,
-// a 15 MiB file wrote and a 16.5 MiB file crashed the sidecar, which then failed every Dynamic
-// Worker of the session. A larger file fails here with the limit instead. The VM filesystem
-// itself holds 64 MiB by default. The bundle is mounted from the host, so it does not use this.
-const agentOsFileMessageBytes = 16 * 1024 * 1024;
-
-function assertFitsAgentOsFileMessage(file: WorkerFile): void {
-	const { content } = file;
-	const bytes = typeof content === "string" ? Buffer.byteLength(content) : content.byteLength;
-	if (bytes <= agentOsFileMessageBytes) return;
-	throw new RangeError(
-		`Dynamic Worker file ${file.module ?? posix.basename(file.path)} is ${bytes} bytes. agentOS writes one file into its VM as one message of at most ${agentOsFileMessageBytes} bytes (16 MiB). Split the module.`,
-	);
-}
-
 // Writes `files` into the host directory behind a VM's bundle mount.
 async function writeHostFiles(directory: string, files: readonly WorkerFile[]): Promise<void> {
 	for (const file of files) {
@@ -357,7 +342,7 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 		spawn: () => Promise<VmChild>,
 		loaded: () => void,
 	): WorkerHost {
-		const { bundleDirectory, moduleRewrites, vm } = booted;
+		const { bundleDirectory, moduleRewrites } = booted;
 		return {
 			bundleRoot,
 			loaded,
@@ -367,16 +352,6 @@ export class AgentOsWorkerLoaderBackend implements WorkerLoaderBackend {
 			spawn,
 			// The bytes reach the VM through its bundle mount, so no file is one sidecar message.
 			writeBundle: (files) => writeHostFiles(bundleDirectory, files),
-			async writeFiles(files): Promise<void> {
-				for (const file of files) assertFitsAgentOsFileMessage(file);
-				const results = await vm.filesystem.writeFiles(
-					files.map((file) => ({ content: file.content, path: file.path })),
-				);
-				const failed = results.find((result) => !result.success);
-				if (failed !== undefined) {
-					throw new Error(`Failed to write ${failed.path} into the agentOS VM: ${failed.error ?? "unknown error"}`);
-				}
-			},
 		};
 	}
 

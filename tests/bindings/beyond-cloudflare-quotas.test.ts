@@ -85,12 +85,10 @@ test("Workflows take instance IDs and step names past Cloudflare's lengths, and 
 	assert.deepEqual(await call("/workflows?run=long"), { batch: 150, idLength: 155, output: { stepNameLength: 300 } });
 });
 
-test("a Dynamic Worker can have more than 1 MiB of env, and a module over agentOS's 16 MiB file message fails with that limit", { timeout: 180_000 }, async () => {
+test("a Dynamic Worker can have more than 1 MiB of env and a JavaScript module over 16 MiB", { timeout: 180_000 }, async () => {
 	assert.deepEqual(await call("/loader?codeMiB=1&envMiB=2"), { envLength: 2 * 1024 * 1024 });
-	const { error } = await call("/loader?codeMiB=17&envMiB=0", 500);
-	assert.match(String(error), /^RangeError: Dynamic Worker file part0\.js is \d+ bytes\. agentOS writes one file into its VM as one message of at most 16777216 bytes \(16 MiB\)/);
-	// The session's later Dynamic Workers still run.
-	assert.deepEqual(await call("/loader?codeMiB=0&envMiB=0"), { envLength: 0 });
+	// Modules reach the VM through its bundle mount, so agentOS's 16 MiB file message does not cap them.
+	assert.deepEqual(await call("/loader?codeMiB=17&envMiB=1"), { envLength: 1024 * 1024 });
 });
 
 test("an accepted WebSocket takes tags, an attachment, an auto-response, and an event timeout past Cloudflare's limits", { timeout: 60_000 }, async () => {

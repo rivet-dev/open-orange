@@ -126,9 +126,8 @@ agentOS's limits apply:
 
 | What | Limit | What happens over it |
 | --- | --- | --- |
-| One JavaScript or CommonJS module | 16 MiB | The load fails with a `RangeError` that names the limit. Split the module. |
+| One JavaScript or CommonJS module | No set limit. In a test, 17 MiB worked. | Orange adds no check. |
 | One text, JSON, Wasm, or data module | No set limit. In a test, 20 MiB worked. | Orange adds no check. |
-| Linked modules in the VM | 64 MiB by default | agentOS's limit. Orange adds no check. |
 | `env` | No set limit. In a test with agentOS 0.4.1, 5 MiB worked. | At 10 MiB, the dynamic Worker exited with code 1. |
 | Running dynamic Workers, across all Worker Loader bindings | 32. Set `ORANGE_WORKER_LOADER_MAX_WORKERS` to change it. | A new dynamic Worker stops the least recently used idle one. If none is idle, `get()` or `load()` throws a `WorkerLoaderLimitError` that names the limit. At 80% of the limit, `orange dev` logs a warning. |
 | Idle time before a dynamic Worker stops | 30 seconds. Set `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS` to change it, from 1 to 2147483647, or `idleTimeoutMs` on one Worker's code object. | The dynamic Worker stops and frees its VM. The next call loads it again. A value out of range stops `orange dev` at startup with a `RangeError` that names the setting. |
@@ -307,7 +306,6 @@ env.LOADER.get("next-dev", () => ({
 | A VM that cannot boot | `OpenOrange cannot boot the agentOS VM for a dynamic Worker: <message>. Dynamic Workers never run on the host.` |
 | A new dynamic Worker when the limit is reached and none is idle | `WorkerLoaderLimitError`: `OpenOrange cannot start another dynamic Worker: <n> are running, none is idle, and the limit is <limit>. Raise ORANGE_WORKER_LOADER_MAX_WORKERS or let calls finish first.` |
 | `vmLimits` above the runtime cap | `WorkerLoaderLimitError`: `Dynamic Worker vmLimits.heapMb is <n>, above the runtime cap of <cap>. Set ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB to raise the cap.` (`cpuTimeMs` names `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS`) |
-| A JavaScript or CommonJS module over 16 MiB | `RangeError`: `Dynamic Worker file <name> is <n> bytes. agentOS writes one file into its VM as one message of at most 16777216 bytes (16 MiB). Split the module.` |
 
 #### Deviations
 

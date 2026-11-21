@@ -314,6 +314,7 @@ export const PROVIDERS: Record<string, { hosted: Provider[]; local: Provider[]; 
 			{ name: 'Google Cloud Storage', href: 'https://cloud.google.com/storage/docs/interoperability' },
 			{ name: 'Cloudflare R2', href: 'https://developers.cloudflare.com/r2/' },
 			{ name: 'Backblaze B2', href: 'https://www.backblaze.com/cloud-storage' },
+			{ name: 'Neon Object Storage', href: 'https://neon.com/docs/storage/overview' },
 		],
 		local: [
 			{ name: 'Actor storage', href: '/docs/bindings/r2/' },
@@ -672,7 +673,7 @@ export const WORKERD_SERVICES: WorkerdServiceRow[] = [
 	{
 		service: 'R2',
 		workerd: { status: 'shim', detail: 'Calls are forwarded to a service you write.', source: `${WORKERD.schema}#L708-L710` },
-		openorange: { status: 'pluggable', detail: 'Actor storage, or any S3-compatible store: S3, GCS, R2 or MinIO.' },
+		openorange: { status: 'pluggable', detail: 'Actor storage, or any S3-compatible store: S3, GCS, R2, Neon or MinIO.' },
 	},
 	{
 		service: 'Cache API',

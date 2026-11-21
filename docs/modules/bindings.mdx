@@ -118,7 +118,7 @@ $ orange deploy --secrets-file .dev.vars
 | KV | `kv_namespaces` | Runs as is | One Rivet Actor for each namespace | See [KV](./kv). |
 | D1 | `d1_databases` | Runs as is | One Rivet Actor for each database | See [D1](./d1). |
 | Rate Limiting | `ratelimits`, `unsafe.bindings` | Runs as is | One Rivet Actor for each namespace | See [Rate Limiting](./rate-limiting). |
-| R2 | `r2_buckets` | Runs as is | One Rivet Actor for each bucket, or your S3-compatible store | Set `ORANGE_R2_<BUCKET>_S3_*` to use Amazon S3, Cloudflare R2, Google Cloud Storage, or Backblaze B2. See [R2](./r2). |
+| R2 | `r2_buckets` | Runs as is | One Rivet Actor for each bucket, or your S3-compatible store | Set `ORANGE_R2_<BUCKET>_S3_*` to use Amazon S3, Cloudflare R2, Google Cloud Storage, Backblaze B2, or Neon Object Storage. See [R2](./r2). |
 | Queues | `queues.producers`, `queues.consumers` | Runs as is | One Rivet Actor for each queue | See [Queues](./queues). |
 | Workflows | `workflows` | Runs as is | Cloudflare's own Workflows engine, with one Rivet Actor for each instance | Partial. See [Workflows](./workflows). |
 | Tail Workers | `tail_consumers` | Runs as is | Rivet Durable Streams | Partial. See [Tail Workers](./tail-workers). |

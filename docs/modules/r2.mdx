@@ -183,6 +183,7 @@ bucket uses.
 | [Cloudflare R2](https://developers.cloudflare.com/r2/api/s3/api/) | `https://<account ID>.r2.cloudflarestorage.com` | `auto` (the default) | The access key ID and secret access key of an R2 API token |
 | [Google Cloud Storage](https://docs.cloud.google.com/storage/docs/aws-simple-migration) | `https://storage.googleapis.com` | `auto` (the default) | An [HMAC key](https://docs.cloud.google.com/storage/docs/authentication/hmackeys): the access ID, which starts with `GOOG`, and the secret |
 | [Backblaze B2](https://www.backblaze.com/docs/cloud-storage-call-the-s3-compatible-api) | `https://s3.<region>.backblazeb2.com` | The region in the endpoint, such as `us-west-004` | An application key ID and application key |
+| [Neon Object Storage](https://neon.com/docs/storage/s3-compatibility) | The branch's storage endpoint, such as `https://<branch ID>.storage.<cell>.<region>.aws.neon.tech`. The **Storage** tab of the Neon Console's **Connect** dialog shows it as `AWS_ENDPOINT_URL_S3`. | The project's region, such as `us-east-2` | The `token_id` and `s3_secret_access_key` of a [Neon credential](https://neon.com/docs/storage/authentication) with the `storage:write` scope |
 | MinIO that you run | `http://127.0.0.1:9000` | `auto` (the default) | The MinIO user and password. See [Run MinIO locally](#run-minio-locally). |
 
 Orange sends path-style requests, such as `<endpoint>/<bucket>/<key>`, so a
@@ -294,7 +295,9 @@ The default backend:
 The S3 backend:
 
 - `version` is the S3 version ID when bucket versioning is on. Otherwise, it is
-  the ETag.
+  the ETag. A version ID of `null`, which S3 gives objects written while
+  versioning is suspended and Neon Object Storage gives every object, also
+  becomes the ETag.
 - `uploaded` has one-second precision.
 - S3 returns custom metadata keys in lowercase. Orange keeps the original case
   of keys that have capital letters in one extra metadata entry,
@@ -308,7 +311,8 @@ The S3 backend:
   succeeds.
 - Part ETags are the MD5 of the part.
 - A conditional put is atomic only if the store supports `If-Match` and
-  `If-None-Match` on writes. AWS S3, MinIO, and R2 support them.
+  `If-None-Match` on writes. AWS S3, MinIO, R2, and Neon Object Storage support
+  them.
 
 #### Conformance
 

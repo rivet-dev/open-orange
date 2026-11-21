@@ -1,0 +1,7 @@
+{
+	"name": "worker-loader-large-body-fixture",
+	"main": "worker.js",
+	"compatibility_date": "2026-09-03",
+	"compatibility_flags": ["nodejs_compat"],
+	"worker_loaders": [{ "binding": "LOADER" }]
+}

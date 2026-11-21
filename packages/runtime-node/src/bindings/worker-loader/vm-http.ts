@@ -7,7 +7,8 @@
 import { EventEmitter } from "node:events";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import { PassThrough, Readable, Writable } from "node:stream";
+import { PassThrough, pipeline, Readable, Writable } from "node:stream";
+import { createBrotliDecompress, createGunzip } from "node:zlib";
 
 import { ERR_SERVER_ALREADY_LISTEN } from "../../modules/node-internal/errors.js";
 import { validatePort } from "../../modules/node-internal/validators.js";
@@ -314,11 +315,26 @@ class VmServerResponse extends Writable {
 	}
 
 	flushHeaders(): void {
-		this.#sendHead();
+		this.#sendImplicitHead();
 	}
 
-	// Node calls this when a write or end() comes before writeHead(). Next.js calls it directly.
+	// Node.js' own name for the head it has written. Middleware such as compression reads it.
+	get _header(): string | null {
+		return this.#headersSent ? "sent" : null;
+	}
+
+	// Like Node.js and workerd, a write or end() before writeHead() writes the head through
+	// writeHead(). Middleware such as on-headers and compression wraps writeHead() to see the head,
+	// and compression holds "drain" listeners until then, so a piped body stalls without it.
+	// Next.js also calls this directly.
+	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/node/internal/internal_http_server.ts#L592-L594
 	_implicitHeader(): void {
+		this.writeHead(this.statusCode);
+	}
+
+	#sendImplicitHead(): void {
+		if (!this.#headersSent) this._implicitHeader();
+		// A wrapper that does not call the real writeHead() must not leave the body without a head.
 		this.#sendHead();
 	}
 
@@ -349,19 +365,29 @@ class VmServerResponse extends Writable {
 			toFetchResponse(
 				this.#request,
 				{ rawHeaders, statusCode: this.statusCode, statusMessage: this.statusMessage },
-				this.#body,
+				this.#identityBody(),
 			),
 		);
 	}
 
+	// A Node.js server writes the body as its Content-Encoding says. A Worker's Response holds the
+	// decoded body, and the runtime applies the Content-Encoding when it sends the response. So the
+	// codings that the runtime applies are decoded here, or the client would get the body encoded twice.
+	#identityBody(): Readable {
+		const coding = String(this.getHeader("content-encoding") ?? "");
+		if (coding !== "gzip" && coding !== "br") return this.#body;
+		// pipeline() ends the decoder with an error when the server destroys the response.
+		return pipeline(this.#body, coding === "gzip" ? createGunzip() : createBrotliDecompress(), () => undefined);
+	}
+
 	override _write(chunk: Buffer, _encoding: BufferEncoding, callback: WriteCallback): void {
-		this.#sendHead();
+		this.#sendImplicitHead();
 		if (this.#body.write(chunk)) callback();
 		else this.#body.once("drain", () => callback());
 	}
 
 	override _final(callback: WriteCallback): void {
-		this.#sendHead();
+		this.#sendImplicitHead();
 		this.#body.end(callback);
 	}
 }

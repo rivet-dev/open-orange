@@ -346,6 +346,11 @@ env.LOADER.get("next-dev", () => ({
   constructed.
 - Workerd stream fixes that read Node.js 24 stream internals do not apply in
   the VM, and dynamic Workers there use the VM's own `WebSocket` class.
+- A `node:http` server that encodes its body itself, with
+  `Content-Encoding: gzip` or `br`, as the compression middleware of Next.js
+  and Express does, reaches the client encoded once. Orange decodes the body
+  in the VM, and the runtime applies the `Content-Encoding` when it sends the
+  response.
 - `globalOutbound: null` blocks the global `fetch()` and `cloudflare:sockets`
   `connect()`. The VM with no network also blocks `node:net` and `node:http`
   connections.
@@ -400,6 +405,11 @@ second `orange dev` with a limit of 2 and a 1.5-second idle timeout checks that
 idle Workers stop and load again, that calls longer than the timeout finish,
 that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more
 `load()` calls than the limit succeed.
+
+`tests/bindings/worker-loader-large-body.test.ts` downloads 5 MiB bodies from a
+`node:http` server in a dynamic Worker and checks their length and hash: one
+`res.end()`, a stream piped to a response that middleware has wrapped, a body
+that the server gzipped, and two downloads at the same time.
 
 `tests/bindings/worker-loader-websocket.test.ts` opens real WebSockets through
 the parent Worker, once to a `WebSocketPair` Worker and once to a `node:http`

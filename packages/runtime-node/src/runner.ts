@@ -178,9 +178,14 @@ function errorDetails(error: unknown): { message: string; stack?: string } {
 			typeof group === "string" && typeof code === "string"
 				? ` [${group}/${code}]`
 				: "";
-		const cause = error.cause instanceof Error
-			? `\nCaused by: ${error.cause.stack ?? error.cause.message}`
-			: "";
+		let cause = "";
+		let current = error.cause;
+		const seen = new Set<Error>([error]);
+		for (let depth = 0; depth < 4 && current instanceof Error && !seen.has(current); depth++) {
+			seen.add(current);
+			cause += `\nCaused by: ${(current.stack ?? current.message).slice(0, 4096)}`;
+			current = current.cause;
+		}
 		return {
 			message: `${error.message}${classification}`,
 			...(error.stack === undefined

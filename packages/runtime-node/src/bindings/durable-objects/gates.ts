@@ -50,9 +50,6 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	#turnConfirmed = false;
 	#turnStartTicket = 0;
 	#turnCommitted: PromiseWithResolvers<number> | undefined;
-	// The turn commit that runs now, if any. A confirmed one also holds the output gate.
-	#commit: Promise<void> | undefined;
-	#confirmedCommit: Promise<number> | undefined;
 	#outputTicket = 0;
 	#durableTicket = 0;
 	#pendingDurability: { promise: Promise<void>; ticket: number } | undefined;
@@ -165,8 +162,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		timeoutMs?: number,
 		name?: string,
 	): RivetSynchronousSqliteTransaction {
-		// RivetKit starts the explicit transaction after this commit, in order.
-		void this.commitTurn();
+		this.commitTurn();
 		const transaction = this.#database.beginTransactionSync(timeoutMs, name);
 		this.#explicitTransaction = transaction;
 		return this.#guardTransaction(transaction);
@@ -210,18 +206,6 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 					throw this.#breakOnCriticalError(error);
 				}
 			},
-			commit: async () => {
-				this.#assertNotBroken();
-				try {
-					await transaction.commit();
-				} catch (error: unknown) {
-					// The caller breaks the object, so deferred writes never run.
-					this.#explicitTransaction = undefined;
-					throw error;
-				}
-				if (confirmed) this.#holdOutputUntilDurable(startTicket);
-				this.#endExplicitTransaction();
-			},
 			commitSync: () => {
 				this.#assertNotBroken();
 				try {
@@ -256,14 +240,10 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		return this.#database.whenDurable(ticket);
 	}
 
-	/**
-	 * Commits the open turn transaction locally and returns when that commit settled. A failed
-	 * commit breaks the object. The commit waits while earlier commits still flush: RivetKit
-	 * refuses a synchronous commit then, and SQLite rolls the whole turn back.
-	 */
-	commitTurn(): Promise<void> {
+	/** Commits the open turn transaction locally. A failed commit breaks the object. */
+	commitTurn(): void {
 		this.#assertNotBroken();
-		if (this.#turn === undefined) return this.#commit ?? Promise.resolve();
+		if (this.#turn === undefined) return;
 		// Waiters added so far wait for writes that this commit runs.
 		const waiters = this.#commitBoundaryWaiters;
 		this.#commitBoundaryWaiters = [];
@@ -275,39 +255,21 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		}
 		const turn = this.#turn;
 		const confirmed = this.#turnConfirmed;
-		const startTicket = this.#turnStartTicket;
-		const committed = this.#turnCommitted ?? (confirmed ? Promise.withResolvers<number>() : undefined);
+		const committed = this.#turnCommitted;
 		this.#turn = undefined;
 		this.#turnConfirmed = false;
 		this.#turnCommitted = undefined;
-		const commit = turn.commit().then(
-			() => {
-				this.#settleCommitBoundaryWaiters(waiters, true);
-				if (confirmed) this.#holdOutputUntilDurable(startTicket);
-				committed?.resolve(this.#outputTicket);
-			},
-			(error: unknown) => {
-				this.#settleCommitBoundaryWaiters(waiters, false);
-				const broken = this.breakObject(error);
-				committed?.reject(broken);
-				throw broken;
-			},
-		);
-		// The failure is handled: it broke the object, and gated outputs and later calls see it.
-		commit.catch(() => {});
-		committed?.promise.catch(() => {});
-		this.#commit = commit;
-		if (committed !== undefined) this.#confirmedCommit = committed.promise;
-		void commit.then(
-			() => this.#clearCommit(commit, committed?.promise),
-			() => this.#clearCommit(commit, committed?.promise),
-		);
-		return commit;
-	}
-
-	#clearCommit(commit: Promise<void>, committed: Promise<number> | undefined): void {
-		if (this.#commit === commit) this.#commit = undefined;
-		if (committed !== undefined && this.#confirmedCommit === committed) this.#confirmedCommit = undefined;
+		try {
+			turn.commitSync();
+		} catch (error: unknown) {
+			this.#settleCommitBoundaryWaiters(waiters, false);
+			const broken = this.breakObject(error);
+			committed?.reject(broken);
+			throw broken;
+		}
+		this.#settleCommitBoundaryWaiters(waiters, true);
+		if (confirmed) this.#holdOutputUntilDurable(this.#turnStartTicket);
+		committed?.resolve(this.#outputTicket);
 	}
 
 	// Commits always run outside user savepoints: transactionSync() closes its savepoint before the
@@ -345,7 +307,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	 * https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/actor-state.c%2B%2B#L780-L793
 	 */
 	async waitForDurability(): Promise<void> {
-		await this.commitTurn();
+		this.commitTurn();
 		await this.#waitUntilDurable(this.#database.commitTicket());
 	}
 
@@ -355,7 +317,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 	 * https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/io/worker-entrypoint.c%2B%2B#L515-L524
 	 */
 	async waitForOutputGate(): Promise<void> {
-		await this.commitTurn();
+		this.commitTurn();
 		await this.#waitForOutputLock();
 	}
 
@@ -370,9 +332,6 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 			return this.#turnCommitted.promise.then((ticket) =>
 				this.#waitUntilDurable(ticket),
 			);
-		}
-		if (this.#confirmedCommit !== undefined) {
-			return this.#confirmedCommit.then((ticket) => this.#waitUntilDurable(ticket));
 		}
 		if (this.#outputTicket <= this.#durableTicket) return undefined;
 		return this.#waitUntilDurable(this.#outputTicket);
@@ -484,8 +443,7 @@ export class DurableObjectTurnDatabase implements RivetSqliteDatabase {
 		setImmediate(() => {
 			if (this.#turn !== turn) return;
 			try {
-				// A failed commit breaks the object; gated outputs observe it.
-				void this.commitTurn();
+				this.commitTurn();
 			} catch {
 				// commitTurn already broke the object; gated outputs observe it.
 			}

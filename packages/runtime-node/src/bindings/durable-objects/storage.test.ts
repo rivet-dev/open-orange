@@ -61,8 +61,6 @@ class FakeTransaction implements RivetSynchronousSqliteTransaction {
 		this.#database = database;
 	}
 
-	async commit(): Promise<void> {}
-
 	commitSync(): void {}
 
 	rollbackSync(): void {}

@@ -7,7 +7,7 @@ description: Load and run dynamic Workers at runtime with the worker_loaders bin
 
 <BindingStatus
   binding="worker-loader"
-  works="`get()`, `load()`, `fetch()`, and RPC, with `env` and `props` capabilities and `globalOutbound`"
+  works="`get()`, `load()`, `fetch()`, WebSockets, and RPC, with `env` and `props` capabilities and `globalOutbound`"
   differs="Each dynamic Worker runs in its own agentOS VM. A load usually takes a prewarmed VM; when none is ready, it waits about 0.3 seconds for one to boot. Compatibility settings and `limits` are ignored."
   missing="`getDurableObjectClass()`, `connect()` to a dynamic Worker, Python modules, and tail events from dynamic Workers"
 />
@@ -109,7 +109,9 @@ Hello from a dynamic Worker
 | `globalOutbound` | Supported | `null` makes `fetch()` reject and `connect()` throw. A Fetcher receives the dynamic Worker's `fetch()` calls. |
 | JavaScript, CommonJS, text, data, JSON, and Wasm modules | Supported | Pass Wasm as bytes. Relative, `cloudflare:*`, and `node:*` imports resolve as in the parent Worker. |
 | Wasm exception handling with exnref (`try_table`, `throw_ref`), as Rust `panic=unwind` builds use | Supported | On by default, as in workerd. See [The VM runtime](#the-vm-runtime). |
+| A WebSocket through `fetch()` | Supported | The dynamic Worker answers with a `WebSocketPair` end in a 101 response, and your Worker returns that response. See [WebSockets](#websockets). |
 | A `node:http` server through `cloudflare:node` | Supported | An Express app serves requests. |
+| `upgrade` on a `node:http` server | Orange extension | A WebSocket request reaches the server's `upgrade` listener with a socket, so the `ws` package and dev servers such as `next dev` accept it. See [WebSockets](#websockets). |
 | `mounts` | Orange extension | Mounts a project directory read-only, or an empty writable directory, into the VM. See [Mounts](#mounts). |
 | `vmLimits` | Orange extension | Gives the dynamic Worker's VM more V8 heap or CPU time than the agentOS default, up to a runtime cap. See [VM limits](#vm-limits). |
 | `idleTimeoutMs` | Orange extension | Sets this Worker's idle time before it stops, from 1 to 2147483647 ms, in place of `ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS`. An idle Worker still gives up its slot when a new Worker needs one. A value out of range fails the load with a `TypeError`. |
@@ -134,6 +136,7 @@ agentOS's limits apply:
 | Prewarmed VMs | 2 for each network mode by default, from 0 to 16 with `ORANGE_WORKER_LOADER_POOL_SIZE` | A load that finds the pool empty boots its own VM. |
 | `vmLimits.heapMb` | 4096 by default. Set `ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB` to change it, from 1 to 65536. | The load throws a `WorkerLoaderLimitError` that names the setting. |
 | `vmLimits.cpuTimeMs` | 1800000 (30 minutes) by default. Set `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS` to change it, from 1 to 2147483647. | The load throws a `WorkerLoaderLimitError` that names the setting. |
+| Bytes that one WebSocket holds for a side that has not taken them, in each direction. One message counts in full. | 4194304 (4 MiB) by default. Set `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES` to change it, from 1 to 16777216. | The socket closes with code 1011 and the reason `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES exceeded`. Orange logs a `WorkerLoaderLimitError` that names the setting. |
 
 Each running dynamic Worker uses about 54 MiB. Prewarmed VMs that no Worker
 has claimed do not count toward `ORANGE_WORKER_LOADER_MAX_WORKERS`, and the
@@ -165,9 +168,10 @@ limit never stops them.
   Orange never falls back to the host.
 - A dynamic Worker is idle when no call to it is in flight, your Worker holds
   no stub or stream that it returned, no body or stream flows between the two
-  in either direction, and no call from the dynamic Worker to your Worker or
-  its `env` is in flight. A streamed response body keeps it busy until the
-  body ends. Orange never stops a dynamic Worker that is not idle.
+  in either direction, no WebSocket between the two is open, and no call from
+  the dynamic Worker to your Worker or its `env` is in flight. A streamed
+  response body keeps it busy until the body ends, and a WebSocket keeps it
+  busy until it closes. Orange never stops a dynamic Worker that is not idle.
 - Work that the dynamic Worker does on its own, such as `ctx.waitUntil()` code
   that runs while no call or stream is open, does not keep it busy. It can stop
   when it is idle.
@@ -192,6 +196,59 @@ limit never stops them.
   the dynamic Worker process's stdin and stdout.
 - The dynamic Worker's own stdout output still reaches the parent's stdout.
 - Reference passing covers `env`, `props`, arguments, and results.
+
+#### WebSockets
+
+A WebSocket request passes through your Worker to the dynamic Worker like any
+other request: `return worker.getEntrypoint().fetch(request)`. The dynamic
+Worker accepts it in one of two ways.
+
+- It returns `new Response(null, { status: 101, webSocket })` with one end of
+  a `WebSocketPair`, as on Cloudflare.
+- Its `node:http` server has an `upgrade` listener. A `GET` request with
+  `Upgrade: websocket` reaches the listener as `(request, socket, head)`, as
+  in Node.js. The server writes its handshake and WebSocket frames to the
+  socket, which is what the `ws` package does in `handleUpgrade()`. Without an
+  `upgrade` listener, the request goes to the `request` listener.
+
+```js
+import http from "node:http";
+import { httpServerHandler } from "cloudflare:node";
+import { WebSocketServer } from "ws";
+
+const sockets = new WebSocketServer({ noServer: true });
+const server = http.createServer((req, res) => res.end("ok"));
+server.on("upgrade", (req, socket, head) => {
+  sockets.handleUpgrade(req, socket, head, (ws) => {
+    ws.on("message", (data, isBinary) => ws.send(data, { binary: isBinary }));
+  });
+});
+server.listen(8080);
+export default httpServerHandler({ port: 8080 });
+```
+
+- Text and binary messages pass in both directions, in order. A close passes
+  its code and reason in both directions.
+- The request's headers and query string reach the dynamic Worker unchanged,
+  except `Sec-WebSocket-Extensions`. Orange removes it, so the server
+  negotiates no compression.
+- The response headers of the handshake reach the client, including
+  `Sec-WebSocket-Protocol`.
+- An `upgrade` listener that answers with another status, such as
+  `socket.end("HTTP/1.1 403 Forbidden\r\n\r\n")`, fails the client's upgrade
+  with that response. A listener that ends the socket without an HTTP response
+  fails it with status 500.
+- An open WebSocket keeps the dynamic Worker running, with or without traffic.
+  The idle timeout starts when its last WebSocket closes. A dynamic Worker with
+  an open WebSocket also keeps its slot, so at the limit of running dynamic
+  Workers a new one fails with `WorkerLoaderLimitError`.
+- If the dynamic Worker's process exits, every WebSocket to it closes with
+  code 1006, as after a lost connection.
+- The WebSocket API has no backpressure. Each side counts the bytes that the
+  other side has not taken yet, and closes the socket above the limit in
+  [Limits](#limits). A message larger than the limit closes it too.
+- A 101 response passes only as the result of a call. Inside another value,
+  such as an array of responses, it fails the call.
 
 #### Modules
 
@@ -305,6 +362,7 @@ env.LOADER.get("next-dev", () => ({
 | `connect()` through a Fetcher `globalOutbound` | `OpenOrange does not support connect() through a dynamic Worker's globalOutbound fetcher. Use fetch() instead.` |
 | A VM that cannot boot | `OpenOrange cannot boot the agentOS VM for a dynamic Worker: <message>. Dynamic Workers never run on the host.` |
 | A new dynamic Worker when the limit is reached and none is idle | `WorkerLoaderLimitError`: `OpenOrange cannot start another dynamic Worker: <n> are running, none is idle, and the limit is <limit>. Raise ORANGE_WORKER_LOADER_MAX_WORKERS or let calls finish first.` |
+| A WebSocket above the buffer limit | Close code 1011 with the reason `ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES exceeded`, and in the log `WorkerLoaderLimitError`: `A dynamic Worker WebSocket held more than <limit> bytes that its peer had not taken, so OpenOrange closed it. Set ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES to raise the limit.` |
 | `vmLimits` above the runtime cap | `WorkerLoaderLimitError`: `Dynamic Worker vmLimits.heapMb is <n>, above the runtime cap of <cap>. Set ORANGE_WORKER_LOADER_MAX_VM_HEAP_MB to raise the cap.` (`cpuTimeMs` names `ORANGE_WORKER_LOADER_MAX_VM_CPU_TIME_MS`) |
 
 #### Deviations
@@ -321,6 +379,8 @@ These add to the [Compatibility](#compatibility) table, the
 - Orange allows dynamic entrypoint stubs and uncalled `ctx.exports` stubs in
   `props`, where workerd throws `DataCloneError`.
 - The `connect()` errors are `NotSupportedError`-style errors.
+- workerd's `node:http` server has no `upgrade` event. Orange emits it in a
+  dynamic Worker. See [WebSockets](#websockets).
 
 #### Conformance
 
@@ -336,6 +396,16 @@ second `orange dev` with a limit of 2 and a 1.5-second idle timeout checks that
 idle Workers stop and load again, that calls longer than the timeout finish,
 that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more
 `load()` calls than the limit succeed.
+
+`tests/bindings/worker-loader-websocket.test.ts` opens real WebSockets through
+the parent Worker, once to a `WebSocketPair` Worker and once to a `node:http`
+server with the `ws` package: text and binary echo, two sockets to two Workers
+at the same time, a close code and reason from each side, a Worker process
+that exits with a socket open, an upgrade that the server refuses with and
+without an HTTP response, and the subprotocol that the server picks. A second
+`orange dev` checks that an open socket without traffic keeps its Worker past
+the idle timeout, that the Worker stops after the socket closes, and that a
+message above the buffer limit closes the socket with the limit's name.
 
 ##### Recorded results
 

@@ -2280,7 +2280,7 @@
 			"name": "worker_loaders (worker_loader)",
 			"status": "partial",
 			"cloudflare": "Loads and runs dynamic Workers from code at runtime.",
-			"orange": "Each dynamic Worker runs in its own Node.js process. get() caches by name, load() and get(null) start fresh Workers. fetch(), RPC, env and props capabilities, globalOutbound null or Fetcher, and js/cjs/text/data/json/wasm modules work.",
+			"orange": "Each dynamic Worker runs in its own Node.js process. get() caches by name, load() and get(null) start fresh Workers. fetch(), RPC, env and props capabilities, globalOutbound null or Fetcher, and js/cjs/text/data/json/wasm modules work. A WebSocket passes through fetch() to a WebSocketPair response or to the upgrade event of a node:http server.",
 			"notes": "getDurableObjectClass(), entrypoint connect(), Python modules, and compiled WebAssembly.Module values throw. Compatibility settings, limits, and tails are ignored. See docs/modules/worker-loader.mdx.",
 			"evidence": [
 				{
@@ -2290,6 +2290,10 @@
 				{
 					"kind": "code",
 					"path": "tests/bindings/worker-loader.test.ts"
+				},
+				{
+					"kind": "code",
+					"path": "tests/bindings/worker-loader-websocket.test.ts"
 				}
 			]
 		},

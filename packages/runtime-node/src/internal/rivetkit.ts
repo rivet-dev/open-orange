@@ -125,7 +125,10 @@ function retrySqliteBusy<Result>(run: () => Result, timeoutMs: number): Result {
 	}
 }
 
-/** Retries each synchronous call that finds the SQLite writer busy, up to `timeoutMs` in total. */
+/**
+ * Retries each synchronous call outside a transaction that finds the SQLite writer busy or storage
+ * overloaded, up to `timeoutMs` in total.
+ */
 export function retryingSqliteDatabase(
 	database: RivetSqliteDatabase,
 	timeoutMs = sqliteBusyTimeoutMs(),
@@ -134,15 +137,10 @@ export function retryingSqliteDatabase(
 	const retrying: RivetSqliteDatabase = {
 		execSync: (sql, callback) => retry(() => database.execSync(sql, callback)),
 		executeSync: (sql, params) => retry(() => database.executeSync(sql, params)),
-		beginTransactionSync(transactionTimeoutMs, name) {
-			const transaction = retry(() => database.beginTransactionSync(transactionTimeoutMs, name));
-			return {
-				commitSync: () => retry(() => transaction.commitSync()),
-				execSync: (sql, callback) => retry(() => transaction.execSync(sql, callback)),
-				executeSync: (sql, params) => retry(() => transaction.executeSync(sql, params)),
-				rollbackSync: () => retry(() => transaction.rollbackSync()),
-			};
-		},
+		// A statement in an open transaction is not retried: a failed commit inside it rolls the
+		// whole transaction back, so only its owner can run it again.
+		beginTransactionSync: (transactionTimeoutMs, name) =>
+			retry(() => database.beginTransactionSync(transactionTimeoutMs, name)),
 		commitTicket: () => database.commitTicket(),
 		whenDurable: (ticket) => database.whenDurable(ticket),
 	};

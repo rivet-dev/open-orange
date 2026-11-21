@@ -22,6 +22,16 @@ import {
 } from "./session.js";
 import type { CapnWebStub } from "../durable-objects/rpc/capnweb.js";
 import { errorMessage, isRecord } from "../unknown-values.js";
+import { WorkerLoaderLimitError } from "./errors.js";
+import {
+	defaultMaxWebSocketBufferBytes,
+	maxWebSocketBufferBytesCap,
+	maxWebSocketBufferSetting,
+	setMaxWebSocketBufferBytes,
+	webSocketResponseClosed,
+} from "./websocket.js";
+
+export { WorkerLoaderLimitError };
 
 export interface WorkerFile {
 	content: string | Uint8Array;
@@ -350,15 +360,15 @@ interface VmLimitCaps {
 	maxVmCpuTimeMs: number;
 	maxVmHeapMb: number;
 }
-const warnRatio = 0.8;
 
-// A new dynamic Worker needs a slot, and every running one holds a slot until it stops.
-export class WorkerLoaderLimitError extends RangeError {
-	constructor(message: string) {
-		super(message);
-		this.name = "WorkerLoaderLimitError";
-	}
+interface DynamicWorkerLimits {
+	idleTimeoutMs: number;
+	maxWorkers: number;
+	// The bytes one WebSocket to a dynamic Worker may hold for a peer that has not taken them.
+	maxWebSocketBufferBytes?: number;
+	vmLimitCaps?: VmLimitCaps;
 }
+const warnRatio = 0.8;
 
 // Node.js runs a setTimeout() delay above this after 1 ms.
 const maxTimerDelayMs = 2_147_483_647;
@@ -384,18 +394,19 @@ function positiveIntegerSetting(
 export class DynamicWorkerPool {
 	readonly idleTimeoutMs: number;
 	readonly maxWorkers: number;
+	readonly maxWebSocketBufferBytes: number;
 	readonly vmLimitCaps: VmLimitCaps;
 	// Least recently used first.
 	readonly #live = new Set<DynamicWorker>();
 	readonly #warn: (message: string) => void;
 	#warned = false;
 
-	constructor(
-		limits: { idleTimeoutMs: number; maxWorkers: number; vmLimitCaps?: VmLimitCaps },
-		warn: (message: string) => void,
-	) {
+	constructor(limits: DynamicWorkerLimits, warn: (message: string) => void) {
 		this.idleTimeoutMs = limits.idleTimeoutMs;
 		this.maxWorkers = limits.maxWorkers;
+		this.maxWebSocketBufferBytes = limits.maxWebSocketBufferBytes ?? defaultMaxWebSocketBufferBytes;
+		// The parent's end of every dynamic Worker WebSocket. Each Worker gets the value at start.
+		setMaxWebSocketBufferBytes(this.maxWebSocketBufferBytes);
 		this.vmLimitCaps = limits.vmLimitCaps ?? { maxVmCpuTimeMs: defaultMaxVmCpuTimeMs, maxVmHeapMb: defaultMaxVmHeapMb };
 		this.#warn = warn;
 	}
@@ -408,6 +419,12 @@ export class DynamicWorkerPool {
 			{
 				idleTimeoutMs: positiveIntegerSetting(settings, idleTimeoutSetting, defaultIdleTimeoutMs, maxTimerDelayMs),
 				maxWorkers: positiveIntegerSetting(settings, maxWorkersSetting, defaultMaxWorkers, Number.MAX_SAFE_INTEGER),
+				maxWebSocketBufferBytes: positiveIntegerSetting(
+					settings,
+					maxWebSocketBufferSetting,
+					defaultMaxWebSocketBufferBytes,
+					maxWebSocketBufferBytesCap,
+				),
 				vmLimitCaps: {
 					maxVmCpuTimeMs: positiveIntegerSetting(settings, maxVmCpuTimeSetting, defaultMaxVmCpuTimeMs, maxTimerDelayMs),
 					maxVmHeapMb: positiveIntegerSetting(settings, maxVmHeapSetting, defaultMaxVmHeapMb, maxVmHeapMb),
@@ -458,7 +475,8 @@ export class DynamicWorkerPool {
 // It stops when it has been idle for the pool's idle timeout, when the pool needs its slot, or,
 // for an unnamed Worker, when no stub references it. Idle means no call is in flight, the parent
 // holds no result stub or stream from it, no body or stream flows between the two in either
-// direction, and no call from the Worker to the parent is in flight. A stub that is still held
+// direction, no WebSocket between the two is open, and no call from the Worker to the parent is
+// in flight. A stub that is still held
 // loads the Worker again on its next call.
 class DynamicWorker {
 	readonly #getCode: () => Promise<PreparedCode>;
@@ -545,6 +563,7 @@ class DynamicWorker {
 				bundleRoot,
 				env: prepared.env,
 				mainFile: linked.mainFile,
+				maxWebSocketBufferBytes: this.#options.pool.maxWebSocketBufferBytes,
 				moduleNames: linked.moduleNames,
 				moduleRewrites: host.moduleRewrites,
 				moduleRoot,
@@ -743,7 +762,14 @@ class LazyCapability implements Capability {
 		const outcome = bound.remote.then((capability) => capability.call(path, args));
 		const value = bound.worker.track(outcome.then((result) => result.value));
 		const pipeline = outcome.then((result) => result.pipeline);
-		value.catch(() => undefined);
+		// An open WebSocket is a call in flight, so the idle timeout starts when it closes.
+		value.then(
+			(result) => {
+				const closed = webSocketResponseClosed(result);
+				if (closed !== undefined) void bound.worker.track(closed);
+			},
+			() => undefined,
+		);
 		pipeline.catch(() => undefined);
 		return { pipeline, value };
 	}

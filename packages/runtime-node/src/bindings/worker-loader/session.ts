@@ -30,6 +30,7 @@ import {
 } from "../../rpc/loopback.js";
 import { isRecord } from "../unknown-values.js";
 import { decodeLoaderEnvelope, encodeLoaderEnvelope, type LoaderValueEnvelope } from "./codec.js";
+import { receiveWebSocketResponse, sendWebSocketResponse, type LoaderWebSocketReply } from "./websocket.js";
 
 const rpcMessageKey = "openOrangeWorkerLoaderRpc";
 
@@ -186,7 +187,11 @@ function errorRecord(error: unknown): EncodedError {
 	};
 }
 
-export type LoaderReply = { error: LoaderValueEnvelope } | { value: LoaderValueEnvelope };
+export type LoaderReply =
+	| { error: LoaderValueEnvelope }
+	| { value: LoaderValueEnvelope }
+	// A 101 response, whose WebSocket no value envelope can hold.
+	| { webSocket: LoaderWebSocketReply };
 
 export function encodeLoaderError(error: unknown): LoaderReply {
 	const record = errorRecord(error);
@@ -247,6 +252,7 @@ export function decodeLoaderReply(reply: unknown): unknown {
 		throw new TypeError("Dynamic Worker sent an invalid RPC reply");
 	}
 	if (Object.hasOwn(reply, "error")) throw decodeLoaderError(Reflect.get(reply, "error"));
+	if (Object.hasOwn(reply, "webSocket")) return receiveWebSocketResponse(Reflect.get(reply, "webSocket"));
 	return decodeLoaderValue(Reflect.get(reply, "value"), false);
 }
 
@@ -280,6 +286,8 @@ export async function invokeLocal(
 			}
 			result = await Reflect.apply(member, holder, decodedArgs);
 		}
+		const webSocket = sendWebSocketResponse(result);
+		if (webSocket !== undefined) return { webSocket };
 		// A loopback result owns the stubs it holds through a non-enumerable disposer. That disposer can
 		// end a Durable Object session that the functions in the result still call through, so it runs
 		// once the other process has released the last capability in this reply.

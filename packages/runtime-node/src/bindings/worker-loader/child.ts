@@ -21,6 +21,7 @@ import {
 	writeFrame,
 	type LoaderReply,
 } from "./session.js";
+import { setMaxWebSocketBufferBytes } from "./websocket.js";
 
 export interface DynamicWorkerStart {
 	// The modules as written, which node:fs reads at `/bundle`.
@@ -28,6 +29,8 @@ export interface DynamicWorkerStart {
 	env: Record<string, unknown>;
 	// The linked main module, relative to `moduleRoot`.
 	mainFile: string;
+	// The runtime's limit for one WebSocket to the parent.
+	maxWebSocketBufferBytes: number;
 	// The module name of each linked file.
 	moduleNames: Record<string, string>;
 	moduleRewrites: Record<string, string>;
@@ -43,18 +46,19 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 
 function parseDynamicWorkerStart(value: unknown): DynamicWorkerStart {
 	if (!isRecord(value)) throw new TypeError("Dynamic Worker start message must be an object");
-	const { bundleRoot, env, mainFile, moduleNames, moduleRewrites, moduleRoot, outbound } = value;
+	const { bundleRoot, env, mainFile, maxWebSocketBufferBytes, moduleNames, moduleRewrites, moduleRoot, outbound } = value;
 	if (
 		typeof bundleRoot !== "string" ||
 		!isRecord(env) ||
 		typeof mainFile !== "string" ||
+		typeof maxWebSocketBufferBytes !== "number" ||
 		!isStringRecord(moduleNames) ||
 		!isStringRecord(moduleRewrites) ||
 		typeof moduleRoot !== "string"
 	) {
 		throw new TypeError("Dynamic Worker start message has invalid fields");
 	}
-	return { bundleRoot, env, mainFile, moduleNames, moduleRewrites, moduleRoot, outbound };
+	return { bundleRoot, env, mainFile, maxWebSocketBufferBytes, moduleNames, moduleRewrites, moduleRoot, outbound };
 }
 
 // The parent passes a Fetcher capability as `outbound`, read on each call
@@ -99,6 +103,7 @@ class DynamicWorkerHost extends DurableObjectRpcTarget {
 			if (this.#worker !== undefined) throw new Error("Dynamic Worker already started");
 			start = parseDynamicWorkerStart(decodeLoaderValue(envelope, true));
 			const { bundleRoot, mainFile, moduleRoot, outbound } = start;
+			setMaxWebSocketBufferBytes(start.maxWebSocketBufferBytes);
 			// node:fs reads `/bundle` from the dynamic Worker's own modules.
 			Reflect.set(globalThis, Symbol.for("open-orange.node-fs.bundle-root"), bundleRoot);
 			for (const [name, value] of Object.entries(start.env)) {

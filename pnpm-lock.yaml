@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  rivetkit: 3.1.2-rc.2
+  rivetkit: 3.1.2-rc.6
 
 importers:
 
@@ -15,8 +15,8 @@ importers:
         specifier: 3.1153.0
         version: 3.1153.0
       '@rivet-dev/agentos':
-        specifier: 0.5.0-rc.4
-        version: 0.5.0-rc.4(better-sqlite3@12.11.1)(ws@8.21.0)
+        specifier: 0.5.0-rc.5
+        version: 0.5.0-rc.5(better-sqlite3@12.11.1)(ws@8.21.0)
       '@rivet-dev/durable-object-migrator':
         specifier: 1.0.3
         version: 1.0.3
@@ -57,8 +57,8 @@ importers:
         specifier: ^10.3.1
         version: 10.3.1
       rivetkit:
-        specifier: 3.1.2-rc.2
-        version: 3.1.2-rc.2(better-sqlite3@12.11.1)(ws@8.21.0)
+        specifier: 3.1.2-rc.6
+        version: 3.1.2-rc.6(better-sqlite3@12.11.1)(ws@8.21.0)
       undici:
         specifier: 8.10.2
         version: 8.10.2
@@ -175,8 +175,8 @@ importers:
         specifier: 3.1153.0
         version: 3.1153.0
       '@rivet-dev/agentos':
-        specifier: 0.5.0-rc.4
-        version: 0.5.0-rc.4(better-sqlite3@12.11.1)(ws@8.21.0)
+        specifier: 0.5.0-rc.5
+        version: 0.5.0-rc.5(better-sqlite3@12.11.1)(ws@8.21.0)
       '@rivet-dev/durable-object-migrator':
         specifier: 1.0.3
         version: 1.0.3
@@ -214,8 +214,8 @@ importers:
         specifier: ^10.3.1
         version: 10.3.1
       rivetkit:
-        specifier: 3.1.2-rc.2
-        version: 3.1.2-rc.2(better-sqlite3@12.11.1)(ws@8.21.0)
+        specifier: 3.1.2-rc.6
+        version: 3.1.2-rc.6(better-sqlite3@12.11.1)(ws@8.21.0)
       undici:
         specifier: 8.10.2
         version: 8.10.2
@@ -1360,42 +1360,42 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@rivet-dev/agentos-sidecar-darwin-arm64@0.5.0-rc.4':
-    resolution: {integrity: sha512-VSeAVZpVHtoYy1IKUKYiqNwZbuZD9BfN/vcVZZezzOHG52P8oRwA8s1QujD+TPIFAUw9W72sAXo3ftONDDzZ1g==}
+  '@rivet-dev/agentos-sidecar-darwin-arm64@0.5.0-rc.5':
+    resolution: {integrity: sha512-93Lgnjdxqgmxqt9gaqqz0jvp0fldSQXT0Zu5A9hLGm+nlBWYA5t+HhRhPOnuXI7k8BV1yJojGZP3W38k602mTQ==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@rivet-dev/agentos-sidecar-darwin-x64@0.5.0-rc.4':
-    resolution: {integrity: sha512-Qlq0K3SpYRD4AI8DzMD7tLmoNIBdPVrrhzVXE3Vo6IiVFRFqcfH3uJFQmq/EhA8eEbEBFbpUkxLXdgsw7abCHA==}
+  '@rivet-dev/agentos-sidecar-darwin-x64@0.5.0-rc.5':
+    resolution: {integrity: sha512-NWx2rbOHVFGM+/OjHeArySNEy9OC1XHeJVmNoYzC0XqsqO8+ol/sZp5Q3EC0ahCGIX5/hy8+CM73+QpJdxD/2A==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@rivet-dev/agentos-sidecar-linux-arm64-gnu@0.5.0-rc.4':
-    resolution: {integrity: sha512-yqu9TYsO5JwpspE+yaWHS+xKWe7iMaxkECQ1AIzzp77w61r8oJf8ki4H+0sfKLF9bszUrEqrO+D79NXhmJawoQ==}
+  '@rivet-dev/agentos-sidecar-linux-arm64-gnu@0.5.0-rc.5':
+    resolution: {integrity: sha512-Su8HaXSiDDQs6Ssm1xvwCMFPiojNr9zB4+IRIVBmuYPNaZi36ua9WTz/OdVuMEoCp9Nd7LAiufv4Iqx21UESGA==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
     hasBin: true
 
-  '@rivet-dev/agentos-sidecar-linux-x64-gnu@0.5.0-rc.4':
-    resolution: {integrity: sha512-U7Bp96N/RjW9+MzS/d4xXP7SdgR4vSgxBdxxgAsq7nNOCc1rnQoif6B/4AYHY2bM4ZzceYSLtHPycZpG8rKgYA==}
+  '@rivet-dev/agentos-sidecar-linux-x64-gnu@0.5.0-rc.5':
+    resolution: {integrity: sha512-7p2GgYe7RAUdTOOvNXefiG3Z3NoGVCqJ7LkbueL9cxP/vm+/Wc9/Xr540x/Szx0wlREaw8YsO1GHRG+B5/+gqw==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
     hasBin: true
 
-  '@rivet-dev/agentos-sidecar@0.5.0-rc.4':
-    resolution: {integrity: sha512-9M3rMsenfIZ3Q0xaB5Zngb1GqdTskiyrGuM9Z3Vif1/RQc+SzZuaDjcIx3CUtlt6tY21P6VzBMH+RWUbnoYHzA==}
+  '@rivet-dev/agentos-sidecar@0.5.0-rc.5':
+    resolution: {integrity: sha512-8YUnVBqyWd8RyJuQqyzcvkm8gjy2gdw5+7p6m3b9Rbtm9HgCz/CJ1youYTxKuPRGKMruUs8D4BND83NO3jzpyw==}
     engines: {node: '>=20'}
 
-  '@rivet-dev/agentos@0.5.0-rc.4':
-    resolution: {integrity: sha512-sYj+WBsFjYLJds2T8t0HTefHLM2kTmtNFaUsW5rfGqdTCS3W8qETn14D/I5WCDbMJOZlwR7NAFlZc7KamQCSOQ==}
+  '@rivet-dev/agentos@0.5.0-rc.5':
+    resolution: {integrity: sha512-rsBiMl39I+TK4D8p5I1Ok1dVMwLutzUwUaWyT389mMzBTgvcVPQnkoVZL7DLv7dQhF01W9hsjm+15HGUAhLqgA==}
 
   '@rivet-dev/durable-object-migrator@1.0.3':
     resolution: {integrity: sha512-mM+i1pSYDYqRecE+lhwpK+hi/ZUewiBFOPHGdzrtOu5Y62OxoHf804dTaxH7tQz4fzjfbnh1GluL8CXs3+2OFw==}
@@ -1474,106 +1474,106 @@ packages:
     resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
-  '@rivetkit/engine-api-full@3.1.2-rc.2':
-    resolution: {integrity: sha512-UrUnlcqKkoenWbGj4hlztTxKPuDcyQez8PQnluIH5sMz77BiRU5/X2xVsrT690hzVLwdo6FU+yAY9tVssJ+YJg==}
+  '@rivetkit/engine-api-full@3.1.2-rc.6':
+    resolution: {integrity: sha512-UZhkTm28W/dILvgzt4Tbjuq0DNTgaG9EvxWek1BsNaEsj6lL8oAjB7kPmIZGUINbIgFe/W5fCKCxp7Zf+Df78Q==}
 
-  '@rivetkit/engine-cli-darwin-arm64@3.1.2-rc.2':
-    resolution: {integrity: sha512-PjZ07zBH1b8rzZb7qPAaSfwcrg4jrIOIq5gsf5/tPdXKodBgX/DNRMSsNyr1QaVuoHTTHEHRI6N73hzyKyjy0A==}
+  '@rivetkit/engine-cli-darwin-arm64@3.1.2-rc.6':
+    resolution: {integrity: sha512-fywNb03eLH6Tx4jt0XMZd2vJ1VoDUaOBl//yqnHSNtqoPGGadsly1EoDzRn007ZrsIRDjPKot3fM+OshiAZe0A==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@rivetkit/engine-cli-darwin-x64@3.1.2-rc.2':
-    resolution: {integrity: sha512-pXLeK8vuu4VjE7pz/GDHFISc+7xcQMZ0wyfcxE/QdMx53bVSKGHZ+P1euZ162eTlk3fbOQxh/OjpGcic5Sv96g==}
+  '@rivetkit/engine-cli-darwin-x64@3.1.2-rc.6':
+    resolution: {integrity: sha512-isf4rrxMfrUnqpCTtWKkSRBz1RStLOiyrGaTObtISIiO0PeBuzRhKjXWFr6ZntLVr8MQ0JiIo1q8SSfrUMh7Zw==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@rivetkit/engine-cli-linux-arm64-musl@3.1.2-rc.2':
-    resolution: {integrity: sha512-uClKh6Xiryi9V43VwqPdSQWc+aR91X63+uWGD1mMep1bbbhqV1TC9VKh53irm9aPPzZrZcZOYm85V4iWbYsgBQ==}
+  '@rivetkit/engine-cli-linux-arm64-musl@3.1.2-rc.6':
+    resolution: {integrity: sha512-pK3vg1gYwsyvcXk42iPn8a5whe5XKDGIaoyZPOI4nKIzzhe4e0cgor4G3h7csHSby7jUszcwFqyDxEhoCWSHYQ==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc, musl]
     hasBin: true
 
-  '@rivetkit/engine-cli-linux-x64-musl@3.1.2-rc.2':
-    resolution: {integrity: sha512-Ren23awznx1p9k37ceeUwTclrukRsOUda3fR0ZZgtwXVlmlIOIRnqBoNnIfPlbtDRPxggXdZ9OJjdvK5YhBDLA==}
+  '@rivetkit/engine-cli-linux-x64-musl@3.1.2-rc.6':
+    resolution: {integrity: sha512-ctSdEu1KsoMDyljb31s9nPl1IObX+2RbGxjVErj8UVlO5gLrkgLMAEmk3QLeOh5ZStDzB82OzBlSezfbWyiVqg==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
     libc: [glibc, musl]
     hasBin: true
 
-  '@rivetkit/engine-cli@3.1.2-rc.2':
-    resolution: {integrity: sha512-DWoMeO+sL7dzQM39oNKSEYFrD33Hz9khVP9XqFX3QbeHMZChsfURBLDxXXQV5j9kIuBea6vN/cSk7mt42T3vIQ==}
+  '@rivetkit/engine-cli@3.1.2-rc.6':
+    resolution: {integrity: sha512-bdJlvpEBmuh6y+lT0MpwFRNerzRHi9SBXUMzXjz7B5svIG5C5aVDOyTOy7iRaa3I/ws8y9Ad5cg8oM6wV7w6gw==}
     engines: {node: '>= 20.0.0'}
 
-  '@rivetkit/engine-envoy-protocol@3.1.2-rc.2':
-    resolution: {integrity: sha512-T81Mccz9VvWCJ/On1A3Axp0J3ZUGvNTNSvCHbQlmYbpXtlEHyx6peYNP8IEipTUtR3VaG2S7dOrIGAdEKSZuPg==}
+  '@rivetkit/engine-envoy-protocol@3.1.2-rc.6':
+    resolution: {integrity: sha512-lFuHvBBTIsHXlUpEai8SKzCIfvy1gf6vGmI720CKFX4184HyeCfTkbaaEJ6MYtvb6VVJCWrQr/5r9g77TajP1Q==}
 
   '@rivetkit/on-change@6.0.1':
     resolution: {integrity: sha512-QBN/KRBXLJdCgN4gBTL3XAc/zKm58atSnieXWMOyFSPmo6F1/yIVV/LTRdvAktfCttrGx7W6c32i/lwqCHWnsQ==}
     engines: {node: '>=20'}
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@3.1.2-rc.2':
-    resolution: {integrity: sha512-zgoZLvH+854Jrs/kmuYLFE280l5Jks47y6izyS3KMQbXvr1v+DwDAmoPxOobGmpagpjwcM10fiYl9sxe/1ks9Q==}
+  '@rivetkit/rivetkit-napi-darwin-arm64@3.1.2-rc.6':
+    resolution: {integrity: sha512-gdz/2kx8MTnheK5jRBPxGppLvK1aE07H1++s0/PNBnbaN+JeH1iFgpJa0Oc89l8be67vI2CN11bBrpTHBVFVZg==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-darwin-x64@3.1.2-rc.2':
-    resolution: {integrity: sha512-F0a/MJFpjN1chjfhbZL09mnBlGaas7UG6WEpS1LFphBjfk+fj2kBUpualp+zMessiTUGc2q3n3o1yGxtklpalg==}
+  '@rivetkit/rivetkit-napi-darwin-x64@3.1.2-rc.6':
+    resolution: {integrity: sha512-wMWmcUIgrUB+dZX5RnWvac6YOxCbOl4yjTBHcR3k9DnlrSFWqr2kRLCyVmo2lz3IqJe7EdspseeWdNSDl+tjpg==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@3.1.2-rc.2':
-    resolution: {integrity: sha512-4utJJsp9gcprdTSXoF9lA7Dx9RFgeYcF75VPAcXe3bAFg0hJ54xotMiUx1lgISBH66PnsN/R+3g5Hgi825lXFQ==}
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@3.1.2-rc.6':
+    resolution: {integrity: sha512-O3asm8CFhEOpkziahofb45V2+TPP1/bUhprtw+Y1LPZHFs+MsKANlXX/khRYoi6u8eWTuZP087k3ouke8NTbHA==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@3.1.2-rc.2':
-    resolution: {integrity: sha512-Fh1y/XAgXSdm7bYpijDGyfDyEZsLyf7wcGJm8lRvUAjzHdZSt7VFjFRToiAgEvbw5eEQhmEJ8zFYFzhOUKADsw==}
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@3.1.2-rc.6':
+    resolution: {integrity: sha512-NxkE5jCH4ez+iuV0iILyaj9by9QI7tRU4kV3xVk20t/+uoaSIlCo+HBoLu14qzEDqbO+EcnJmO9C41iNFepHkw==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@3.1.2-rc.2':
-    resolution: {integrity: sha512-h6FVK8Id4kTo2K8+cWFKBtXqkfuztcE0yvegRilnSLHmx3bA62FvafVc40aMKrR33hKyzwlu7NEyhYX2xnOXnA==}
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@3.1.2-rc.6':
+    resolution: {integrity: sha512-+2wfcNfKrVjRov0MTNe96dMFz+FgqNAxOoXPwe981TwFezjutMt2xELPJ/C7LPBLHPX8vZWBWM2AZEhoiaNpKQ==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@3.1.2-rc.2':
-    resolution: {integrity: sha512-7l4n+ooo1B08q4x0Ma2awkwqx5xOUQFodrynrGlfvkicbZ8GonoAd+t0hQsGEohkBBfTOVi7ekadxpeJnjIdUA==}
+  '@rivetkit/rivetkit-napi-linux-x64-musl@3.1.2-rc.6':
+    resolution: {integrity: sha512-QXg4KkQkdwjJ6YlFEkO8cZvslzL86O8YJrSl71WOS5wzaVrs9Pa5tzrCAY8+F/FCV3ZJlwhQZXvCO60SWZ+L/A==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@rivetkit/rivetkit-napi@3.1.2-rc.2':
-    resolution: {integrity: sha512-ppSUf3lN54dVT6dZfb4SuLC/zqSVT1kP4XoplQBkvQeNCGY2L0YO/aDy6JzVgB5bdCJXtv/hXv4dJX2PfqVEog==}
+  '@rivetkit/rivetkit-napi@3.1.2-rc.6':
+    resolution: {integrity: sha512-V4/ou3L9GJutb8Jeo/rtlqkvNQKG+EV4MSCCKBcVoGqYmVo2yHRCS2Gm/rWWE23jwi5Gsn4CgIdB45J5IYF0Aw==}
     engines: {node: '>= 20.0.0'}
 
-  '@rivetkit/rivetkit-wasm@3.1.2-rc.2':
-    resolution: {integrity: sha512-ZPzrcuI9xTsXUW7CzALLhA4udHcTyoGcFBj69CBibc6vjoe3hZX6j7dWWYGEcG/4SVKp+BCkMSSNDnpKDfPYLw==}
+  '@rivetkit/rivetkit-wasm@3.1.2-rc.6':
+    resolution: {integrity: sha512-p30y1+7YRWojcoUTZhmSuEWdiCAduJQZwEC05u4LhtS5e0uUOAGjMUXuHK6GwfIZxk7Ke5R7cDCuGvXJjkoA0Q==}
 
-  '@rivetkit/traces@3.1.2-rc.2':
-    resolution: {integrity: sha512-myR7Ue+YNLhAusQppkuTPy3pYF/kjGb3Qc4AhfbVSB7LHV/TffTNObRQookhfKvo53HaGJNIAOckYwORgQvF6g==}
+  '@rivetkit/traces@3.1.2-rc.6':
+    resolution: {integrity: sha512-kDlFqJzqZb6OZ0+MYfStfxJkh0Wu5QTXX3W/1aGemdU15Dfd7vQEm3r6gbuh9f0mlGgEVwAZeWGMySCB7nCgiw==}
     engines: {node: '>=18.0.0'}
 
-  '@rivetkit/virtual-websocket@3.1.2-rc.2':
-    resolution: {integrity: sha512-nRMOhZIISO76ZauOmAAcWLXAis1+RPLIJVEzonpm98Ns82Xaua0vAndrqTB9oCQo7uBdDLOBxw1RAeLIIztovw==}
+  '@rivetkit/virtual-websocket@3.1.2-rc.6':
+    resolution: {integrity: sha512-ubvpMtukR2bCcg9CEEmNDpDYnVtGekln2WYMLmoPEZh/HjJgRn5lj4xiXl6sTr5wm2TW9MibDCm5Z83yCNPudQ==}
 
-  '@rivetkit/workflow-engine@3.1.2-rc.2':
-    resolution: {integrity: sha512-dnjDv3Te+33Tr3CBKG2QKqOJSxOnRn84SppuVxUbFNdeofPX/fwCR5AHyphKtS7zMxUUkcW3hIPnoZ5W6M/axA==}
+  '@rivetkit/workflow-engine@3.1.2-rc.6':
+    resolution: {integrity: sha512-k86KGRTYYx8qsuLPl8DRNX9FPLTtFgaN4leyVUNpgzfqDlL0bwBY7R4igetvRSNLdO30a+rTPGuIjkCuHmoB2Q==}
     engines: {node: '>=18.0.0'}
 
   '@sindresorhus/is@7.2.0':
@@ -2642,8 +2642,8 @@ packages:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
 
-  rivetkit@3.1.2-rc.2:
-    resolution: {integrity: sha512-IE3t+K8T/KY6lTKMy4N7KqE0/wGxplMMslU44owZazu+Ed744pN4kMrnfMHenmIcx0ZJ56aRIvSMkNxGyHR5iQ==}
+  rivetkit@3.1.2-rc.6:
+    resolution: {integrity: sha512-krbpn99RDOLAXLNi4EUZ98gT7rRc6xA31CEQp1E1HAjF8s1cjFlmaLz2jVkXmL911NvBtKU2qqjaZNSgpeTudA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       drizzle-kit: ^0.31.2
@@ -3935,33 +3935,33 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@rivet-dev/agentos-sidecar-darwin-arm64@0.5.0-rc.4':
+  '@rivet-dev/agentos-sidecar-darwin-arm64@0.5.0-rc.5':
     optional: true
 
-  '@rivet-dev/agentos-sidecar-darwin-x64@0.5.0-rc.4':
+  '@rivet-dev/agentos-sidecar-darwin-x64@0.5.0-rc.5':
     optional: true
 
-  '@rivet-dev/agentos-sidecar-linux-arm64-gnu@0.5.0-rc.4':
+  '@rivet-dev/agentos-sidecar-linux-arm64-gnu@0.5.0-rc.5':
     optional: true
 
-  '@rivet-dev/agentos-sidecar-linux-x64-gnu@0.5.0-rc.4':
+  '@rivet-dev/agentos-sidecar-linux-x64-gnu@0.5.0-rc.5':
     optional: true
 
-  '@rivet-dev/agentos-sidecar@0.5.0-rc.4':
+  '@rivet-dev/agentos-sidecar@0.5.0-rc.5':
     optionalDependencies:
-      '@rivet-dev/agentos-sidecar-darwin-arm64': 0.5.0-rc.4
-      '@rivet-dev/agentos-sidecar-darwin-x64': 0.5.0-rc.4
-      '@rivet-dev/agentos-sidecar-linux-arm64-gnu': 0.5.0-rc.4
-      '@rivet-dev/agentos-sidecar-linux-x64-gnu': 0.5.0-rc.4
+      '@rivet-dev/agentos-sidecar-darwin-arm64': 0.5.0-rc.5
+      '@rivet-dev/agentos-sidecar-darwin-x64': 0.5.0-rc.5
+      '@rivet-dev/agentos-sidecar-linux-arm64-gnu': 0.5.0-rc.5
+      '@rivet-dev/agentos-sidecar-linux-x64-gnu': 0.5.0-rc.5
 
-  '@rivet-dev/agentos@0.5.0-rc.4(better-sqlite3@12.11.1)(ws@8.21.0)':
+  '@rivet-dev/agentos@0.5.0-rc.5(better-sqlite3@12.11.1)(ws@8.21.0)':
     dependencies:
-      '@rivet-dev/agentos-sidecar': 0.5.0-rc.4
+      '@rivet-dev/agentos-sidecar': 0.5.0-rc.5
       '@rivetkit/bare-ts': 0.6.2
       '@xterm/headless': 6.0.0
       croner: 10.0.1
       long-timeout: 0.1.1
-      rivetkit: 3.1.2-rc.2(better-sqlite3@12.11.1)(ws@8.21.0)
+      rivetkit: 3.1.2-rc.6(better-sqlite3@12.11.1)(ws@8.21.0)
       zod: 4.5.4
       zod-to-json-schema: 3.25.2(zod@4.5.4)
     transitivePeerDependencies:
@@ -4034,7 +4034,7 @@ snapshots:
 
   '@rivetkit/bare-ts@0.6.2': {}
 
-  '@rivetkit/engine-api-full@3.1.2-rc.2':
+  '@rivetkit/engine-api-full@3.1.2-rc.6':
     dependencies:
       form-data: 4.0.6
       js-base64: 3.9.4
@@ -4045,72 +4045,72 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@rivetkit/engine-cli-darwin-arm64@3.1.2-rc.2':
+  '@rivetkit/engine-cli-darwin-arm64@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/engine-cli-darwin-x64@3.1.2-rc.2':
+  '@rivetkit/engine-cli-darwin-x64@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/engine-cli-linux-arm64-musl@3.1.2-rc.2':
+  '@rivetkit/engine-cli-linux-arm64-musl@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/engine-cli-linux-x64-musl@3.1.2-rc.2':
+  '@rivetkit/engine-cli-linux-x64-musl@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/engine-cli@3.1.2-rc.2':
+  '@rivetkit/engine-cli@3.1.2-rc.6':
     optionalDependencies:
-      '@rivetkit/engine-cli-darwin-arm64': 3.1.2-rc.2
-      '@rivetkit/engine-cli-darwin-x64': 3.1.2-rc.2
-      '@rivetkit/engine-cli-linux-arm64-musl': 3.1.2-rc.2
-      '@rivetkit/engine-cli-linux-x64-musl': 3.1.2-rc.2
+      '@rivetkit/engine-cli-darwin-arm64': 3.1.2-rc.6
+      '@rivetkit/engine-cli-darwin-x64': 3.1.2-rc.6
+      '@rivetkit/engine-cli-linux-arm64-musl': 3.1.2-rc.6
+      '@rivetkit/engine-cli-linux-x64-musl': 3.1.2-rc.6
 
-  '@rivetkit/engine-envoy-protocol@3.1.2-rc.2':
+  '@rivetkit/engine-envoy-protocol@3.1.2-rc.6':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
 
   '@rivetkit/on-change@6.0.1': {}
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi-darwin-arm64@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/rivetkit-napi-darwin-x64@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi-darwin-x64@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi-linux-x64-musl@3.1.2-rc.6':
     optional: true
 
-  '@rivetkit/rivetkit-napi@3.1.2-rc.2':
+  '@rivetkit/rivetkit-napi@3.1.2-rc.6':
     dependencies:
-      '@rivetkit/engine-envoy-protocol': 3.1.2-rc.2
+      '@rivetkit/engine-envoy-protocol': 3.1.2-rc.6
     optionalDependencies:
-      '@rivetkit/rivetkit-napi-darwin-arm64': 3.1.2-rc.2
-      '@rivetkit/rivetkit-napi-darwin-x64': 3.1.2-rc.2
-      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 3.1.2-rc.2
-      '@rivetkit/rivetkit-napi-linux-arm64-musl': 3.1.2-rc.2
-      '@rivetkit/rivetkit-napi-linux-x64-gnu': 3.1.2-rc.2
-      '@rivetkit/rivetkit-napi-linux-x64-musl': 3.1.2-rc.2
+      '@rivetkit/rivetkit-napi-darwin-arm64': 3.1.2-rc.6
+      '@rivetkit/rivetkit-napi-darwin-x64': 3.1.2-rc.6
+      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 3.1.2-rc.6
+      '@rivetkit/rivetkit-napi-linux-arm64-musl': 3.1.2-rc.6
+      '@rivetkit/rivetkit-napi-linux-x64-gnu': 3.1.2-rc.6
+      '@rivetkit/rivetkit-napi-linux-x64-musl': 3.1.2-rc.6
 
-  '@rivetkit/rivetkit-wasm@3.1.2-rc.2': {}
+  '@rivetkit/rivetkit-wasm@3.1.2-rc.6': {}
 
-  '@rivetkit/traces@3.1.2-rc.2':
+  '@rivetkit/traces@3.1.2-rc.6':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.6
       fdb-tuple: 1.0.0
       vbare: 0.0.4
 
-  '@rivetkit/virtual-websocket@3.1.2-rc.2': {}
+  '@rivetkit/virtual-websocket@3.1.2-rc.6': {}
 
-  '@rivetkit/workflow-engine@3.1.2-rc.2':
+  '@rivetkit/workflow-engine@3.1.2-rc.6':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.6
@@ -5184,20 +5184,20 @@ snapshots:
 
   reusify@1.1.0: {}
 
-  rivetkit@3.1.2-rc.2(better-sqlite3@12.11.1)(ws@8.21.0):
+  rivetkit@3.1.2-rc.6(better-sqlite3@12.11.1)(ws@8.21.0):
     dependencies:
       '@hono/zod-openapi': 1.6.3(hono@4.13.5)(zod@4.5.4)
       '@opentelemetry/api': 1.9.1
       '@rivetkit/bare-ts': 0.6.2
-      '@rivetkit/engine-api-full': 3.1.2-rc.2
-      '@rivetkit/engine-cli': 3.1.2-rc.2
-      '@rivetkit/engine-envoy-protocol': 3.1.2-rc.2
+      '@rivetkit/engine-api-full': 3.1.2-rc.6
+      '@rivetkit/engine-cli': 3.1.2-rc.6
+      '@rivetkit/engine-envoy-protocol': 3.1.2-rc.6
       '@rivetkit/on-change': 6.0.1
-      '@rivetkit/rivetkit-napi': 3.1.2-rc.2
-      '@rivetkit/rivetkit-wasm': 3.1.2-rc.2
-      '@rivetkit/traces': 3.1.2-rc.2
-      '@rivetkit/virtual-websocket': 3.1.2-rc.2
-      '@rivetkit/workflow-engine': 3.1.2-rc.2
+      '@rivetkit/rivetkit-napi': 3.1.2-rc.6
+      '@rivetkit/rivetkit-wasm': 3.1.2-rc.6
+      '@rivetkit/traces': 3.1.2-rc.6
+      '@rivetkit/virtual-websocket': 3.1.2-rc.6
+      '@rivetkit/workflow-engine': 3.1.2-rc.6
       cbor-x: 1.6.6
       drizzle-orm: 0.45.2(@opentelemetry/api@1.9.1)(better-sqlite3@12.11.1)
       hono: 4.13.5

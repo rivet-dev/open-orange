@@ -1,4 +1,5 @@
 import type { RivetActorHandle } from "../../internal/rivetkit.js";
+import { fetchAdmittedDurableObjectCall } from "./admission.js";
 import { encodeBody, outgoingBodyCoding } from "../../globals/content-encoding.js";
 import { durableObjectPrivateRoutes } from "./routes.js";
 import {
@@ -124,16 +125,20 @@ export async function fetchDurableObjectStub(
 	// Orange must not introduce a whole-body copy before actor dispatch.
 	// https://github.com/rivet-dev/actors/blob/527e186c6f643d2c64021ee8fcba5233c04905b1/rivetkit-typescript/packages/rivetkit/src/engine-client/actor-http-client.ts#L14-L44
 	const callerSignal = AbortSignal.any([request.signal, signal]);
-	const response = await handle().fetch(
-		requestWithBody(endpoint, request, {
-			headers: durableObjectTransportRequestHeaders(
-				durableObjectRequestHead(request),
-			),
-			// The gateway answers OPTIONS itself, so the real method travels in the head.
-			method: request.method === "OPTIONS" ? "POST" : request.method,
-			signal: callerSignal,
-		}),
-	);
+	const transportRequest = requestWithBody(endpoint, request, {
+		headers: durableObjectTransportRequestHeaders(
+			durableObjectRequestHead(request),
+		),
+		// The gateway answers OPTIONS itself, so the real method travels in the head.
+		method: request.method === "OPTIONS" ? "POST" : request.method,
+		signal: callerSignal,
+	});
+	// A fetch without a body that reaches a generation that ctx.abort() retired goes out again, to
+	// the next one, as a call after abort() reaches a new instance in workerd.
+	const response =
+		transportRequest.body === null
+			? await fetchAdmittedDurableObjectCall(handle(), transportRequest)
+			: await handle().fetch(transportRequest);
 	if (response.headers.has(thrownErrorHeader)) {
 		const error = deserializeThrownFetchError(await response.text());
 		// An error the object threw because the caller aborted is the caller's own

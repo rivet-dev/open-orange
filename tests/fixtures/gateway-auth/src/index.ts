@@ -47,6 +47,13 @@ export default {
 				return counter.fetch(request);
 			case "/rpc":
 				return Response.json({ count: await counter.increment() });
+			// The error that Worker code catches when a call to its object fails.
+			case "/try-rpc":
+				try {
+					return Response.json({ count: await counter.increment() });
+				} catch (error) {
+					return Response.json({ error: String(error) }, { status: 502 });
+				}
 			case "/read":
 				return Response.json({ count: await counter.read() });
 			case "/send":

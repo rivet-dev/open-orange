@@ -579,23 +579,48 @@ A fork adds no measurable memory.
 
 Every Orange actor is a Rivet Actor in your project's namespace: your Durable
 Objects, facets, and the actors of KV, D1, R2, Cache, Rate Limiting, Queues,
-Cron Triggers, and Workflows.
+Cron Triggers, and Workflows. Rivet's gateway admits a call to an actor when
+the caller's token has an `actor_gateway` grant on that actor's ID or on
+`any`. Orange adds no check of its own.
 
-On Cloudflare, only the Worker can reach a Durable Object. On Orange, besides
-your Worker, any client with a Rivet token that has an `actor_gateway` grant
-can call your objects. Give other clients tokens without that grant, or scope
-it to specific actor IDs.
+| Caller | Token | Reaches |
+| --- | --- | --- |
+| Your Worker | A JWT that Orange mints for each actor | That actor |
+| A client you give an `actor_gateway` grant on an actor ID | Issued by you | That actor |
+| A client you give an `actor_gateway` grant on `any` | Issued by you | Every actor in the namespace, Orange's included |
+| A client without an `actor_gateway` grant | Any | No actor |
 
-- The Rivet gateway checks every call with the caller's Rivet token and its
-  grants. Orange adds no check of its own.
-- A caller with an `actor_gateway` grant can also set the request that an
-  object's `fetch()` sees, including `request.cf`.
+On Cloudflare, only the Worker reaches a Durable Object. To keep that on
+Orange, scope the `actor_gateway` grants you issue to actor IDs.
+
+##### How Orange calls its actors
+
+- Orange mints each JWT with the node's Rivet token, which stays on the node.
+  A JWT lasts an hour, or `ORANGE_ACTOR_TOKEN_DURATION_SECONDS` (1 to 86,400),
+  and Orange renews it at half its lifetime.
+- HTTP calls carry the JWT in `x-rivet-token`, and WebSockets in a
+  `rivet_token.` subprotocol.
+- The gateway checks a WebSocket's token when the socket opens, so an open
+  socket keeps working after its JWT expires.
+- When Rivet issues no token, the call fails with `ActorTokenError`. While
+  token signing is briefly unavailable, such as right after the Engine starts,
+  the call waits up to 15 seconds.
+
+##### What an object's code sees
+
+- A caller that the gateway admits sets the request that the object's
+  `fetch()` sees, including `request.cf`.
 - `orange dev` and `orange serve` drop every `x-open-orange-internal-*` header
   that a client sends to the Worker.
-- The Rivet token never reaches your object's `fetch()`, WebSocket, or RPC
-  code.
-- Local development is not a security boundary. The local Engine's admin
-  token is `default`, and any process on the machine can use it.
+- No request that reaches your object carries a Rivet token.
+
+##### Node code
+
+- Worker and object code run as Rivet node code, in the process that holds
+  the node's Rivet token. On Rivet Cloud, that is the cluster's admin token.
+  Orange removes it from `process.env`, and the process can still read it from
+  the system, so the Worker's dependencies run with the node's access.
+- In local development, the Engine's admin token is `default`.
 
 #### Debug an object
 

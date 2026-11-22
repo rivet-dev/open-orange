@@ -8,6 +8,7 @@ import { durableObjectActorName } from "../../packages/runtime-node/src/bindings
 import { queueActorName } from "../../packages/runtime-node/src/internal-actors/queue.js";
 
 import { resolveDeploymentStorage } from "../../src/runtime/deployment.js";
+import { freePort } from "../harness/free-port.js";
 import {
 	closeWebSocket,
 	collectMessages,
@@ -18,6 +19,8 @@ import {
 	withDeadline,
 	type RunningOrangeDev,
 } from "../harness/orange-dev.js";
+import { adminToken, exited, startServe, startStandaloneEngine } from "../harness/orange-serve.js";
+import { startRecordingGatewayProxy, type GatewayCall } from "../harness/recording-gateway-proxy.js";
 
 // The local Engine's admin token. Only the test uses it, to look up actors and mint a token.
 const adminHeaders = { authorization: "Bearer default", "content-type": "application/json" };
@@ -229,6 +232,176 @@ test(
 				await dev.close();
 			} finally {
 				await project.dispose();
+			}
+		}
+	},
+);
+
+// The expiry of a Rivet JWT, in Unix milliseconds. Rivet's tokens are standard JWTs.
+function tokenExpiry(token: string): number {
+	const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { exp?: unknown };
+	assert.equal(typeof claims.exp, "number", `not a JWT with an expiry: ${token.slice(0, 16)}…`);
+	return (claims.exp as number) * 1_000;
+}
+
+test(
+	"Orange calls each of its actors with a Rivet token for that actor only, and renews it",
+	{ timeout: 300_000 },
+	async (t) => {
+		const engine = await startStandaloneEngine();
+		const proxy = await startRecordingGatewayProxy(engine.endpoint);
+		const project = await copyProject(join(repositoryRoot, "tests", "fixtures", "gateway-auth"));
+		const port = await freePort();
+		const origin = `http://127.0.0.1:${port}`;
+		// Each token lasts 2 seconds, so the calls below run on many renewed tokens.
+		const serve = await startServe(project.directory, proxy.endpoint, port, {
+			ORANGE_ACTOR_TOKEN_DURATION_SECONDS: "2",
+		});
+		const gateway = new URL(engine.endpoint);
+		gateway.username = "";
+		gateway.password = "";
+		const get = async (path: string): Promise<Response> => {
+			const response = await fetch(`${origin}${path}`);
+			assert.equal(response.status, 200, `${path}: ${await response.clone().text()}\n${serve.output()}`);
+			return response;
+		};
+		const echo = async (name: string): Promise<void> => {
+			const socket = await openWebSocket(`${origin}/ws?name=${name}`);
+			socket.send(name);
+			assert.deepEqual(await withDeadline(collectMessages(socket, 1), `the echo from ${name}`), [`echo:${name}`]);
+			await closeWebSocket(socket);
+		};
+		// Whether a token gets a call past the gateway to the actor. The path is one that no actor serves,
+		// so the call changes nothing.
+		const reaches = async (token: string, actorId: string): Promise<boolean> => {
+			const response = await fetch(new URL(`/gateway/${actorId}/request/__orange-test-unserved`, gateway), {
+				headers: { "x-rivet-token": token },
+			});
+			const error = response.headers.get("x-rivet-error") ?? "";
+			await response.body?.cancel();
+			return !error.startsWith("auth.");
+		};
+		const assertScoped = async (calls: readonly GatewayCall[]): Promise<void> => {
+			assert.ok(calls.length > 0, "no call reached the gateway");
+			const actorIds = [...new Set(calls.map((call) => call.actorId))];
+			const checked = new Set<string>();
+			for (const call of calls) {
+				assert.equal(call.tokens.length, 1, `a ${call.kind} call to ${call.actorId} carried ${call.tokens.length} tokens`);
+				const [token] = call.tokens as [string];
+				assert.notEqual(token, adminToken, `a ${call.kind} call to ${call.actorId} carried the Rivet admin token`);
+				assert.ok(tokenExpiry(token) > call.at, `a ${call.kind} call to ${call.actorId} carried an expired token`);
+				if (checked.has(token)) continue;
+				checked.add(token);
+				assert.equal(await reaches(token, call.actorId), true, `a token sent to ${call.actorId} does not reach it`);
+				const other = actorIds.find((actorId) => actorId !== call.actorId);
+				if (other !== undefined) {
+					assert.equal(await reaches(token, other), false, `a token sent to ${call.actorId} also reaches ${other}`);
+				}
+			}
+		};
+		try {
+			await t.test("concurrent calls to many objects each carry a token that reaches only their own object", async () => {
+				const names = Array.from({ length: 12 }, (_, index) => `object-${index}`);
+				await Promise.all([
+					...names.flatMap((name) => [get(`/rpc?name=${name}`), get(`/fetch?name=${name}`), echo(name)]),
+					get("/send"),
+					get("/backlog"),
+				]);
+				const calls = proxy.calls.splice(0);
+				assert.ok(new Set(calls.map((call) => call.actorId)).size >= names.length + 1, JSON.stringify(calls.map((call) => call.actorId)));
+				assert.ok(calls.some((call) => call.kind === "websocket"), "no WebSocket reached the gateway");
+				await assertScoped(calls);
+			});
+
+			await t.test("a call waits out a brief outage of Rivet's token signing", async () => {
+				proxy.failTokenIssuance = "unavailable";
+				const call = fetch(`${origin}/try-rpc?name=outage`);
+				// Long enough for several refused attempts, well inside the time a call waits for one.
+				await delay(1_500);
+				proxy.failTokenIssuance = undefined;
+				const response = await call;
+				assert.equal(response.status, 200, `${await response.clone().text()}\n${serve.output()}`);
+				assert.deepEqual(await response.json(), { count: 1 });
+			});
+
+			await t.test("a call fails at once with a clear error while Rivet issues no tokens, and works once it does", async () => {
+				proxy.failTokenIssuance = "disabled";
+				try {
+					const failed = await fetch(`${origin}/try-rpc?name=never-called`);
+					assert.equal(failed.status, 502, serve.output());
+					const { error } = (await failed.json()) as { error: string };
+					assert.match(error, /^ActorTokenError: OpenOrange could not get a Rivet token to call actor \S+: JWT issuance is not enabled/);
+				} finally {
+					proxy.failTokenIssuance = undefined;
+				}
+				assert.deepEqual(await (await get("/rpc?name=never-called")).json(), { count: 1 });
+				proxy.calls.splice(0);
+			});
+
+			await t.test("a call that reaches an object while its actor stops goes out again and runs once", async () => {
+				assert.deepEqual(await (await get("/rpc?name=stopping")).json(), { count: 1 });
+				// Rivet's answer when a call reaches an actor that is stopping. Nothing ran the call.
+				const answered = proxy.answerNextWith({
+					error: { code: "stopping", group: "actor", message: "An internal error occurred" },
+					method: "GET",
+					path: /^\/gateway\/[^/]+\/request\/__open-orange\/durable-object\/fetch/,
+					status: 500,
+				});
+				const fetched = (await (await get("/fetch?name=stopping")).json()) as { count: number };
+				await withDeadline(answered, "the stopping answer");
+				assert.equal(fetched.count, 2);
+				assert.deepEqual(await (await get("/read?name=stopping")).json(), { count: 2 });
+				proxy.calls.splice(0);
+			});
+
+			await t.test("a call waits for an object whose actor the Engine is still creating", async () => {
+				// The Engine creates the actor, and answers as when it stopped waiting for the creation.
+				const answered = proxy.answerNextWith({
+					afterEngine: true,
+					error: {
+						code: "create_pending",
+						group: "actor",
+						message: "Actor creation may still be in progress; do not retry creation automatically.",
+					},
+					method: "PUT",
+					path: /^\/actors(\?|$)/,
+					status: 503,
+				});
+				assert.deepEqual(await (await get("/rpc?name=pending")).json(), { count: 1 });
+				await withDeadline(answered, "the create_pending answer");
+				assert.deepEqual(await (await get("/read?name=pending")).json(), { count: 1 });
+				proxy.calls.splice(0);
+			});
+
+			await t.test("calls work after tokens expire, and an open WebSocket outlives its token", async () => {
+				const held = await openWebSocket(`${origin}/ws?name=held`);
+				held.send("boot");
+				const [before] = await withDeadline(collectMessages(held, 1), "the first reply");
+				// Rivet's gateway accepts a token for 60 seconds past its expiry. After this wait, every
+				// token minted before it is rejected, and the held socket's idle object has hibernated.
+				await delay(65_000);
+				proxy.calls.splice(0);
+				held.send("boot");
+				held.send("after expiry");
+				const [after, reply] = await withDeadline(collectMessages(held, 2), "replies after expiry");
+				assert.notEqual(after, before, "the idle object kept its instance");
+				assert.equal(reply, "echo:after expiry");
+				await get("/rpc?name=held");
+				await get("/fetch?name=held");
+				await echo("held");
+				await get("/backlog");
+				await closeWebSocket(held);
+				await assertScoped(proxy.calls.splice(0));
+			});
+		} finally {
+			try {
+				const exit = exited(serve.child);
+				serve.child.kill("SIGTERM");
+				await withDeadline(exit, "orange serve stop", 15_000).catch(() => serve.child.kill("SIGKILL"));
+			} finally {
+				await project.dispose();
+				await proxy.close();
+				await engine.stop();
 			}
 		}
 	},

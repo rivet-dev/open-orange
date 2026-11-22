@@ -325,6 +325,21 @@ export async function withRivetEngineStartLock<T>(
 	}
 }
 
+/** The port in the Engine stamp of this storage directory, whether or not that Engine still runs. */
+async function previousEnginePort(options: ResolveRivetEnginePortOptions): Promise<number | undefined> {
+	const stamp = await readEngineStamp(options.storagePath);
+	if (stamp === undefined) return undefined;
+	try {
+		const endpoint = new URL(stamp.endpoint);
+		const port = Number(endpoint.port);
+		return endpoint.hostname === options.host && Number.isInteger(port) && port >= 1 && port <= 65_525
+			? port
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export async function resolveRivetEnginePort(
 	options: ResolveRivetEnginePortOptions,
 ): Promise<number> {
@@ -333,10 +348,19 @@ export async function resolveRivetEnginePort(
 		return reusablePort;
 	}
 	const seed = createHash("sha256").update(options.portSeed).digest().readUInt32BE(0);
-	for (let attempt = 0; attempt < 40; attempt += 1) {
-		// The probe closes its sockets before the Engine binds them. Ports below Linux's ephemeral
-		// range (32768 and up; 49152 and up on macOS) cannot go to an outgoing connection meanwhile.
-		const enginePort = 20_000 + ((seed + attempt * 7_919) % 12_700);
+	// The Engine keeps its JWT signing ring only while its URLs stay the same, and the port seed is
+	// the storage path, which changes when the project moves. So the Engine first gets back the port
+	// it last ran on. On another port it could not issue the tokens Orange calls actors with, and
+	// logs "JWT ring does not belong to this cluster".
+	const previousPort = await previousEnginePort(options);
+	const candidates = [
+		...(previousPort === undefined ? [] : [previousPort]),
+		// Ports below Linux's ephemeral range (32768 and up; 49152 and up on macOS) cannot go to an
+		// outgoing connection between the probe below and the Engine's bind.
+		...Array.from({ length: 40 }, (_, attempt) => 20_000 + ((seed + attempt * 7_919) % 12_700)),
+	];
+	for (const enginePort of candidates) {
+		// The probe closes its sockets before the Engine binds them.
 		const servers = [createServer(), createServer(), createServer()];
 		try {
 			await listen(servers[0], enginePort, options.host);

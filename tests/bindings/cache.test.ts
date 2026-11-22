@@ -103,9 +103,10 @@ describe("Cache API through orange dev", { timeout: 300_000 }, () => {
 
 	it("when an entry's max-age passes, match misses and delete returns false", async () => {
 		const url = "https://example.com/short";
-		await put(url, "short-lived", { "cache-control": "max-age=1" });
+		// The entry must still be fresh at the first match, which takes over a second on a busy host.
+		await put(url, "short-lived", { "cache-control": "max-age=3" });
 		assert.equal(await (await match(url)).text(), "short-lived");
-		await delay(1_500);
+		await delay(3_500);
 		const expired = await match(url);
 		assert.equal(expired.headers.get("x-match"), "miss");
 		await expired.body?.cancel();

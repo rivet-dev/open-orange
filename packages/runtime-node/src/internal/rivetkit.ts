@@ -4,7 +4,14 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { fetch as undiciFetch, type RequestInit } from "undici";
 
-import { rivetGatewayCredential, rivetToken } from "./rivet-credentials.js";
+import {
+	actorGatewayRequest,
+	actorGatewayToken,
+	actorGatewayWebSocket,
+	actorTokenDurationSeconds,
+	type IssuedActorToken,
+} from "./actor-gateway-tokens.js";
+import { rivetControlCredential, rivetToken } from "./rivet-credentials.js";
 import { durableStreamActorName } from "./durable-stream.js";
 import { servicesPoolName, startServices, type ServicesProcess } from "./services-process.js";
 import {
@@ -480,8 +487,8 @@ function tokenOption(): { token?: string } {
 	return token === undefined ? {} : { token };
 }
 
-function gatewayTokenOption(): { token?: string } {
-	const token = rivetGatewayCredential();
+function controlTokenOption(): { token?: string } {
+	const token = rivetControlCredential();
 	return token === undefined ? {} : { token };
 }
 
@@ -511,11 +518,17 @@ interface RivetKitDbModule {
 
 
 interface RivetKitClient {
+	auth: {
+		issueToken(options: {
+			expiresIn: number;
+			grants: { operations: string[]; resource: string; target: { id: string } }[];
+		}): Promise<{ expiresAt: number; token: string }>;
+	};
 	create(
 		actorName: string,
 		key: string[],
 		options?: { input: unknown },
-	): Promise<RivetActorHandle>;
+	): Promise<RivetActorHandle & { resolve(): Promise<string> }>;
 	dispose(): Promise<void>;
 	fork(
 		actorName: string,
@@ -523,11 +536,12 @@ interface RivetKitClient {
 		options: { input: unknown; key: string[] },
 	): Promise<{ resolve(): Promise<string> }>;
 	get(actorName: string, key: string[]): RivetActorHandle & { resolve(): Promise<string> };
+	getForId(actorName: string, actorId: string): RivetActorHandle;
 	getOrCreate(
 		actorName: string,
 		key: string[],
 		options?: { createWithInput: unknown },
-	): RivetActorHandle;
+	): RivetActorHandle & { resolve(): Promise<string> };
 }
 
 interface RivetKitClientModule {
@@ -563,52 +577,76 @@ function loadRivetKitSpecifier<Module>(specifier: string): Module {
 	}
 }
 
-let actorWebSocketsUseWs = false;
+type WebSocketClass = new (
+	url: string | URL,
+	protocols?: string | string[],
+	...rest: unknown[]
+) => object;
 
-// RivetKit's client opens one WebSocket to the gateway for each Durable Object WebSocket. It uses
-// the global WebSocket when there is one, and the `ws` package otherwise, and it decides once.
-// Measured on Node.js 24.21 with 2,000 idle connections: the built-in WebSocket holds 35.6 KB of
-// heap for each connection, and `ws` holds 3.6 KB. So RivetKit decides here, while the global is
-// hidden. The loader is `dist/tsup/common/websocket.cjs`, which is not a package export, so its
-// file is found beside the client's. With a RivetKit build that has no such file, RivetKit keeps
-// the built-in WebSocket: everything works, each socket holds more memory, and Orange warns once.
+let actorWebSocketsReady = false;
+
+// RivetKit's client opens one WebSocket to the gateway for each Durable Object WebSocket, with the
+// class that its loader picks once: the global WebSocket when there is one, and the `ws` package
+// otherwise. Orange makes the loader pick a class that adds the actor's scoped token (see
+// actorGatewayWebSocket()). Its base is `ws`: measured on Node.js 24.21 with 2,000 idle connections,
+// the built-in WebSocket holds 35.6 KB of heap for each connection, and `ws` holds 3.6 KB. The loader
+// is `dist/tsup/common/websocket.cjs`, which is not a package export, so its file is found beside
+// the client's. Without `ws`, the base is the built-in WebSocket, and Orange warns once.
 // https://github.com/rivet-dev/rivet/blob/a00b07f483aa3fb07ab403614bcb79d7a8be0322/rivetkit-typescript/packages/rivetkit/src/common/websocket.ts
-function useWsForActorWebSockets(): void {
-	if (actorWebSocketsUseWs) return;
-	actorWebSocketsUseWs = true;
-	const fallBack = (reason: string): void => {
-		console.warn(
-			`[open-orange] RivetKit opens Durable Object WebSockets with the built-in WebSocket, which holds about 10 times more memory for each socket than \`ws\`: ${reason}`,
-		);
-	};
-	let importWebSocket: unknown;
+function useTokenWebSocketsForActors(): void {
+	if (actorWebSocketsReady) return;
+	const clientEntrypoint = requireFromOrange.resolve("rivetkit/client");
+	const loaderPath = join(dirname(clientEntrypoint), "..", "common", "websocket.cjs");
+	// Without the loader, Durable Object WebSockets could not carry their actor's token.
+	let loader: unknown;
 	try {
-		const clientEntrypoint = requireFromOrange.resolve("rivetkit/client");
-		// RivetKit resolves `ws` from its own files. Without it, the client would have no WebSocket.
-		createRequire(clientEntrypoint).resolve("ws");
-		const loader: unknown = requireFromOrange(
-			join(dirname(clientEntrypoint), "..", "common", "websocket.cjs"),
-		);
-		importWebSocket = isRecord(loader) ? loader.importWebSocket : undefined;
+		loader = requireFromOrange(loaderPath);
 	} catch (error: unknown) {
-		fallBack(error instanceof Error ? error.message : String(error));
-		return;
+		throw new Error(`OpenOrange needs RivetKit's WebSocket loader at ${loaderPath}`, { cause: error });
 	}
+	const importWebSocket = isRecord(loader) ? loader.importWebSocket : undefined;
 	if (typeof importWebSocket !== "function") {
-		fallBack("RivetKit's WebSocket loader has no importWebSocket()");
-		return;
+		throw new Error(`RivetKit's WebSocket loader at ${loaderPath} has no importWebSocket()`);
 	}
-	const descriptor = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
-	if (descriptor !== undefined && !Reflect.deleteProperty(globalThis, "WebSocket")) {
-		fallBack("the global WebSocket cannot be hidden");
-		return;
-	}
+	let base: WebSocketClass | undefined;
 	try {
-		// The loader reads the global before its first await.
-		void Promise.resolve(Reflect.apply(importWebSocket, undefined, [])).catch(() => {});
-	} finally {
-		if (descriptor !== undefined) Object.defineProperty(globalThis, "WebSocket", descriptor);
+		// RivetKit resolves `ws` from its own files.
+		const ws: unknown = createRequire(clientEntrypoint)("ws");
+		if (typeof ws === "function") base = ws as WebSocketClass;
+	} catch {}
+	if (base === undefined) {
+		console.warn(
+			"[open-orange] RivetKit opens Durable Object WebSockets with the built-in WebSocket, which holds about 10 times more memory for each socket than `ws`: RivetKit cannot load `ws`",
+		);
+		base = globalThis.WebSocket as unknown as WebSocketClass;
 	}
+	const ActorWebSocket = class extends base {
+		constructor(url: string | URL, protocols?: string | string[], ...rest: unknown[]) {
+			const target = actorGatewayWebSocket(url, protocols);
+			super(target.url, target.protocols, ...rest);
+		}
+	};
+	const descriptor = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+	let picked: unknown;
+	try {
+		Object.defineProperty(globalThis, "WebSocket", {
+			configurable: true,
+			value: ActorWebSocket,
+			writable: true,
+		});
+		// The loader reads the global before its first await.
+		picked = Reflect.apply(importWebSocket, undefined, []);
+	} finally {
+		if (descriptor === undefined) Reflect.deleteProperty(globalThis, "WebSocket");
+		else Object.defineProperty(globalThis, "WebSocket", descriptor);
+	}
+	actorWebSocketsReady = true;
+	void Promise.resolve(picked).then((webSocket) => {
+		// A WebSocket without the token reaches no actor: the gateway closes it with `auth.invalid_token`.
+		if (webSocket !== ActorWebSocket) {
+			console.error("[open-orange] RivetKit picked its WebSocket before OpenOrange, so Durable Object WebSockets carry no actor token");
+		}
+	}, () => {});
 }
 
 function loadRivetKitPackage(): RivetKitModule {
@@ -883,6 +921,81 @@ function isTransientEngineStorageError(body: string): boolean {
 	}
 }
 
+// Enough actor IDs for every object a busy node calls, so a stub made for each request costs no lookup.
+const maxCachedActorIds = 10_000;
+// A key handle in RivetKit sends a call again, after 100 ms, when Rivet answers one of these: the
+// call reached no running actor, so nothing ran it. Orange calls actors by ID with RivetKit handles
+// that do not, so Orange keeps the same policy. When the actor is gone, the key is resolved again.
+// https://github.com/rivet-dev/rivet/blob/7d2fda3749f785619883c46aed963fb7b48994e6/rivetkit-typescript/packages/rivetkit/src/client/actor-handle.ts#L551-L586
+// https://github.com/rivet-dev/rivet/blob/7d2fda3749f785619883c46aed963fb7b48994e6/rivetkit-typescript/packages/rivetkit/src/client/errors.ts#L42-L47
+const transientActorCodes = new Set(["starting", "stopping", "not_configured", "dropped_reply"]);
+const goneActorCodes = new Set(["not_found", "destroying"]);
+const schedulingCodes = new Set(["actor_ready_timeout", "actor_runner_failed"]);
+const lifecycleRetryDelayMs = 100;
+
+type RivetErrorCode = { group: string; code: string };
+
+function rivetErrorOf(error: unknown): RivetErrorCode | undefined {
+	if (!(error instanceof Error)) return undefined;
+	const group: unknown = Reflect.get(error, "group");
+	const code: unknown = Reflect.get(error, "code");
+	return typeof group === "string" && typeof code === "string" ? { group, code } : undefined;
+}
+
+// The Rivet error of a call's response: in `x-rivet-error`, or in a JSON error body.
+async function rivetErrorOfResponse(response: Response): Promise<RivetErrorCode | undefined> {
+	if (response.ok) return undefined;
+	const header = response.headers.get("x-rivet-error");
+	if (header !== null) {
+		const separator = header.indexOf(".");
+		return separator < 0 ? undefined : { group: header.slice(0, separator), code: header.slice(separator + 1) };
+	}
+	if (!response.headers.get("content-type")?.includes("application/json")) return undefined;
+	try {
+		const body: unknown = await response.clone().json();
+		return isRecord(body) && typeof body.group === "string" && typeof body.code === "string"
+			? { group: body.group, code: body.code }
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** `gone` when the actor no longer exists, `retry` when it was not running, else undefined. */
+function lifecycleRejection(error: RivetErrorCode | undefined): "gone" | "retry" | undefined {
+	if (error === undefined) return undefined;
+	if (error.group === "actor") {
+		if (goneActorCodes.has(error.code) || error.code.startsWith("destroyed_")) return "gone";
+		if (transientActorCodes.has(error.code)) return "retry";
+	}
+	if (error.group === "guard" && schedulingCodes.has(error.code)) return "retry";
+	return undefined;
+}
+
+// The Engine answers `create_pending` when it stopped waiting for an actor it is still creating, and
+// asks the caller to look the actor up rather than create it again.
+const createPendingCode = "create_pending";
+const createPendingWaitMs = 30_000;
+
+// Looks the actor up by key until the Engine has created it.
+async function waitForCreatedActor(
+	control: RivetKitClient,
+	actorName: string,
+	key: readonly string[],
+	pending: unknown,
+): Promise<string> {
+	const deadline = Date.now() + createPendingWaitMs;
+	for (;;) {
+		await delay(250);
+		try {
+			return await control.get(actorName, [...key]).resolve();
+		} catch (error: unknown) {
+			if (!isRivetActorNotFound(error)) throw error;
+			if (Date.now() > deadline) throw pending;
+		}
+	}
+}
+
 export function createRivetActorClient(
 	options: CreateRivetActorClientOptions,
 ): RivetActorClient {
@@ -891,34 +1004,149 @@ export function createRivetActorClient(
 	// afterwards, fail at once. The local Engine waits for every open gateway call before it exits,
 	// so one call that never ends would hold `orange dev` until the Engine's forced shutdown.
 	const disposed = new AbortController();
-	useWsForActorWebSockets();
-	const client = loadRivetKitSpecifier<RivetKitClientModule>("rivetkit/client").createClient({
+	// A bad token lifetime fails at startup, not at the first call.
+	actorTokenDurationSeconds();
+	useTokenWebSocketsForActors();
+	const { createClient } = loadRivetKitSpecifier<RivetKitClientModule>("rivetkit/client");
+	// The control client holds the node's Rivet token. It resolves keys to actor IDs, creates and
+	// forks actors, and mints the tokens for the gateway client. It never calls the gateway.
+	const control = createClient({
 		devtools: false,
 		disableMetadataLookup: true,
 		encoding: "bare",
 		endpoint: options.endpoint,
-		fetch: (...[input, init]: Parameters<typeof globalThis.fetch>) =>
-			globalThis.fetch(input, {
+		fetch: () => {
+			throw new Error("OpenOrange's Rivet control client never calls the gateway");
+		},
+		...namespaceOption(options.endpoint, options.namespace),
+		...(new URL(options.endpoint).password.length > 0 ? {} : controlTokenOption()),
+		...(options.poolName === undefined ? {} : { poolName: options.poolName }),
+	});
+	const mintToken = async (actorId: string, durationSeconds: number): Promise<IssuedActorToken> =>
+		await control.auth.issueToken({
+			expiresIn: durationSeconds,
+			grants: [{ operations: ["read"], resource: "actor_gateway", target: { id: actorId } }],
+		});
+	const endpoint = new URL(options.endpoint);
+	const namespace = endpoint.username.length > 0 ? decodeURIComponent(endpoint.username) : options.namespace;
+	endpoint.username = "";
+	endpoint.password = "";
+	// The gateway client calls actors by ID only. Each HTTP call carries the token for its actor in
+	// `x-rivet-token`, and each WebSocket carries it as a subprotocol (see useTokenWebSocketsForActors()).
+	// Both replace any other credential, such as RivetKit's local default token in the path.
+	const gateway = createClient({
+		devtools: false,
+		disableMetadataLookup: true,
+		encoding: "bare",
+		endpoint: endpoint.href,
+		fetch: async (...[input, init]: Parameters<typeof globalThis.fetch>) => {
+			const request = actorGatewayRequest(input instanceof Request ? input.url : input);
+			if (request === undefined) {
+				throw new Error("OpenOrange's Rivet gateway client called outside the gateway");
+			}
+			const headers = new Headers(init?.headers);
+			headers.set("x-rivet-token", await actorGatewayToken(request.actorId, mintToken));
+			return await globalThis.fetch(request.url, {
 				...init,
+				headers,
 				signal:
 					init?.signal == null
 						? disposed.signal
 						: AbortSignal.any([init.signal, disposed.signal]),
-			}),
-		...namespaceOption(options.endpoint, options.namespace),
-		...(new URL(options.endpoint).password.length > 0 ? {} : gatewayTokenOption()),
+			});
+		},
+		namespace,
 		...(options.poolName === undefined ? {} : { poolName: options.poolName }),
 	});
+	// Actor IDs by actor name and key, most recently used last.
+	const actorIds = new Map<string, { actorId: Promise<string>; resolved?: string }>();
+	const rememberActorId = (cacheKey: string, actorId: Promise<string>): Promise<string> => {
+		const entry: { actorId: Promise<string>; resolved?: string } = { actorId };
+		actorIds.delete(cacheKey);
+		actorIds.set(cacheKey, entry);
+		if (actorIds.size > maxCachedActorIds) actorIds.delete(actorIds.keys().next().value!);
+		actorId.then(
+			(resolved) => {
+				entry.resolved = resolved;
+			},
+			// A failed lookup is not kept, so the next call looks the key up again.
+			() => {
+				if (actorIds.get(cacheKey) === entry) actorIds.delete(cacheKey);
+			},
+		);
+		return actorId;
+	};
+	const resolveActorId = (cacheKey: string, resolve: () => Promise<string>): Promise<string> => {
+		const entry = actorIds.get(cacheKey);
+		if (entry === undefined) return rememberActorId(cacheKey, resolve());
+		actorIds.delete(cacheKey);
+		actorIds.set(cacheKey, entry);
+		return entry.actorId;
+	};
+	const forgetActorId = (cacheKey: string, actorId: string): void => {
+		if (actorIds.get(cacheKey)?.resolved === actorId) actorIds.delete(cacheKey);
+	};
+	// A handle that resolves its key to an actor ID once for every client, and calls the actor by ID.
+	// `attempts` is how many times a call goes out while its actor is not running: as many as a
+	// RivetKit key handle sends, and 1 for an actor that was created by ID.
+	// https://github.com/rivet-dev/rivet/blob/7d2fda3749f785619883c46aed963fb7b48994e6/rivetkit-typescript/packages/rivetkit/src/client/actor-handle.ts#L555-L561
+	const actorHandle = (
+		actorName: string,
+		key: readonly string[],
+		resolve: () => Promise<string>,
+		attempts: number,
+	): RivetActorHandle => {
+		const cacheKey = JSON.stringify([actorName, key]);
+		const call = async <Result>(
+			send: (handle: RivetActorHandle) => Promise<Result>,
+			rejectionOf: (result: Result) => Promise<RivetErrorCode | undefined>,
+		): Promise<Result> => {
+			for (let attempt = 1; ; attempt++) {
+				const actorId = await resolveActorId(cacheKey, resolve);
+				await actorGatewayToken(actorId, mintToken);
+				let result: Result;
+				try {
+					result = await send(gateway.getForId(actorName, actorId));
+				} catch (error: unknown) {
+					const rejection = lifecycleRejection(rivetErrorOf(error));
+					if (rejection === "gone") forgetActorId(cacheKey, actorId);
+					if (rejection === undefined || attempt >= attempts) throw error;
+					await delay(lifecycleRetryDelayMs);
+					continue;
+				}
+				const rejection = lifecycleRejection(await rejectionOf(result));
+				if (rejection === "gone") forgetActorId(cacheKey, actorId);
+				if (rejection === undefined || attempt >= attempts) return result;
+				if (result instanceof Response) await result.body?.cancel();
+				await delay(lifecycleRetryDelayMs);
+			}
+		};
+		const neverRejected = async (): Promise<undefined> => undefined;
+		return {
+			action: (options) => call((handle) => handle.action(options), neverRejected),
+			// Each attempt sends a copy of the body, so a later attempt can send it again, as a
+			// RivetKit key handle does.
+			// https://github.com/rivet-dev/rivet/blob/7d2fda3749f785619883c46aed963fb7b48994e6/rivetkit-typescript/packages/rivetkit/src/client/actor-handle.ts#L788-L790
+			fetch: (request) =>
+				call((handle) => handle.fetch(request.body === null ? request : request.clone()), rivetErrorOfResponse),
+			webSocket: (path) => call((handle) => handle.webSocket(path), neverRejected),
+		};
+	};
 	return {
-		create: async (actorName, key, input) =>
-			client.create(actorName, [...key], ...(input === undefined ? [] : [{ input }])),
+		create: async (actorName, key, input) => {
+			const actorId = await (
+				await control.create(actorName, [...key], ...(input === undefined ? [] : [{ input }]))
+			).resolve();
+			rememberActorId(JSON.stringify([actorName, key]), Promise.resolve(actorId));
+			return actorHandle(actorName, key, async () => actorId, 1);
+		},
 		dispose: async () => {
 			disposed.abort(new Error("The OpenOrange runtime stopped"));
-			await client.dispose();
+			await Promise.all([control.dispose(), gateway.dispose()]);
 		},
 		exists: async (actorName, key) => {
 			try {
-				await client.get(actorName, [...key]).resolve();
+				await control.get(actorName, [...key]).resolve();
 				return true;
 			} catch (error: unknown) {
 				if (isRivetActorNotFound(error)) return false;
@@ -926,14 +1154,29 @@ export function createRivetActorClient(
 			}
 		},
 		fork: async (actorName, sourceActorId, key, input) =>
-			await (await client.fork(actorName, sourceActorId, { input, key: [...key] })).resolve(),
-		get: (actorName, key) => client.get(actorName, [...key]),
-		resolve: async (actorName, key) => await client.get(actorName, [...key]).resolve(),
+			await (await control.fork(actorName, sourceActorId, { input, key: [...key] })).resolve(),
+		get: (actorName, key) =>
+			actorHandle(actorName, key, async () => await control.get(actorName, [...key]).resolve(), 24),
+		resolve: async (actorName, key) => await control.get(actorName, [...key]).resolve(),
 		getOrCreate: (actorName, key, createWithInput) =>
-			client.getOrCreate(
+			actorHandle(
 				actorName,
-				[...key],
-				...(createWithInput === undefined ? [] : [{ createWithInput }]),
+				key,
+				async () => {
+					try {
+						return await control
+							.getOrCreate(
+								actorName,
+								[...key],
+								...(createWithInput === undefined ? [] : [{ createWithInput }]),
+							)
+							.resolve();
+					} catch (error: unknown) {
+						if (rivetErrorOf(error)?.code !== createPendingCode) throw error;
+						return await waitForCreatedActor(control, actorName, key, error);
+					}
+				},
+				60,
 			),
 	};
 }

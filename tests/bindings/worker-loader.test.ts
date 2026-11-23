@@ -234,6 +234,10 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 			// and so does a specifier computed at runtime.
 			assert.deepEqual(await get("modules"), ["text", 42, "cjs Bo", "data", 5, "text"]);
 
+			// A computed import() finds a module by a URL, bare, nested, text, or CommonJS module
+			// name, as a literal one does, and gets the same module.
+			assert.deepEqual(await get("computed-imports"), ["url", "rel", "nested", "text", "cjs", true]);
+
 			// Wasm, data, text, and JSON modules larger than agentOS's 16 MiB file message load
 			// whole, in two dynamic Workers in a row.
 			const large = { data: [20 * 1024 * 1024, 7], json: "last", text: [20 * 1024 * 1024, "z"], wasm: [1, 7] };

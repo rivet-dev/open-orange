@@ -107,7 +107,7 @@ Hello from a dynamic Worker
 | `fetch()` and RPC through `getEntrypoint()` | Supported | Stubs, `RpcTarget`s, functions, service bindings, and Durable Object stubs travel by reference. |
 | `env` and `props` | Supported | Same reference passing as RPC. |
 | `globalOutbound` | Supported | `null` makes `fetch()` reject and `connect()` throw. A Fetcher receives the dynamic Worker's `fetch()` calls. |
-| JavaScript, CommonJS, text, data, JSON, and Wasm modules | Supported | Pass Wasm as bytes. Relative, `cloudflare:*`, and `node:*` imports resolve as in the parent Worker. |
+| JavaScript, CommonJS, text, data, JSON, and Wasm modules | Supported | Pass Wasm as bytes. Relative, `cloudflare:*`, and `node:*` imports resolve as in the parent Worker. A name that is not relative, such as `a.js` or a URL, names a module from the bundle root, also in an `import()` computed at runtime. workerd resolves that name from the importer's folder, so the two differ only for an importer in a subfolder. |
 | Wasm exception handling with exnref (`try_table`, `throw_ref`), as Rust `panic=unwind` builds use | Supported | On by default, as in workerd. See [The VM runtime](#the-vm-runtime). |
 | A WebSocket through `fetch()` | Supported | The dynamic Worker answers with a `WebSocketPair` end in a 101 response, and your Worker returns that response. See [WebSockets](#websockets). |
 | A `node:http` server through `cloudflare:node` | Supported | An Express app serves requests. |

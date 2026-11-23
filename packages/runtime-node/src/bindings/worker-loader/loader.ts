@@ -546,7 +546,8 @@ class DynamicWorker {
 			const { bundleRoot } = host;
 			// Linked modules go through the bundle mount too. Writing them into the VM costs one
 			// sidecar file write each, which took 18 s for 1,310 data-module wrappers.
-			const linkedDirectory = ".open-orange-linked";
+			// node_modules lets agentOS resolve a computed import() of a module name. See `packageFiles`.
+			const linkedDirectory = ".open-orange-linked/node_modules";
 			const moduleRoot = posix.join(bundleRoot, linkedDirectory);
 			await host.writeBundle(
 				prepared.modules.map((module) => ({ content: module.content, module: module.name, path: module.name })),

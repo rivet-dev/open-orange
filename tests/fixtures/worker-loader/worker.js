@@ -751,6 +751,36 @@ const routes = {
 		});
 		return worker.getEntrypoint().read(null);
 	},
+	// Kitesurf's page script imports its page modules this way: by a name that is not relative, such
+	// as a URL, with import() built by the AsyncFunction constructor.
+	async "computed-imports"(env) {
+		const worker = env.LOADER.load({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `
+					import * as relNamespace from "./rel.js";
+					const load = new (async () => {}).constructor("name", "return await import(name);");
+					export default {
+						async read() {
+							const url = await load("https://a.invalid/b.js");
+							const rel = await load("rel.js");
+							const nested = await load(["dir", "nested.js"].join("/"));
+							const text = await load("a.txt");
+							const cjs = await load("c.cjs");
+							return [url.value, rel.value, nested.default, text.default, cjs.default, rel === relNamespace];
+						},
+					};
+				`,
+				"https://a.invalid/b.js": "export const value = 'url';",
+				"rel.js": "export const value = 'rel';",
+				"dir/nested.js": "export default 'nested';",
+				"a.txt": { text: "text" },
+				"c.cjs": { cjs: "module.exports = 'cjs';" },
+			},
+		});
+		return worker.getEntrypoint().read(null);
+	},
 	// Wasm and data modules past agentOS's 16 MiB file message, in two Workers.
 	async "large-modules"(env) {
 		const size = 20 * 1024 * 1024;

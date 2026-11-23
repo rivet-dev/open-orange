@@ -2,7 +2,8 @@
 // with no module hooks. Each import specifier is rewritten at prepare time:
 // another module of the Worker becomes a relative path, an Orange module
 // rewrite becomes its file, and a module that does not exist becomes a module
-// that throws workerd's error.
+// that throws workerd's error. A specifier computed at runtime resolves
+// through agentOS's own resolver; see `packageFiles`.
 
 import { isBuiltin } from "node:module";
 import { posix } from "node:path";
@@ -50,9 +51,30 @@ interface ScannedModule {
 
 const missingDirectory = ".open-orange-missing";
 
+// The extension is always added, so a module's file never has the path of
+// another module's package folder (see `packageFiles`).
 function fileOf(module: DynamicModule): string {
-	const extension = module.type === "cjs" ? ".cjs" : ".mjs";
-	return module.name.endsWith(extension) ? module.name : `${module.name}${extension}`;
+	return `${module.name}${module.type === "cjs" ? ".cjs" : ".mjs"}`;
+}
+
+// workerd resolves every specifier against the importer, so `import(name)`
+// finds the module of that name even when `name` is computed at runtime:
+// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/jsg/modules.c%2B%2B#L80-L91
+// agentOS resolves a computed specifier itself. The linked files are in a
+// node_modules directory, so a name that is not relative, such as
+// `dir/a.js` or `https://a.invalid/b.js`, resolves to its file with `.mjs`
+// or `.cjs` added. agentOS reads a name with one segment, such as `a.js` or
+// `@scope/a`, as a package, so that module also gets a package.json whose
+// main is its file.
+function packageFiles(modules: readonly DynamicModule[]): Map<string, string> {
+	const files = new Map<string, string>();
+	for (const module of modules) {
+		const name = posix.normalize(module.name);
+		const segments = name.split("/").length;
+		if (segments !== (name.startsWith("@") ? 2 : 1)) continue;
+		files.set(`${name}/package.json`, JSON.stringify({ main: posix.relative(name, fileOf(module)) }));
+	}
+	return files;
 }
 
 function noSuchModule(name: string, importer: string): string {
@@ -330,6 +352,7 @@ export async function linkModules(
 		source += entry.source.slice(cursor);
 		files.set(file, source);
 	}
+	for (const [file, source] of packageFiles(modules)) files.set(file, source);
 	const main = byName.get(mainModule);
 	if (main === undefined) throw new TypeError(`Main module "${mainModule}" is not in the modules object.`);
 	return { files, mainFile: fileOf(main), moduleNames };

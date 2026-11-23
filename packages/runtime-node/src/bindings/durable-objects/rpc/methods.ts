@@ -1,5 +1,3 @@
-import { setTimeout as delay } from "node:timers/promises";
-
 import { reportError } from "../../../globals/global-scope.js";
 import {
 	currentDurableObjectOutputGate,
@@ -9,7 +7,8 @@ import {
 	type RivetActorHandle,
 } from "../../../internal/rivetkit.js";
 import { extendsDurableObject } from "../../../modules/cloudflare-workers/durable-object.js";
-import { durableObjectPrivateRoutes, generationRetiredError } from "../routes.js";
+import { fetchAdmittedDurableObjectCall } from "../admission.js";
+import { durableObjectPrivateRoutes } from "../routes.js";
 import type { DurableObjectGeneration } from "../state.js";
 import {
 	requireDurableObjectStubOrder,
@@ -150,52 +149,6 @@ export function createDurableObjectMethodHandler(
 	};
 }
 
-const admissionRetryLimit = 5;
-const admissionRetryDelayMilliseconds = 25;
-
-// Envoy answers 503 with one of these codes when it rejects a request before the actor admits it:
-// the routed generation already stopped, or the actor is not on that envoy yet. The object never
-// saw the call. RivetKit returns these responses to the caller instead of retrying them, because
-// a streamed body may already be partly sent. An RPC batch body is a buffered string, so Orange
-// resends it, and the gateway routes the retry to the object's next generation.
-// https://github.com/rivet-dev/rivet/blob/a00b07f483aa3fb07ab403614bcb79d7a8be0322/engine/sdks/rust/envoy-client/src/tunnel.rs#L481-L551
-// https://github.com/rivet-dev/rivet/blob/a00b07f483aa3fb07ab403614bcb79d7a8be0322/rivetkit-typescript/packages/rivetkit/src/client/actor-handle.ts#L535-L558
-// Orange answers the same way for a generation that ctx.abort(), sleep, or destroy retired.
-// The v3 gateway replaces both envoy codes with guard.actor_stopped_while_waiting.
-// https://github.com/rivet-dev/rivet/blob/a00b07f483aa3fb07ab403614bcb79d7a8be0322/engine/packages/pegboard-gateway/src/http_tunnel.rs#L313-L340
-const admissionRejections: ReadonlySet<string> = new Set([
-	"envoy.actor_generation_mismatch",
-	"envoy.actor_not_found",
-	"guard.actor_stopped_while_waiting",
-	generationRetiredError,
-]);
-
-// A retired generation answers until RivetKit stops its actor and starts the next one, which can
-// take seconds on a busy host, so those rejections get a longer budget.
-const retiredGenerationRetryLimit = 40;
-const retryDelayCapMilliseconds = 250;
-
-async function fetchDurableObjectRpc(
-	handle: RivetActorHandle,
-	request: Request,
-): Promise<Response> {
-	for (let attempt = 1; ; attempt += 1) {
-		const response = await handle.fetch(request.clone());
-		const rejection = response.headers.get("x-rivet-error") ?? "";
-		const limit =
-			rejection === generationRetiredError ? retiredGenerationRetryLimit : admissionRetryLimit;
-		if (attempt >= limit || response.status !== 503 || !admissionRejections.has(rejection)) {
-			return response;
-		}
-		await response.body?.cancel();
-		await delay(
-			Math.min(admissionRetryDelayMilliseconds * attempt, retryDelayCapMilliseconds),
-			undefined,
-			{ signal: request.signal },
-		);
-	}
-}
-
 function startDurableObjectStubOperation(
 	handle: RivetActorHandle,
 	call: RpcValueEnvelope,
@@ -237,7 +190,7 @@ function startDurableObjectStubOperation(
 				},
 			},
 			endpoint: `http://actor${durableObjectPrivateRoutes.rpc}`,
-			fetch: (request) => fetchDurableObjectRpc(handle, request),
+			fetch: (request) => fetchAdmittedDurableObjectCall(handle, request),
 		},
 	);
 }

@@ -577,25 +577,26 @@ A fork adds no measurable memory.
 
 #### Who can call an object
 
-Every Orange actor is a Rivet Actor in your project's namespace: your Durable
-Objects, facets, and the actors of KV, D1, R2, Cache, Rate Limiting, Queues,
-Cron Triggers, and Workflows.
+Every Orange actor is a Rivet Actor in the namespace that OpenOrange runs in:
+your Durable Objects, facets, and the actors of KV, D1, R2, Cache, Rate
+Limiting, Queues, Cron Triggers, and Workflows. Your Worker calls each actor
+with a Rivet token that OpenOrange issues for that actor alone.
 
-On Cloudflare, only the Worker can reach a Durable Object. On Orange, besides
-your Worker, any client with a Rivet token that has an `actor_gateway` grant
-can call your objects. Give other clients tokens without that grant, or scope
-it to specific actor IDs.
+Run OpenOrange in a Rivet namespace of its own. The namespace is the user name
+in `RIVET_ENDPOINT` (`https://<namespace>:<token>@<engine-host>`), or
+`RIVET_NAMESPACE`. Rivet's gateway admits a call to an actor only with a token
+for that actor's namespace, so tokens that you issue for your other apps do not
+reach your objects.
 
-- The Rivet gateway checks every call with the caller's Rivet token and its
-  grants. Orange adds no check of its own.
-- A caller with an `actor_gateway` grant can also set the request that an
-  object's `fetch()` sees, including `request.cf`.
+- Each token lasts an hour. `ORANGE_ACTOR_TOKEN_DURATION_SECONDS` sets another
+  lifetime, from 1 to 86,400 seconds.
+- A call fails with `ActorTokenError` when Rivet does not issue the token.
+- A caller that the gateway admits sets the request that the object's
+  `fetch()` sees, including `request.cf`.
 - `orange dev` and `orange serve` drop every `x-open-orange-internal-*` header
   that a client sends to the Worker.
-- The Rivet token never reaches your object's `fetch()`, WebSocket, or RPC
-  code.
-- Local development is not a security boundary. The local Engine's admin
-  token is `default`, and any process on the machine can use it.
+- No request that reaches your object carries a Rivet token.
+- In local development, the Engine's admin token is `default`.
 
 #### Debug an object
 

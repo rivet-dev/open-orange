@@ -33,11 +33,12 @@ export function rivetToken(): string | undefined {
 }
 
 /**
- * The credential that Orange's own RivetKit client presents to the Rivet gateway: the token in
- * the external endpoint URL, else RIVET_TOKEN. A local Engine accepts RivetKit's local admin
- * token `default`. Undefined when an external Engine has no token, so no caller matches.
+ * The credential of Orange's Rivet control client, which resolves and creates actors and mints the
+ * scoped tokens that Orange calls actors with: the token in the external endpoint URL, else
+ * RIVET_TOKEN. A local Engine accepts RivetKit's local admin token `default`. Undefined when an
+ * external Engine has no token.
  */
-export function rivetGatewayCredential(): string | undefined {
+export function rivetControlCredential(): string | undefined {
 	if (externalEndpoint === undefined) return rivetToken() ?? "default";
 	const password = new URL(externalEndpoint).password;
 	// RivetKit's client decodes the endpoint password the same way.

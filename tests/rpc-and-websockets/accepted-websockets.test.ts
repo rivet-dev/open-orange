@@ -256,7 +256,7 @@ test("an open outbound WebSocket or a fetch() in flight keeps an idle object fro
 // RivetKit opens one gateway socket for each Durable Object WebSocket. Without its `ws` loader, it
 // opens them with the global WebSocket, which is Orange's. Those sockets are not the Worker's.
 test("when RivetKit cannot use `ws`, Orange warns once, and RivetKit's own sockets don't count as the object's WebSockets", { timeout: 120_000 }, async () => {
-	const preload = join(repositoryRoot, "tests", "fixtures", "rivetkit-without-ws-loader", "preload.cjs");
+	const preload = join(repositoryRoot, "tests", "fixtures", "rivetkit-without-ws", "preload.cjs");
 	await withOrangeDev("accepted-websockets", async (dev) => {
 		const socket = await openWebSocket(socketUrl(dev, "stub-socket", "ann"));
 		await ask(socket, "open-stub-socket");

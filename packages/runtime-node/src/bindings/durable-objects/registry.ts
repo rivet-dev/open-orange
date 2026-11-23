@@ -207,8 +207,8 @@ const defaultRouteHandlers: DurableObjectRouteHandlers = {
 };
 
 // After ctx.abort(), sleep, or destroy, RivetKit can still route a request to the retired
-// generation until the actor stops. The object never runs an RPC batch that arrives there, and
-// the caller retries it so that it reaches the next generation, as a call after abort() reaches a
+// generation until the actor stops. The object never runs an RPC batch or a fetch without a body
+// that arrives there, and the caller retries it so that it reaches the next generation, as a call after abort() reaches a
 // new instance in workerd. The batch body is read first: an envoy without the late-frame fix
 // aborts the response when a request chunk arrives after the request completed.
 // https://github.com/rivet-dev/rivet/pull/5911
@@ -230,7 +230,12 @@ export function dispatchDurableObjectPrivateRequest(
 	routes: DurableObjectRouteHandlers,
 ): Response | Promise<Response> {
 	const path = new URL(request.url).pathname;
-	if (generation.stateController.retiredSignal.aborted && path === durableObjectPrivateRoutes.rpc) {
+	// A fetch without a body can be sent again, so it gets the same answer as an RPC batch.
+	if (
+		generation.stateController.retiredSignal.aborted &&
+		(path === durableObjectPrivateRoutes.rpc ||
+			(path === durableObjectPrivateRoutes.fetch && request.body === null))
+	) {
 		return generationRetiredResponse(request);
 	}
 	if (path === durableObjectPrivateRoutes.fetch) {

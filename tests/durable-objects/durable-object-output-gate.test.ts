@@ -20,6 +20,9 @@ import {
 
 // How long the engine stays stopped while the test checks that the peer saw nothing.
 const stoppedWindowMs = 1_500;
+// How long an output that needs no durable write may take to reach the peer while the engine is
+// stopped. It is a limit, not a wait: on a busy host the runtime takes seconds to send it.
+const unheldArrivalMs = 10_000;
 
 async function enginePid(projectDirectory: string): Promise<number> {
 	for await (const path of glob(
@@ -97,12 +100,12 @@ class Peer {
 		return arrival.promise;
 	}
 
-	async waitForMessages(count: number, timeoutMs: number): Promise<void> {
+	async waitForMessages(count: number, timeoutMs: number, what: string): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
 		while (this.messages.length < count) {
 			const remaining = deadline - Date.now();
 			if (remaining <= 0) {
-				throw new Error(`peer received ${JSON.stringify(this.messages)}`);
+				throw new Error(`${what}: in ${timeoutMs} ms the peer received ${JSON.stringify(this.messages)}`);
 			}
 			const next = Promise.withResolvers<void>();
 			this.#messageWaiters.push(next.resolve);
@@ -177,12 +180,12 @@ test("holds a Durable Object's outgoing fetch, RPC call, and WebSocket messages 
 				await delay(stoppedWindowMs);
 				assert.deepEqual(peer.messages, [], `${kind} left before its write was durable`);
 			} else {
-				await peer.waitForMessages(expected.length, stoppedWindowMs);
+				await peer.waitForMessages(expected.length, unheldArrivalMs, `${kind} while the engine was stopped`);
 			}
 
 			process.kill(stoppedEngine, "SIGCONT");
 			stoppedEngine = undefined;
-			await peer.waitForMessages(expected.length, 20_000);
+			await peer.waitForMessages(expected.length, 20_000, `${kind} after the engine resumed`);
 			assert.deepEqual(peer.messages, expected);
 			const result = await response;
 			assert.equal(result.status, 200, orange.output());

@@ -63,8 +63,10 @@ Rivet Engine before OpenOrange.
 
 #### Tokens and secrets
 
-- Clients that must not call your Durable Objects directly get Rivet tokens without an
-  `actor_gateway` grant. See [Who can call an object](../modules/durable-objects#who-can-call-an-object).
+- Run OpenOrange in a Rivet namespace of its own, so tokens for your other apps do not reach its
+  Durable Objects. See [Who can call an object](../modules/durable-objects#who-can-call-an-object).
+- A self-hosted Engine needs token issuance on. OpenOrange calls its actors with tokens that it
+  issues, and without issuance the calls fail with `ActorTokenError`.
 - Self-hosted, `RIVET_ENDPOINT` holds a token, which is why it goes to the container as a secret.
 
 #### Scaling

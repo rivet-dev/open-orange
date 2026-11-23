@@ -50,6 +50,8 @@ export interface CorpusProject {
 	directory: string;
 	/** Wrangler config paths, relative to `directory`. The first one serves the port. */
 	configs: string[];
+	/** The Wrangler environment that the project's own dev command selects with `--env`. */
+	env?: string;
 	/** Where the install runs, relative to the repository root. */
 	installDirectory: string;
 	/** Must keep install scripts off. See `installCommandProblem`. */
@@ -60,7 +62,10 @@ export interface CorpusProject {
 	d1Migrations?: string[];
 	/** Local-only values for `.dev.vars`, as the project's README asks. Never a real credential. */
 	devVars?: Record<string, string>;
-	/** What the code shows about Durable Object use. */
+	/**
+	 * What the code shows about Durable Object use. A Worker Loader project with no Durable Object has
+	 * empty `classes`, `file` is where it calls the loader, and `uses` names `worker_loaders`.
+	 */
 	durableObjects: {
 		classes: string[];
 		/** Source file with the class, relative to the repository root. */
@@ -104,8 +109,9 @@ function projectProblems(project: CorpusProject, directoryName: string): string[
 	const install = project.local === true && project.install === "" ? undefined : installCommandProblem(project.install);
 	if (install !== undefined) problems.push(`${where}: ${install}`);
 	if (project.configs.length === 0) problems.push(`${where}: configs is empty`);
-	if (project.durableObjects.classes.length === 0 || project.durableObjects.uses.length === 0) {
-		problems.push(`${where}: durableObjects must name its classes and the APIs they use`);
+	const { classes, uses } = project.durableObjects;
+	if (uses.length === 0 || (classes.length === 0 && !uses.includes("worker_loaders"))) {
+		problems.push(`${where}: durableObjects must name its classes and their APIs, or use worker_loaders`);
 	}
 	return problems;
 }

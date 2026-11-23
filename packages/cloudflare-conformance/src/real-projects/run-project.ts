@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -107,6 +107,19 @@ export async function stopEverything(): Promise<void> {
 	await Promise.all([...liveDirectories].map((directory) => stopEngines(directory)));
 }
 
+// Bazel leaves read-only directories, and rm cannot delete their entries until the directories are writable.
+async function removeTree(path: string): Promise<void> {
+	try {
+		await rm(path, { force: true, recursive: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+		// Best effort: the failed rm already removed part of the tree, so some paths are gone.
+		// `find` does not follow symlinks. The second rm reports what is still left.
+		spawnSync("find", [path, "-type", "d", "-exec", "chmod", "u+w", "{}", "+"]);
+		await rm(path, { force: true, recursive: true });
+	}
+}
+
 function words(command: string): string[] {
 	return command.trim().split(/\s+/);
 }
@@ -168,14 +181,17 @@ async function startOrange(
 ): Promise<OrangeProcess | { error: string }> {
 	const port = await freePort();
 	const log = createWriteStream(logPath, { flags: "a" });
-	const configs = options.project.configs.flatMap((config) => ["--config", join(workerDirectory, config)]);
+	const configFlags = [
+		...options.project.configs.flatMap((config) => ["--config", join(workerDirectory, config)]),
+		...(options.project.env === undefined ? [] : ["--env", options.project.env]),
+	];
 	const child = spawn(
 		process.execPath,
 		options.baseline
 			? [
 					join(options.orangeRoot, "packages", "cloudflare-conformance", "node_modules", "wrangler", "bin", "wrangler.js"),
 					"dev",
-					...configs,
+					...configFlags,
 					"--port",
 					String(port),
 					"--ip",
@@ -187,7 +203,7 @@ async function startOrange(
 					"tsx",
 					join(options.orangeRoot, "src", "bin.ts"),
 					"dev",
-					...configs,
+					...configFlags,
 					"--port",
 					String(port),
 					"--ip",
@@ -445,8 +461,8 @@ export async function runProject(options: RunProjectOptions): Promise<RealProjec
 			liveDirectories.delete(directory);
 		}
 		await rm(join(workerDirectory, ".open-orange"), { force: true, recursive: true });
-		if (!options.keep) await rm(join(root, "repo"), { force: true, recursive: true });
-		await rm(home, { force: true, recursive: true });
+		if (!options.keep) await removeTree(join(root, "repo"));
+		await removeTree(home);
 	}
 }
 

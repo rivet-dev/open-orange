@@ -1,0 +1,26 @@
+{
+	"id": "kitesurf",
+	"repo": "cloudflare/kitesurf",
+	"commit": "4a2903813a22b08d4f3cc64a4b35339d0293a5d1",
+	"stars": 2574,
+	"origin": "official",
+	"directory": "packages/engine",
+	"configs": [
+		"wrangler.jsonc",
+		"test/fixtures-worker/wrangler.jsonc"
+	],
+	"env": "local",
+	"installDirectory": ".",
+	"install": "pnpm install --frozen-lockfile --ignore-scripts",
+	"build": [
+		"pnpm run build"
+	],
+	"durableObjects": {
+		"classes": [],
+		"file": "packages/engine/src/eval/page-script.ts",
+		"uses": [
+			"worker_loaders"
+		]
+	},
+	"changes": []
+}

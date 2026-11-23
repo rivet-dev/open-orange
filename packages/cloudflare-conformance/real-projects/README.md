@@ -1,12 +1,12 @@
 # Real projects
 
-Open-source projects that run on Cloudflare Workers and Durable Objects, each exercised through real `orange dev` at a pinned commit.
+Open-source projects that run on Cloudflare Workers with Durable Objects or Worker Loader, each exercised through real `orange dev` at a pinned commit.
 
 ```
 real-projects/
   excluded.json        Visible projects screened out, with the reason
   <id>/
-    project.json       Pinned commit, install, build, Durable Object evidence, changes
+    project.json       Pinned commit, install, build, Durable Object or Worker Loader evidence, changes
     scenario.ts        Real requests and WebSockets, one recorded step per behaviour
     changes.patch      Optional. Every change the project needed, applied before install
     result.json        Written by the run. Never by hand
@@ -18,6 +18,8 @@ real-projects/
 1. Candidates: the projects the owner named, [awesome-durable-objects](https://github.com/janwilmake/awesome-durable-objects), and GitHub topic, repository, and code searches for Durable Object use. That gave 1,108 repositories.
 2. Screen: for each one, read the Wrangler configs and class source at the default branch, and keep it when a Durable Object class calls a storage, SQL, alarm, WebSocket, or Agent state API.
 3. Rank by GitHub stars. Read each project's code before adding it. `excluded.json` lists the visible ones that were screened out.
+
+Projects with no Durable Object are added by hand, outside these steps, when their Worker starts dynamic Workers through a `worker_loaders` binding. Their `durableObjects.classes` is empty, and `uses` names `worker_loaders`.
 
 Search finds what it finds, so a project may be missing. The named libraries have no deployable Worker of their own, so a small consumer Worker runs them, listed under `changes`.
 
@@ -36,7 +38,7 @@ Each run clones the pinned commit, installs with install scripts off, runs the p
 
 - **The scenario follows the project.** Read its README, routes, and client. Do what a real user or its client does. Never shape a step around what Orange can do.
 - **A failed step stays failed.** Do not weaken an assertion, add a retry, or lengthen a wait to get a pass. Record the cause in `knownFailures`.
-- **Prove state, not boot.** Write through one request and read through another. Include a Durable Object sleep or a restart where the project keeps state.
+- **Prove state, not boot.** Write through one request and read through another. Include a Durable Object sleep or a restart where the project keeps state. A Worker Loader project checks output that only its dynamic Workers make.
 - **Unmodified first.** Each change goes in `changes.patch` and `changes` with the reason. A project with no Wrangler config needs a `config` change.
 - **No real credentials.** A flow that needs one is a `t.needsSecrets(...)` step. Local-only values that the README tells you to choose go in `devVars`.
 - **A failed step closes its own sockets.** The runner closes the sockets a throwing step opened, so an object it left awake does not fail later steps for the wrong reason. The step itself stays failed.
@@ -83,6 +85,7 @@ export default scenario;
 | `sleep` | State or a socket across a Durable Object sleep |
 | `restart` | State across an `orange dev` and Engine restart |
 | `binding` | Another binding: KV, D1, R2, Queues, Workflows, AI, and others |
+| `worker-loader` | Output from a dynamic Worker that a `worker_loaders` binding started |
 
 ## Status
 
@@ -90,7 +93,7 @@ export default scenario;
 
 | Status | Meaning |
 |---|---|
-| `works` | Every step passed, and at least one exercised a Durable Object |
+| `works` | Every step passed, and at least one exercised a Durable Object or a dynamic Worker |
 | `partial` | At least one step passed, and at least one failed |
 | `fails` | Install, build, or boot failed, or no step passed |
 | `needs-secrets` | Nothing failed, and a flow needs a real credential |

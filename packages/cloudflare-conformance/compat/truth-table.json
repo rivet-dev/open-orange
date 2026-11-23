@@ -18,12 +18,14 @@
 				"09b4d1d",
 				"96efb7b",
 				"cb1ffb0",
-				"e4c405f"
+				"e4c405f",
+				"v3"
 			],
 			"rivetkit": [
-				"0.0.0-sqlite-sync-3-0-1-final.5663d2f"
+				"0.0.0-sqlite-sync-3-0-1-final.5663d2f",
+				"3.1.2-rc.6"
 			],
-			"ranAt": "2026-11-06T22:23:15.359Z"
+			"ranAt": "2026-11-23T21:35:48.200Z"
 		},
 		"examples": {
 			"orange": "e4c405f",
@@ -54,14 +56,14 @@
 			"not-run": 3
 		},
 		"projects": {
-			"works": 9,
+			"works": 10,
 			"works-emulated": 19,
 			"partial": 8,
 			"fails": 0,
 			"needs-secrets": 14,
 			"not-run": 0
 		},
-		"unmodified": 38,
+		"unmodified": 39,
 		"failedSteps": [
 			{
 				"owner": "hibernation-not-available",
@@ -3208,6 +3210,33 @@
 			"ranAt": "2026-11-05T02:23:28.239Z",
 			"orange": "e4c405f",
 			"rivetkit": "0.0.0-sqlite-sync-3-0-1-final.5663d2f"
+		},
+		{
+			"id": "kitesurf",
+			"repo": "cloudflare/kitesurf",
+			"url": "https://github.com/cloudflare/kitesurf/tree/4a2903813a22b08d4f3cc64a4b35339d0293a5d1",
+			"commit": "4a2903813a22b08d4f3cc64a4b35339d0293a5d1",
+			"stars": 2574,
+			"origin": "official",
+			"directory": "packages/engine",
+			"status": "works",
+			"steps": {
+				"pass": 8,
+				"total": 8
+			},
+			"changes": [],
+			"failures": [],
+			"secrets": [],
+			"durableObjects": {
+				"classes": [],
+				"file": "packages/engine/src/eval/page-script.ts",
+				"uses": [
+					"worker_loaders"
+				]
+			},
+			"ranAt": "2026-11-23T21:35:48.200Z",
+			"orange": "v3",
+			"rivetkit": "3.1.2-rc.6"
 		},
 		{
 			"id": "meet",

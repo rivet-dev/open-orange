@@ -31,6 +31,33 @@ test("a project that could run its install scripts is refused", async () => {
 	await assert.rejects(readCorpus(directory), /bad: install must pass --ignore-scripts/);
 });
 
+test("a project with no Durable Object class is refused unless it declares worker_loaders", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "corpus-"));
+	const write = async (id: string, uses: string[]) => {
+		await mkdir(join(directory, id));
+		await writeFile(
+			join(directory, id, "project.json"),
+			JSON.stringify({
+				id,
+				repo: "a/b",
+				commit: "0".repeat(40),
+				stars: 1,
+				origin: "search",
+				directory: ".",
+				configs: ["wrangler.jsonc"],
+				installDirectory: ".",
+				install: "npm install --ignore-scripts",
+				durableObjects: { classes: [], file: "a.ts", uses },
+				changes: [],
+			}),
+		);
+	};
+	await write("loader", ["worker_loaders"]);
+	assert.deepEqual((await readCorpus(directory)).map((project) => project.id), ["loader"]);
+	await write("plain", ["kv"]);
+	await assert.rejects(readCorpus(directory), /plain: durableObjects must name its classes/);
+});
+
 test("the corpus and probes load, and each one can run or says why not", async () => {
 	for (const root of [realProjectsDirectory, probesDirectory]) {
 		for (const project of await readCorpus(root)) {
@@ -69,4 +96,6 @@ test("a run with one failed step and one passed step is partial, never works", (
 	assert.equal(deriveStatus([{ ok: false, seconds: 0, error: "boot" }], [passed]), "fails");
 	// A boot alone proves nothing about Durable Objects.
 	assert.equal(deriveStatus([], [{ ...passed, kind: "http" }]), "not-run");
+	// A dynamic Worker that ran is proof too.
+	assert.equal(deriveStatus([], [{ ...passed, kind: "http" }, { ...passed, kind: "worker-loader" }]), "works");
 });

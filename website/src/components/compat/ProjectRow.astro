@@ -22,7 +22,7 @@ const classes = p.durableObjects.classes.length;
 	<Chip slot="status" tone={s.tone} label={s.label} />
 	<span slot="name" class="row-name block truncate">{p.repo}</span>
 	<span slot="a" class="row-text-faint">
-		{fmt(p.stars)} stars · {classes} {classes === 1 ? 'class' : 'classes'} · {p.changes.length === 0 ? 'unmodified' : `${p.changes.length} ${p.changes.length === 1 ? 'change' : 'changes'}`}
+		{fmt(p.stars)} stars · {classes === 0 ? 'Worker Loader' : `${classes} ${classes === 1 ? 'class' : 'classes'}`} · {p.changes.length === 0 ? 'unmodified' : `${p.changes.length} ${p.changes.length === 1 ? 'change' : 'changes'}`}
 	</span>
 	{needsSecrets || causes.length ? (
 		<span slot="b" class="flex flex-wrap gap-1.5">
@@ -53,7 +53,9 @@ const classes = p.durableObjects.classes.length;
 			<a href={p.url} class="link" rel="noopener">{p.repo}</a> at <code>{p.commit.slice(0, 7)}</code>, Worker in <code>{p.directory}</code>.
 			{classes ? (
 				<span> Durable Objects: {p.durableObjects.classes.map((c, i) => <><code>{c}</code>{i < classes - 1 ? ', ' : ''}</>)} using {p.durableObjects.uses.map((u, i) => <><code>{u}</code>{i < p.durableObjects.uses.length - 1 ? ', ' : ''}</>)}.</span>
-			) : null}
+			) : (
+				<span> No Durable Objects. It starts dynamic Workers through <code>worker_loaders</code>.</span>
+			)}
 		</dd>
 		<dt>Changes</dt>
 		{p.changes.length ? (

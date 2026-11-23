@@ -1,7 +1,10 @@
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 
-/** What a step proves. `do-*` kinds, `websocket`, `alarm`, and `sleep`/`restart` exercise a Durable Object. */
+/**
+ * What a step proves. `do-*` kinds, `websocket`, `alarm`, and `sleep`/`restart` exercise a Durable Object.
+ * `worker-loader` exercises a dynamic Worker that a `worker_loaders` binding starts.
+ */
 export const stepKinds = [
 	"http",
 	"do-state",
@@ -10,6 +13,7 @@ export const stepKinds = [
 	"sleep",
 	"restart",
 	"binding",
+	"worker-loader",
 ] as const;
 export type StepKind = (typeof stepKinds)[number];
 

@@ -2,7 +2,7 @@ import type { CorpusOrigin, ProjectChange } from "./corpus.js";
 import type { StepKind, StepResult } from "./scenario.js";
 
 /**
- * - `works`: every step passed, and at least one step exercised a Durable Object.
+ * - `works`: every step passed, and at least one step exercised a Durable Object or a dynamic Worker.
  * - `partial`: it runs, and at least one step passed and one failed.
  * - `fails`: install, build, or boot failed, or no step passed.
  * - `needs-secrets`: nothing failed, but a flow needs a real credential that this run does not have.
@@ -11,7 +11,8 @@ import type { StepKind, StepResult } from "./scenario.js";
 export const realProjectStatuses = ["works", "partial", "fails", "needs-secrets", "not-run"] as const;
 export type RealProjectStatus = (typeof realProjectStatuses)[number];
 
-export const doStepKinds: readonly StepKind[] = ["do-state", "websocket", "alarm", "sleep", "restart"];
+/** Step kinds that prove more than a boot: a Durable Object or a dynamic Worker ran. */
+const provingStepKinds: readonly StepKind[] = ["do-state", "websocket", "alarm", "sleep", "restart", "worker-loader"];
 
 /**
  * What `waitForSleep` accepts as asleep.
@@ -69,6 +70,6 @@ export function deriveStatus(
 	const needsSecrets = steps.filter((step) => step.status === "needs-secrets");
 	if (failed.length > 0) return passed.length > 0 ? "partial" : "fails";
 	if (needsSecrets.length > 0) return "needs-secrets";
-	if (!passed.some((step) => doStepKinds.includes(step.kind))) return "not-run";
+	if (!passed.some((step) => provingStepKinds.includes(step.kind))) return "not-run";
 	return "works";
 }

@@ -1,0 +1,90 @@
+{
+	"schemaVersion": 1,
+	"id": "kitesurf",
+	"repo": "cloudflare/kitesurf",
+	"commit": "4a2903813a22b08d4f3cc64a4b35339d0293a5d1",
+	"stars": 2574,
+	"origin": "official",
+	"directory": "packages/engine",
+	"ranAt": "2026-11-23T21:35:48.200Z",
+	"orange": {
+		"sha": "v3",
+		"dirty": null
+	},
+	"rivetkit": "3.1.2-rc.6",
+	"runtime": "orange",
+	"node": "v24.21.0",
+	"status": "works",
+	"install": {
+		"ok": true,
+		"seconds": 2,
+		"command": "pnpm install --frozen-lockfile --ignore-scripts"
+	},
+	"build": {
+		"ok": true,
+		"seconds": 468,
+		"command": "pnpm run build"
+	},
+	"boot": {
+		"ok": true,
+		"seconds": 9
+	},
+	"steps": [
+		{
+			"name": "the engine answers its health check",
+			"kind": "http",
+			"status": "pass",
+			"seconds": 0
+		},
+		{
+			"name": "Puppeteer connects through the discovered browser WebSocket",
+			"kind": "http",
+			"status": "pass",
+			"seconds": 0.1
+		},
+		{
+			"name": "a navigation loads example.com",
+			"kind": "worker-loader",
+			"status": "pass",
+			"seconds": 2.2
+		},
+		{
+			"name": "evaluate reads the loaded document",
+			"kind": "worker-loader",
+			"status": "pass",
+			"seconds": 0.1
+		},
+		{
+			"name": "a screenshot renders the page",
+			"kind": "worker-loader",
+			"status": "pass",
+			"seconds": 3
+		},
+		{
+			"name": "a second navigation in the same tab loads another page",
+			"kind": "worker-loader",
+			"status": "pass",
+			"seconds": 7.3
+		},
+		{
+			"name": "a screenshot renders the second page",
+			"kind": "worker-loader",
+			"status": "pass",
+			"seconds": 1.2
+		},
+		{
+			"name": "a page's module script runs",
+			"kind": "worker-loader",
+			"status": "pass",
+			"seconds": 0.9
+		}
+	],
+	"changes": [],
+	"durableObjects": {
+		"classes": [],
+		"file": "packages/engine/src/eval/page-script.ts",
+		"uses": [
+			"worker_loaders"
+		]
+	}
+}

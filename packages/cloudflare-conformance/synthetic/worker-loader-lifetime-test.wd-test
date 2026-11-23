@@ -1,0 +1,18 @@
+using Workerd = import "/workerd/workerd.capnp";
+
+const config :Workerd.Config = (
+  services = [
+    (name = "worker-loader-lifetime-test", worker = .mainWorker),
+  ],
+);
+
+const mainWorker :Workerd.Worker = (
+  compatibilityFlags = ["nodejs_compat", "rpc", "enable_ctx_exports", "experimental"],
+  modules = [
+    (name = "worker", esModule = embed "worker-loader-lifetime-test.js"),
+  ],
+  bindings = [
+    (name = "loader", workerLoader = ()),
+    (name = "SELF", service = "worker-loader-lifetime-test"),
+  ],
+);

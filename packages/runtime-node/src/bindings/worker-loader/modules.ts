@@ -50,6 +50,24 @@ interface ScannedModule {
 }
 
 const missingDirectory = ".open-orange-missing";
+const nestedDirectory = ".open-orange-nested";
+
+/**
+ * Where each module's content is in the bundle, relative to its root: its name, so `node:fs` reads
+ * `/bundle/<name>`. Module names are opaque keys, so `a` and `a/b` can both exist, and a module whose
+ * name is also the folder of another module's name goes under an escaped name instead.
+ */
+export function bundlePaths(modules: readonly DynamicModule[]): Map<string, string> {
+	const folders = new Set<string>();
+	for (const { name } of modules) {
+		for (let slash = name.indexOf("/"); slash > 0; slash = name.indexOf("/", slash + 1)) {
+			folders.add(name.slice(0, slash));
+		}
+	}
+	return new Map(
+		modules.map(({ name }) => [name, folders.has(name) ? `${nestedDirectory}/${encodeURIComponent(name)}` : name]),
+	);
+}
 
 // The extension is always added, so a module's file never has the path of
 // another module's package folder (see `packageFiles`).
@@ -116,8 +134,7 @@ const textSource = `new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)`
 
 // Text, data, JSON, and Wasm modules have a default export, as in workerd.
 // https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/worker-loader.c%2B%2B#L273-L330
-function valueModuleSource(module: DynamicModule, bundleRoot: string): string {
-	const bundleFile = posix.join(bundleRoot, module.name);
+function valueModuleSource(module: DynamicModule, bundleFile: string): string {
 	switch (module.type) {
 		case "text":
 			return `${bytesSource(bundleFile, module.name)}export default ${textSource};\n`;
@@ -275,6 +292,7 @@ export async function linkModules(
 ): Promise<LinkedModules> {
 	const names = new Set(modules.map((module) => module.name));
 	const byName = new Map(modules.map((module) => [module.name, module]));
+	const paths = bundlePaths(modules);
 	const scanned = new Map<string, ScannedModule>();
 	await Promise.all(
 		modules.map(async (module) => {
@@ -318,7 +336,7 @@ export async function linkModules(
 		}
 		const entry = scanned.get(module.name);
 		if (entry === undefined) {
-			files.set(file, valueModuleSource(module, bundleRoot));
+			files.set(file, valueModuleSource(module, posix.join(bundleRoot, paths.get(module.name)!)));
 			continue;
 		}
 		let source = "";

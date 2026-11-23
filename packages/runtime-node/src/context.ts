@@ -61,6 +61,12 @@ export function runInExecutionContext<Result>(
 	);
 }
 
+// Runs `callback` outside every execution context, for objects that outlive the event that made
+// them, such as a loaded dynamic Worker's stubs.
+export function runOutsideExecutionContext<Result>(callback: () => Result): Result {
+	return currentContext.exit(callback);
+}
+
 // Runs `release` when the context aborts or is released. Returns a function that
 // unregisters it, for an object that its owner releases first. Objects made
 // outside an execution context are never released this way.

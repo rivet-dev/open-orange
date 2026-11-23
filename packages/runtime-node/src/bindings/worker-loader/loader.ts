@@ -11,7 +11,8 @@ import type { Readable } from "node:stream";
 import { Request, type RequestInfo, type RequestInit } from "../../globals/http.js";
 import { URL } from "../../globals/url.js";
 import { createStub, type CallOutcome, type Capability } from "../../rpc/loopback.js";
-import { linkModules, type DynamicModule, type DynamicModuleType } from "./modules.js";
+import { runOutsideExecutionContext } from "../../context.js";
+import { bundlePaths, linkModules, type DynamicModule, type DynamicModuleType } from "./modules.js";
 import {
 	decodeLoaderReply,
 	encodeLoaderValue,
@@ -549,8 +550,13 @@ class DynamicWorker {
 			// node_modules lets agentOS resolve a computed import() of a module name. See `packageFiles`.
 			const linkedDirectory = ".open-orange-linked/node_modules";
 			const moduleRoot = posix.join(bundleRoot, linkedDirectory);
+			const paths = bundlePaths(prepared.modules);
 			await host.writeBundle(
-				prepared.modules.map((module) => ({ content: module.content, module: module.name, path: module.name })),
+				prepared.modules.map((module) => ({
+					content: module.content,
+					module: module.name,
+					path: paths.get(module.name)!,
+				})),
 			);
 			const linked = await linkModules(prepared.modules, prepared.mainModule, host.moduleRewrites, bundleRoot);
 			await host.writeBundle(
@@ -560,16 +566,20 @@ class DynamicWorker {
 					path: posix.join(linkedDirectory, file),
 				})),
 			);
-			const envelope = encodeLoaderValue({
+			const moduleRewrites = host.moduleRewrites;
+			// The env and outbound stubs belong to the loaded Worker, as on workerd, so they are
+			// wrapped outside the event that started it. A stub wrapped inside it would be disposed
+			// when that event ends, and every later call through it would fail.
+			const envelope = runOutsideExecutionContext(() => encodeLoaderValue({
 				bundleRoot,
 				env: prepared.env,
 				mainFile: linked.mainFile,
 				maxWebSocketBufferBytes: this.#options.pool.maxWebSocketBufferBytes,
 				moduleNames: linked.moduleNames,
-				moduleRewrites: host.moduleRewrites,
+				moduleRewrites,
 				moduleRoot,
 				outbound: prepared.outbound,
-			});
+			}));
 			const child = await host.spawn();
 			this.#child = child;
 			if (this.#terminated) child.kill();
@@ -792,8 +802,10 @@ function notSupported(message: string): Error {
 // every other name is an RPC method.
 function createEntrypointStub(capability: Capability): object {
 	const root = createStub(capability);
-	return new Proxy(root, {
-		get(target, property, receiver): unknown {
+	// As on workerd, the stub is an object, not a function, and has every method name except
+	// `then`, so code that checks `"method" in stub` before a call finds it.
+	return new Proxy(Object.create(null) as object, {
+		get(_target, property): unknown {
 			if (property === "fetch") {
 				return (input: RequestInfo | URL, init?: RequestInit): Promise<unknown> => {
 					try {
@@ -811,7 +823,16 @@ function createEntrypointStub(capability: Capability): object {
 					);
 				};
 			}
-			return Reflect.get(target, property, receiver);
+			return Reflect.get(root, property, root);
+		},
+		getPrototypeOf(): object | null {
+			return Reflect.getPrototypeOf(root);
+		},
+		has(_target, property): boolean {
+			return typeof property === "string" ? property !== "then" : Reflect.has(root, property);
+		},
+		set(): boolean {
+			return false;
 		},
 	});
 }

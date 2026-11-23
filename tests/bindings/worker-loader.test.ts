@@ -290,6 +290,18 @@ test("loads dynamic Workers with workerd Worker Loader semantics in agentOS VMs"
 	}
 });
 
+test("a loaded Worker keeps its stubs across requests, takes nested module names, and gives workerd's stub shape", async () => {
+	await withOrangeDev("worker-loader", async (dev) => {
+		// The second request reuses the loaded Worker. Its globalOutbound and env stubs came from the
+		// first request, which has ended.
+		for (const request of ["first", "second"]) {
+			assert.deepEqual(await dev.json("/kept-stubs"), ["outbound saw /x", "Hello, Ada!"], `${request} request`);
+		}
+		assert.equal(await dev.json("/nested-names"), 3);
+		assert.deepEqual(await dev.json("/stub-shape"), { anyMethod: true, ping: true, pinged: "pong", typeof: "object" });
+	});
+});
+
 test("stops idle dynamic Workers without interrupting calls in flight", async () => {
 	const environment = {
 		ORANGE_WORKER_LOADER_IDLE_TIMEOUT_MS: "1500",

@@ -105,7 +105,7 @@ Hello from a dynamic Worker
 | `get(name, getCode)` | Supported | One dynamic Worker per name in each binding. |
 | `get(null, getCode)` and `load(code)` | Supported | Each call starts a new dynamic Worker. |
 | `fetch()` and RPC through `getEntrypoint()` | Supported | Stubs, `RpcTarget`s, functions, service bindings, and Durable Object stubs travel by reference. |
-| `env` and `props` | Supported | Same reference passing as RPC. |
+| `env` and `props` | Supported | Stubs, service bindings, and Durable Object stubs pass by reference and work for as long as the dynamic Worker runs. `RpcTarget`s and functions pass by reference too. |
 | `globalOutbound` | Supported | `null` makes `fetch()` reject and `connect()` throw. A Fetcher receives the dynamic Worker's `fetch()` calls. |
 | JavaScript, CommonJS, text, data, JSON, and Wasm modules | Supported | Pass Wasm as bytes. Relative, `cloudflare:*`, and `node:*` imports resolve as in the parent Worker. A name that is not relative, such as `a.js` or a URL, names a module from the bundle root, also in an `import()` computed at runtime. workerd resolves that name from the importer's folder, so the two differ only for an importer in a subfolder. |
 | Wasm exception handling with exnref (`try_table`, `throw_ref`), as Rust `panic=unwind` builds use | Supported | On by default, as in workerd. See [The VM runtime](#the-vm-runtime). |
@@ -386,7 +386,8 @@ These add to the [Compatibility](#compatibility) table, the
   an idle one after the idle timeout even then, and the held stub loads it
   again with fresh module state.
 - Orange allows dynamic entrypoint stubs and uncalled `ctx.exports` stubs in
-  `props`, where workerd throws `DataCloneError`.
+  `props`, and `RpcTarget`s and functions in `env`, where workerd throws
+  `DataCloneError`.
 - The `connect()` errors are `NotSupportedError`-style errors.
 - workerd's `node:http` server has no `upgrade` event. Orange emits it in a
   dynamic Worker. See [WebSockets](#websockets).
@@ -405,6 +406,12 @@ second `orange dev` with a limit of 2 and a 1.5-second idle timeout checks that
 idle Workers stop and load again, that calls longer than the timeout finish,
 that busy Workers fail a new load with `WorkerLoaderLimitError`, and that more
 `load()` calls than the limit succeed.
+
+`packages/cloudflare-conformance/synthetic/worker-loader-lifetime-test.wd-test`
+runs on workerd first, then on Orange. It checks `env` and `globalOutbound`
+stubs in a request after the one that loaded the Worker, module state across
+requests, a module named under another module, nested modules of every type,
+and the entrypoint stub's shape.
 
 `tests/bindings/worker-loader-large-body.test.ts` downloads 5 MiB bodies from a
 `node:http` server in a dynamic Worker and checks their length and hash: one

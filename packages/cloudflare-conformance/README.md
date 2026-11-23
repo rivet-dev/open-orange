@@ -26,11 +26,11 @@ Conformance tooling for OpenOrange. Run the commands from this package:
 
 Requirements: the `capnp` CLI (Cap'n Proto 1.x, `apt install capnproto` or `brew install capnp`) and `git`. The first run fetches the pinned test sources into `.upstream/cache/` (sparse, shallow, about 20 MB). Results go to `.upstream/runs/<timestamp>/`. Both are gitignored.
 
-The runner also runs the Orange-written `.wd-test` files in the directories listed under `localTestDirectories` in `upstream.json`, with the same workerd-first scoring. `synthetic/` holds Durable Object tests ported from workerd's C++ unit tests. Their ids start with `synthetic--`. `synthetic/manifest.json` maps each file to the upstream C++ files and `KJ_TEST` names it ports, with the git blob SHA of each C++ file at the pinned commit.
+The runner also runs the Orange-written `.wd-test` files in the directories listed under `localTestDirectories` in `upstream.json`, with the same workerd-first scoring. `synthetic/` holds Durable Object tests ported from workerd's C++ unit tests. Their ids start with `synthetic--`. `synthetic/manifest.json` maps each file to the upstream C++ files and `KJ_TEST` names it ports, with the git blob SHA of each C++ file at the pinned commit. `synthetic/worker-loader-lifetime-test.wd-test` is not a port: it checks Worker Loader behavior that upstream tests do not reach, such as a loaded Worker's stubs after the event that loaded it ends, and runs on workerd first like every other file.
 
 ```sh
 pnpm upstream                                   # full suite, 4 files at a time
-pnpm upstream --filter 'synthetic--'            # only the synthetic Durable Object tests
+pnpm upstream --filter 'synthetic--'            # only the synthetic tests
 pnpm upstream --filter 'api-tests--actor' --jobs 2
 pnpm upstream --jobs 6 --compare .upstream/runs/<earlier-run>
 ```

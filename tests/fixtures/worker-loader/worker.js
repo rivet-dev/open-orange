@@ -93,6 +93,12 @@ export class Greeter extends WorkerEntrypoint {
 	}
 }
 
+export class Outbound extends WorkerEntrypoint {
+	fetch(request) {
+		return new Response(`outbound saw ${new URL(request.url).pathname}`);
+	}
+}
+
 const counterCode = {
 	compatibilityDate: "2026-09-03",
 	mainModule: "main.js",
@@ -248,6 +254,64 @@ function wasmWithData(data) {
 }
 
 const routes = {
+	// A loaded Worker keeps the stubs its code gave it, its globalOutbound and those in env, for as
+	// long as it stays loaded, so a later request that reuses it reaches them too.
+	async "kept-stubs"(env, ctx) {
+		const worker = env.LOADER.get("kept-stubs", () => ({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `
+					import { WorkerEntrypoint } from "cloudflare:workers";
+					export default class extends WorkerEntrypoint {
+						async use() {
+							const settle = (call) => call().then((value) => value, (error) => String(error));
+							return [
+								await settle(async () => (await fetch("http://outbound.test/x")).text()),
+								await settle(() => this.env.greeter.greet("Ada")),
+							];
+						}
+					}
+				`,
+			},
+			env: { greeter: ctx.exports.Greeter({ props: { greeting: "Hello" } }) },
+			globalOutbound: ctx.exports.Outbound({ props: {} }),
+		}));
+		return await worker.getEntrypoint().use();
+	},
+	// Module names are opaque keys, so a module and one named under it, `apps` and `apps/host`,
+	// load side by side.
+	async "nested-names"(env) {
+		const worker = env.LOADER.get("nested-names", () => ({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `
+					import { WorkerEntrypoint } from "cloudflare:workers";
+					import { a } from "apps";
+					import { b } from "apps/host";
+					export default class extends WorkerEntrypoint { sum() { return a + b; } }
+				`,
+				apps: { js: "export const a = 1;" },
+				"apps/host": { js: "export const b = 2;" },
+			},
+		}));
+		return await worker.getEntrypoint().sum();
+	},
+	// An entrypoint stub is an object that has every method name, as an RPC stub on workerd.
+	async "stub-shape"(env) {
+		const stub = env.LOADER.get("stub-shape", () => ({
+			compatibilityDate: "2026-09-03",
+			mainModule: "main.js",
+			modules: {
+				"main.js": `
+					import { WorkerEntrypoint } from "cloudflare:workers";
+					export default class extends WorkerEntrypoint { ping() { return "pong"; } }
+				`,
+			},
+		})).getEntrypoint();
+		return { anyMethod: "anyMethod" in stub, ping: "ping" in stub, pinged: await stub.ping(), typeof: typeof stub };
+	},
 	async basic(env, ctx) {
 		const worker = env.LOADER.get("basic", () => ({
 			compatibilityDate: "2026-09-03",

@@ -655,8 +655,6 @@ These add to the [reserved tables](#reserved-tables) and the shorter
 - `ctx.abort()` and broken storage restart the complete Rivet actor. About 1
   call in 600 that overlaps `ctx.abort()` fails with `503`.
 - An object that closes a standard WebSocket itself stays awake.
-- A client's close code can be lost in the Rivet gateway. In the recorded
-  lifecycle probe, a clean `1000` close reached `webSocketClose()` as `1001`.
 - A stub has no request owner, so a stub kept in a global works in later
   requests.
 - Classes from `new_classes` support `ctx.storage.sql`, where Cloudflare

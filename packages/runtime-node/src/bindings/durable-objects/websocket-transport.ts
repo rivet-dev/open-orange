@@ -13,14 +13,6 @@ export interface DurableObjectWebSocketClientClose {
 	reason: string;
 }
 
-// The WHATWG WebSocket client that RivetKit opens for actor transports can send only 1000 and
-// 3000-4999. Workerd also accepts the other RFC 6455 codes, such as 1001.
-// https://websockets.spec.whatwg.org/#dom-websocket-close
-// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/web-socket.c%2B%2B#L909-L926
-function isWhatwgClientCloseCode(code: number): boolean {
-	return code === 1000 || (code >= 3000 && code <= 4999);
-}
-
 // Rivet's gateway closes an actor WebSocket with 1011 and `<group>.<code>#<ray id>` for every error
 // that is not an auth error or a normal close. Only these errors mean that the actor's runner or the
 // Engine went away, so the client can connect again: the UPS channel to the peer closed, failed, or
@@ -47,6 +39,8 @@ function isPlatformClose(event: unknown): boolean {
 	}
 	return reason === webSocketDrainTransportClose.reason || rivetPeerGoneErrors.has(reason.split("#", 1)[0] ?? "");
 }
+
+const transportSettleEvents = ["open", "close", "error"] as const;
 
 class DurableObjectClientWebSocketTransport implements WebSocketTransport {
 	readonly #notifyClose: (
@@ -99,12 +93,13 @@ class DurableObjectClientWebSocketTransport implements WebSocketTransport {
 	}
 
 	close(code?: number, reason?: string): void {
-		if (code === undefined || isWhatwgClientCloseCode(code)) {
-			this.#transport.close(code, reason);
-			return;
-		}
-		// Deliver the code and reason through private HTTP, then close Rivet's raw transport.
-		this.#notifyThenClose({ code, reason: reason ?? "" });
+		// The Engine gives the actor `1001 "gateway disconnected"` for every client close, and the
+		// WHATWG client that RivetKit opens can send only 1000 and 3000-4999. So deliver the code and
+		// reason through private HTTP, then close Rivet's raw transport. Workerd accepts 1000-4999
+		// except the reserved codes, and a close without a code reaches the peer as 1005.
+		// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/web-socket.c%2B%2B#L909-L926
+		// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/web-socket.c%2B%2B#L971-L973
+		this.#notifyThenClose({ code: code ?? 1005, reason: reason ?? "" });
 	}
 
 	terminate(): void {
@@ -117,20 +112,32 @@ class DurableObjectClientWebSocketTransport implements WebSocketTransport {
 	#notifyThenClose(close?: DurableObjectWebSocketClientClose): void {
 		if (this.#closing) return;
 		this.#closing = true;
-		const timeout = setTimeout(
-			() => this.#closeTransport(),
-			notificationTimeoutMilliseconds,
-		);
-		void this.#notifyClose(close).then(
-			() => {
+		// The actor learns this socket's token only once the raw transport opens, so a notice sent
+		// before that finds no socket.
+		void this.#opened().then(() => {
+			if (this.#transport.readyState >= 2) return;
+			const timeout = setTimeout(
+				() => this.#closeTransport(),
+				notificationTimeoutMilliseconds,
+			);
+			const closeTransport = (): void => {
 				clearTimeout(timeout);
 				this.#closeTransport();
-			},
-			() => {
-				clearTimeout(timeout);
-				this.#closeTransport();
-			},
-		);
+			};
+			void this.#notifyClose(close).then(closeTransport, closeTransport);
+		});
+	}
+
+	#opened(): Promise<void> {
+		const transport = this.#transport;
+		if (transport.readyState !== 0) return Promise.resolve();
+		return new Promise((resolve) => {
+			const settle = (): void => {
+				for (const type of transportSettleEvents) transport.removeEventListener(type, settle);
+				resolve();
+			};
+			for (const type of transportSettleEvents) transport.addEventListener(type, settle);
+		});
 	}
 
 	#closeTransport(): void {
@@ -148,8 +155,8 @@ export function createDurableObjectClientWebSocketTransport(
 type TransportListener = (event: unknown) => void | Promise<void>;
 
 /**
- * The actor end of a client WebSocket transport. It also delivers a client close that arrived
- * through private HTTP, and then ignores the close event of the raw transport.
+ * The actor end of a client WebSocket transport. A client close that arrived through private HTTP
+ * replaces the code and reason of the raw transport's close event.
  */
 export class DurableObjectActorWebSocketTransport implements WebSocketTransport {
 	// Settles after the close listeners, including the object's close handler, finish.
@@ -158,13 +165,14 @@ export class DurableObjectActorWebSocketTransport implements WebSocketTransport 
 	readonly #resolveClosed: () => void;
 	readonly #transport: RivetWebSocket;
 	#closeDispatched = false;
+	#peerClose: unknown;
 
 	constructor(transport: RivetWebSocket) {
 		this.#transport = transport;
 		const { promise, resolve } = Promise.withResolvers<void>();
 		this.closed = promise;
 		this.#resolveClosed = resolve;
-		transport.addEventListener("close", (event) => this.#dispatchClose(event));
+		transport.addEventListener("close", (event) => this.#dispatchClose(this.#peerClose ?? event));
 	}
 
 	get binaryType(): "arraybuffer" | "blob" {
@@ -205,23 +213,23 @@ export class DurableObjectActorWebSocketTransport implements WebSocketTransport 
 		});
 	}
 
-	receiveClientClose({
-		code,
-		reason,
-	}: DurableObjectWebSocketClientClose): Promise<void> {
-		return this.#dispatchClose({ code, reason, type: "close", wasClean: true });
+	// The client closes the raw transport after this, so its close event still follows every frame
+	// the client sent before it closed. Workerd dispatches the peer's close frame as is.
+	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/io/legacy-hibernation-manager.c%2B%2B#L636-L641
+	receiveClientClose({ code, reason }: DurableObjectWebSocketClientClose): void {
+		this.#peerClose ??= { code, reason, type: "close", wasClean: true };
 	}
 
 	// Workerd reports a network peer that left without a close frame as this close event, not as an
 	// error. Passing it through the transport also reaches acceptWebSocket()'s webSocketClose.
 	// https://github.com/cloudflare/workerd/blob/fb814ad10ea778820b5e24b82f21edfb8c0f6556/src/workerd/api/web-socket.c%2B%2B
-	receiveDisconnect(): Promise<void> {
-		return this.#dispatchClose({
+	receiveDisconnect(): void {
+		this.#peerClose ??= {
 			code: 1006,
 			reason: "WebSocket disconnected without sending Close frame.",
 			type: "close",
 			wasClean: false,
-		});
+		};
 	}
 
 	async #dispatchClose(event: unknown): Promise<void> {

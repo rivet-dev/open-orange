@@ -176,9 +176,11 @@ test("an open WebSocket keeps its dynamic Worker running, and a WebSocket above 
 		const closed = closeOf(quiet);
 		quiet.send("x".repeat(70_000));
 		assert.deepEqual(await closed, { code: 1011, reason: "ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES exceeded" });
-		assert.match(
-			dev.output(),
-			/WorkerLoaderLimitError: A dynamic Worker WebSocket held more than 65536 bytes[^\n]*Set ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES to raise the limit\./,
+		// The close frame can reach the client before orange dev writes the error to its log.
+		await waitFor("the WebSocket limit error in the orange dev log", () =>
+			/WorkerLoaderLimitError: A dynamic Worker WebSocket held more than 65536 bytes[^\n]*Set ORANGE_WORKER_LOADER_MAX_WEBSOCKET_BUFFER_BYTES to raise the limit\./.test(
+				dev.output(),
+			),
 		);
 
 		// With its last socket closed, the Worker is idle again and stops after the idle timeout:

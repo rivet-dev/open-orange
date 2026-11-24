@@ -223,8 +223,8 @@ export async function disconnectDurableObjectWebSocket(
 	const { close, token } = requireDisconnectEnvelope(payload);
 	const delivered =
 		close === undefined
-			? await generation.webSocketHost.receiveDisconnect(token)
-			: await generation.webSocketHost.receiveClientClose(token, close);
+			? generation.webSocketHost.receiveDisconnect(token)
+			: generation.webSocketHost.receiveClientClose(token, close);
 	return new Response(null, { status: delivered ? 204 : 404 });
 }
 

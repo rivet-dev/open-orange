@@ -481,10 +481,11 @@ test("an object sleeps after a client closes its last accepted WebSocket", { tim
 		two.close(1000, "done");
 		await closedTwo;
 		await waitForSleep(dev, sleepsAtClose);
-		// webSocketClose runs for each socket. Its code isn't asserted: workerd passes the client's 1000,
-		// but the Engine's pegboard-envoy reports `1001 gateway disconnected` when the stream ends.
-		const closes = (await dev.json("/closed?room=client-closes")) as { name: string }[];
-		assert.deepEqual(closes.map((close) => close.name), ["one", "two"]);
+		// webSocketClose runs for each socket with the client's code and reason.
+		assert.deepEqual(await dev.json("/closed?room=client-closes"), [
+			{ code: 1000, name: "one", reason: "done" },
+			{ code: 1000, name: "two", reason: "done" },
+		]);
 		assert.notEqual(await boot(dev, "client-closes"), before.boot);
 	}, logs);
 });

@@ -2888,7 +2888,7 @@
 			"status": "partial",
 			"cloudflare": "webSocketClose(ws, code, reason, wasClean) runs when a hibernatable WebSocket closes.",
 			"orange": "Calls webSocketClose(ws, code, reason, wasClean) once. The socket stays listed until the handler settles.",
-			"notes": "A client's close code can be lost in the Rivet gateway: in the recorded lifecycle probe, a clean client close reached webSocketClose as 1001, not 1000. A missing method silently drops the event.",
+			"notes": "A missing method silently drops the event.",
 			"evidence": [
 				{
 					"kind": "code",
@@ -10910,10 +10910,10 @@
 			"id": "do-ctx-get-websockets",
 			"category": "durable-objects",
 			"name": "ctx.getWebSockets()",
-			"status": "partial",
+			"status": "supported",
 			"cloudflare": "Returns accepted hibernatable sockets, optionally filtered by tag. It includes sockets restored after hibernation.",
 			"orange": "Same. A socket stays listed during its webSocketClose. A socket the client closed while the instance was dropped is dropped after webSocketClose runs in the new instance.",
-			"notes": "A client's close code can be lost in the Rivet gateway: in the recorded lifecycle probe, a clean client close reached webSocketClose as 1001, not 1000.",
+			"notes": "webSocketClose gets the client's close code and reason, also while the instance is dropped.",
 			"evidence": [
 				{
 					"kind": "code",

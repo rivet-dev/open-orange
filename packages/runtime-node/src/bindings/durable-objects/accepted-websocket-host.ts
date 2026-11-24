@@ -317,17 +317,17 @@ export class DurableObjectAcceptedWebSocketHost {
 		transport.addEventListener("close", onClose);
 	}
 
-	async receiveClientClose(token: string, close: DurableObjectWebSocketClientClose): Promise<boolean> {
+	receiveClientClose(token: string, close: DurableObjectWebSocketClientClose): boolean {
 		const transport = this.#clientCloses.get(token);
 		if (transport === undefined) return false;
-		await transport.receiveClientClose(close);
+		transport.receiveClientClose(close);
 		return true;
 	}
 
-	async receiveDisconnect(token: string): Promise<boolean> {
+	receiveDisconnect(token: string): boolean {
 		const transport = this.#clientCloses.get(token);
 		if (transport === undefined) return false;
-		await transport.receiveDisconnect();
+		transport.receiveDisconnect();
 		return true;
 	}
 

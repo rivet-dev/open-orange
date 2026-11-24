@@ -24,11 +24,16 @@ const admissionRejections: ReadonlySet<string> = new Set([
 	generationRetiredError,
 ]);
 
-// A retired generation answers until RivetKit stops its actor and starts the next one. The Engine
-// ends a stop that takes longer than its stop threshold, 30 seconds by default, plus 5 seconds, so
-// those rejections are sent again for as long.
+// A retired generation answers until RivetKit stops its actor and starts the next one, and the
+// gateway answers actor_stopped_while_waiting while that stop runs. The Engine ends a stop that
+// takes longer than its stop threshold, 30 seconds by default, plus 5 seconds, so those rejections
+// are sent again for as long. A busy host can take longer than the 5 quick attempts to stop one.
 // https://github.com/rivet-dev/rivet/blob/7d2fda3749f785619883c46aed963fb7b48994e6/engine/packages/config/src/config/pegboard.rs#L117-L127
 const retiredGenerationRetryMilliseconds = 35_000;
+const waitsForNextGeneration: ReadonlySet<string> = new Set([
+	"guard.actor_stopped_while_waiting",
+	generationRetiredError,
+]);
 const retryDelayCapMilliseconds = 250;
 
 export async function fetchAdmittedDurableObjectCall(
@@ -39,8 +44,9 @@ export async function fetchAdmittedDurableObjectCall(
 	for (let attempt = 1; ; attempt += 1) {
 		const response = await handle.fetch(request.clone());
 		const rejection = response.headers.get("x-rivet-error") ?? "";
-		const exhausted =
-			rejection === generationRetiredError ? Date.now() >= retiredDeadline : attempt >= admissionRetryLimit;
+		const exhausted = waitsForNextGeneration.has(rejection)
+			? Date.now() >= retiredDeadline
+			: attempt >= admissionRetryLimit;
 		if (exhausted || response.status !== 503 || !admissionRejections.has(rejection)) {
 			return response;
 		}

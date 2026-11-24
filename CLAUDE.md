@@ -1,5 +1,59 @@
 # Contributor guide
 
+## Project intent
+
+OpenOrange runs an existing Cloudflare Workers project in production on
+infrastructure the user picks (AWS, Google Cloud, Azure, their own servers),
+on Node.js with Rivet underneath. It is for teams that leave Cloudflare for
+its limits, bills, or lock-in, and keep their code, their Wrangler
+configuration, and the `wrangler dev` workflow. OpenOrange is a Workers
+runtime and platform, not a local simulator like Miniflare, a workerd host, or
+a Cloudflare fork. `README.md` and `website/src/data/site.ts` hold the
+positioning.
+
+### Compatibility contract
+
+- Match what a Worker can observe on Cloudflare: the pinned declarations and
+  the behavior that working code relies on. The user changes no app code. When
+  their code needs a change to run on Orange, the fix goes in Orange.
+- Cloudflare's and workerd's limits, quotas, and refusals are not part of the
+  contract. Only Rivet's limits and the user's machines apply. When Cloudflare
+  or workerd rejects input that Orange handles correctly (a size cap, a depth
+  limit, a `DataCloneError` for a value Orange can pass), Orange accepts it,
+  even though that code then fails on Cloudflare. This covers quotas and API
+  refusals only; Orange's own access control and isolation stay.
+- Record each place where Orange is more permissive as a deviation in the
+  Limits or Deviations section of its `docs/modules/` page. When an upstream
+  test asserts the refusal, list it in `upstream.json` `cloudflareQuotaTests`
+  with the limit it checks. Tests assert that Orange accepts the input, never
+  that it refuses it.
+- workerd is the reference for semantics, not for limits. A scored upstream
+  test that fails on Orange is a bug when Orange breaks behavior that works on
+  workerd, and a deviation when Orange does more than workerd allows.
+- Workers get stock Node.js with Node's defaults, not the `nodejs_compat`
+  subset. Shim only what the Workers API needs. A test that passes only on
+  workerd's subset is workerd-only and counts in no score.
+
+### When Cloudflare, workerd, and Orange disagree
+
+Take the first rule that applies:
+
+1. Code that works on Cloudflare breaks on Orange: match Cloudflare.
+2. The difference is a limit, quota, or refusal: drop it, and record the
+   deviation.
+3. Orange needs a limit of its own to protect the host or other tenants (for
+   example, dynamic Workers never run on the host): keep it, make it an
+   `ORANGE_*` variable, and name that variable in the error.
+4. Orange cannot do it yet: fail with an `OpenOrange ...` error that says what
+   to do instead, and list the gap on the module page.
+5. None fits, or the change contradicts a public claim: stop and ask the user.
+
+### Rivet
+
+- Build on Rivet's primitives instead of new Orange machinery.
+- Behavior that every Rivet runner has is by design, not a finding. Each
+  OpenOrange deployment runs in a Rivet namespace of its own.
+
 ## Commits and pull requests
 
 - Commit titles and pull request titles are conventional commits (`feat`, `fix`, `chore`, `docs`, `refactor`), with an optional scope.
@@ -24,10 +78,12 @@
 - When Cloudflare behavior or an implementation approach is unclear, inspect
   the workerd source and, where useful, the historical Miniflare v2 TypeScript
   source. Treat them as implementation references; the pinned declarations and
-  differential conformance checks remain Orange's compatibility contract.
-- Prefer workerd for current runtime semantics. Miniflare v2 is useful for its
-  JavaScript/TypeScript implementation patterns, but it predates modern Workers
-  RPC and is not an oracle for Durable Object method RPC.
+  the [Compatibility contract](#compatibility-contract) remain Orange's
+  contract.
+- Prefer workerd for current runtime semantics, not for its limits. Miniflare
+  v2 is useful for its JavaScript/TypeScript implementation patterns, but it
+  predates modern Workers RPC and is not an oracle for Durable Object method
+  RPC.
 - Whenever Orange code materially follows or adapts specific workerd or
   Miniflare v2 behavior, add a concise comment beside that code explaining what
   is mirrored and linking to the exact upstream lines. The URL must be a GitHub
@@ -77,6 +133,9 @@
 - `tests/fixtures/` holds the Worker projects that tests run, and
   `tests/cloudflare-examples/` holds the unchanged Cloudflare copies. Neither
   holds test files.
+- A real-project result describes the newest Orange: run it on the current
+  `main` or the latest release. A step that fails because the host lacks a
+  tool is a harness failure to fix, not an Orange result.
 - Run one area with `pnpm test:e2e 'tests/<area>/*.test.ts'`, one file with
   `pnpm test:e2e tests/<area>/<name>.test.ts`, and everything with `pnpm test`.
 
@@ -137,6 +196,9 @@ Writing rules:
   page" lists only the human sections. Keep the heading text of any section
   that other pages link to, so its anchor still works; a link to an anchor
   inside `<AiContext>` opens it.
+- State a deviation or by-design behavior as a plain fact about what Orange
+  does, never as a warning, risk, or finding. Leave out internals the reader
+  cannot act on.
 - Say each fact once.
 - Every command shows its real output: copy it from the page or from the CLI
   source in `src/commands/`, or show the command without output. Never invent

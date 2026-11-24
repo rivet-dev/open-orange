@@ -352,7 +352,9 @@ Orange keeps its own tables in each object's database:
 - `_cf_KV`, `_cf_ALARM`, and `_cf_METADATA`, as workerd does.
 - `_rivet_` tables for RivetKit and Orange.
 
-They show in `sqlite_master`, and SQL that reads or changes them fails with
+They show in `sqlite_master`. SQL that reads them fails as in workerd, with
+`access to <table>.<column> is prohibited`, for example
+`access to _cf_KV.key is prohibited`. SQL that changes them fails with
 `not authorized`. A tool that dumps every table fails on them. Do not name your
 own tables with these prefixes.
 
@@ -617,7 +619,7 @@ reach your objects.
 | Calls reject with `durableObjectReset: true` | The object reset, for example after `ctx.abort()` or a failed commit | Call `get()` or `getByName()` again. |
 | `RangeError` that names 128 MiB | One write changed too many pages | Split the write. |
 | `RangeError` that names 32 MiB | One RPC call is too large | Send the data with `stub.fetch()`. |
-| SQL fails with `not authorized` | The SQL reads or changes a `_cf_` or `_rivet_` table | Rename your table, and skip these tables in a dump. |
+| SQL fails with `access to <table>.<column> is prohibited` or `not authorized` | The SQL reads or changes a `_cf_` or `_rivet_` table | Rename your table, and skip these tables in a dump. |
 | `Synchronous storage cannot run while another event's storage.transaction() is open` | An event that was already running used sync storage during another event's `transaction()` | Use the async storage API in that code path. |
 | A `fetch()` response body is cut short | The response reuses the unread request body | Read the request body before you build the response. |
 
@@ -634,8 +636,13 @@ These add to the [reserved tables](#reserved-tables) and the shorter
 [idle timeout](#lifecycle).
 
 - Orange blocks `_cf_` and `_rivet_` names with a text check, not a SQLite
-  authorizer. There is no SQL function or PRAGMA allow-list. `DELETE` and
-  `UPDATE` with `LIMIT` fail.
+  authorizer. There is no SQL function or PRAGMA allow-list: functions such as
+  `sqlite_version()` run, also in a `DEFAULT` expression. `ATTACH`, `DETACH`,
+  and `PRAGMA writable_schema` fail with `not authorized`, as in workerd.
+- A `DEFAULT` expression can call SQLite's internal `sqlite_drop_column()` and
+  `sqlite_rename_*()` functions. workerd fails the `INSERT` with
+  `unknown function`.
+- `DELETE` and `UPDATE` with `LIMIT` fail with a syntax error.
 - `ctx.storage.kv.list()` reads the matching rows when you call it, so later
   writes do not appear in the iterator.
 - The input gate holds only new events. An event that was already running can

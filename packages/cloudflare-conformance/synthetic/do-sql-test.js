@@ -306,16 +306,12 @@ const scenarios = {
     );
   },
 
-  // sqlite-test.c++: "SQLite authorizer is called in default column expressions",
-  // "SQLite authorizer matches default function names case-insensitively"
+  // sqlite-test.c++: "SQLite authorizer matches default function names case-insensitively".
+  // "SQLite authorizer is called in default column expressions" is not ported: it asserts that
+  // workerd's SQL function allow-list refuses `sqlite_version()`, a Cloudflare refusal that Orange
+  // does not copy.
   async authorizerDefaultExpressions(ctx) {
     const sql = ctx.storage.sql;
-    // workerd rejects the default at CREATE TABLE. The C++ test rejects it at INSERT. Accept either.
-    assert.throws(() => {
-      sql.exec('CREATE TABLE v (name TEXT DEFAULT (sqlite_version()))');
-      sql.exec('INSERT INTO v DEFAULT VALUES');
-    }, /not authorized/);
-
     sql.exec('CREATE TABLE users (created TEXT DEFAULT CURRENT_TIMESTAMP)');
     sql.exec('INSERT INTO users DEFAULT VALUES');
     const created = sql.exec('SELECT created FROM users').one().created;

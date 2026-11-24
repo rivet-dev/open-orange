@@ -6,27 +6,27 @@
 	"stars": 0,
 	"origin": "probe",
 	"directory": ".",
-	"ranAt": "2026-11-10T02:18:11.237Z",
+	"ranAt": "2026-11-24T22:15:10.332Z",
 	"orange": {
-		"sha": "ee0b731",
-		"dirty": null
+		"sha": "f96bfc1",
+		"dirty": false
 	},
-	"rivetkit": "0.0.0-sqlite-sync-3-0-6-final.cf8679c",
+	"rivetkit": "3.1.2-rc.6",
 	"runtime": "orange",
-	"node": "v24.21.0",
+	"node": "v26.13.1",
 	"status": "partial",
 	"install": null,
 	"build": null,
 	"boot": {
 		"ok": true,
-		"seconds": 5
+		"seconds": 4
 	},
 	"steps": [
 		{
 			"name": "storage: a value survives the object's sleep",
 			"kind": "sleep",
 			"status": "pass",
-			"seconds": 10.1
+			"seconds": 10.2
 		},
 		{
 			"name": "alarm: fires on time",
@@ -44,26 +44,26 @@
 			"name": "alarm: a future alarm survives a restart",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 23.5
+			"seconds": 20.6
 		},
 		{
 			"name": "alarm: an alarm due while the process is down fires after a restart, with no request",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 11
+			"seconds": 7.4
 		},
 		{
 			"name": "hibernation: a socket stays open through the object's sleep, and a message wakes it",
 			"kind": "sleep",
 			"status": "fail",
-			"seconds": 45.1,
+			"seconds": 45.2,
 			"error": "Some actor was still awake 45000ms after the last client activity"
 		},
 		{
 			"name": "hibernation: an object that closes its own socket still sleeps",
 			"kind": "sleep",
 			"status": "pass",
-			"seconds": 10.1
+			"seconds": 10.2
 		},
 		{
 			"name": "open socket: an idle socket stays open past the sleep timeout",
@@ -86,21 +86,20 @@
 		{
 			"name": "open socket: webSocketClose gets the client's close code",
 			"kind": "websocket",
-			"status": "fail",
-			"seconds": 20.1,
-			"error": "/closed?room=k4 did not reach the expected state: {\"code\":1001}"
+			"status": "pass",
+			"seconds": 0.1
 		},
 		{
 			"name": "open socket: a restart closes it with 1012, and a reconnect finds storage",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 7.6
+			"seconds": 5
 		},
 		{
 			"name": "open socket: a crash closes it with 1006, and a reconnect finds storage",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 13.7
+			"seconds": 13.2
 		},
 		{
 			"name": "KV-backed class: the storage API keeps a value",

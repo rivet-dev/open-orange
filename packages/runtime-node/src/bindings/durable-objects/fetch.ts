@@ -169,6 +169,29 @@ function readDurableObjectFetchOrder(url: URL): DurableObjectStubOrder {
 	});
 }
 
+// In workerd an object can answer first and read the request body while its response streams,
+// and a body cut off errors instead of ending:
+// https://github.com/cloudflare/workerd/blob/fb814ad10ea778820b5e24b82f21edfb8c0f6556/src/workerd/api/global-scope.c%2B%2B#L278-L289
+// RivetKit cancels the upload as soon as onRequest returns, and the next read then ends the body
+// as if it were complete:
+// https://github.com/rivet-dev/actors/blob/7d2fda3749f785619883c46aed963fb7b48994e6/rivetkit-typescript/packages/rivetkit/src/registry/native.ts#L5444-L5451
+// So Orange reads the upload into its own buffer and answers only once all of it has arrived.
+// RivetKit's client sends the whole body before it waits for an answer, so this cannot stall a caller:
+// https://github.com/rivet-dev/actors/blob/7d2fda3749f785619883c46aed963fb7b48994e6/rivetkit-typescript/packages/rivetkit/src/engine-client/actor-http-client.ts#L28-L40
+function bufferRequestBody(source: ReadableStream<Uint8Array>): {
+	arrived: Promise<void>;
+	body: ReadableStream<Uint8Array>;
+} {
+	// The readable side holds the chunks. A writable-side buffer would read the whole upload
+	// but leave its writes pending, so the pipe would not end until the object read them.
+	const buffer = new TransformStream<Uint8Array, Uint8Array>(undefined, undefined, {
+		highWaterMark: Number.POSITIVE_INFINITY,
+	});
+	// A failed upload errors `body`, and a cancelled `body` cancels the upload; either way the answer can go.
+	const arrived = source.pipeTo(buffer.writable).catch(() => undefined);
+	return { arrived, body: buffer.readable };
+}
+
 export async function handleDurableObjectFetch(
 	generation: DurableObjectGeneration,
 	request: Request,
@@ -180,14 +203,17 @@ export async function handleDurableObjectFetch(
 	}
 	const order = readDurableObjectFetchOrder(privateUrl);
 	const head = readDurableObjectRequestHead(request);
+	const upload = head.body && request.body !== null ? bufferRequestBody(request.body) : undefined;
 	const init: RequestInit = {
-		body: head.body ? (request.body ?? new Uint8Array()) : null,
+		body: head.body ? (upload?.body ?? new Uint8Array()) : null,
 		headers: head.headers,
 		method: head.method,
 	};
 	if (head.cf !== undefined) Reflect.set(init, "cf", head.cf);
 	try {
-		return await runDurableObjectFetch(generation, order, url, request, init);
+		const response = await runDurableObjectFetch(generation, order, url, request, init);
+		await upload?.arrived;
+		return response;
 	} catch (error) {
 		// A reset breaks the caller's stub, as in workerd. Errors that the
 		// object's own code throws leave the stub usable.

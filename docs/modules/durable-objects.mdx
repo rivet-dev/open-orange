@@ -619,7 +619,6 @@ reach your objects.
 | `RangeError` that names 32 MiB | One RPC call is too large | Send the data with `stub.fetch()`. |
 | SQL fails with `not authorized` | The SQL reads or changes a `_cf_` or `_rivet_` table | Rename your table, and skip these tables in a dump. |
 | `Synchronous storage cannot run while another event's storage.transaction() is open` | An event that was already running used sync storage during another event's `transaction()` | Use the async storage API in that code path. |
-| A `fetch()` response body is cut short | The response reuses the unread request body | Read the request body before you build the response. |
 
 Under `orange dev`, local Engine state is in `.open-orange/rivetkit/` in your
 project. The Engine's log gets half of the free disk there, from 256 MiB to 4 GiB, and
@@ -640,6 +639,9 @@ These add to the [reserved tables](#reserved-tables) and the shorter
   writes do not appear in the iterator.
 - The input gate holds only new events. An event that was already running can
   continue during another event's critical section.
+- A `stub.fetch()` resolves only after the whole request body has reached the
+  object, even when the object answers before it reads the body. On
+  Cloudflare the answer can arrive while the body still uploads.
 - The output gate does not hold body chunks streamed after the headers,
   outbound `new WebSocket()` setup, or output from callbacks that run outside
   the object's async context.

@@ -391,10 +391,10 @@ export async function upstream(
 	}
 	if (baselinePath !== undefined) {
 		const newFailures = await failuresMissingFrom(baselinePath, results, rows);
+		// run() turns the error into exit code 1. An exit code set here would be overwritten.
 		if (newFailures.length > 0) {
-			process.exitCode = 1;
-			io.error(
-				`\n${newFailures.length} tests fail that do not fail in ${baselinePath}:\n${newFailures.map((test) => `  ${test}`).join("\n")}`,
+			throw new Error(
+				`${newFailures.length} tests fail that do not fail in ${baselinePath}:\n${newFailures.map((test) => `  ${test}`).join("\n")}`,
 			);
 		}
 	}

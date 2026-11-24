@@ -41,6 +41,7 @@ pnpm upstream --jobs 6 --compare .upstream/runs/<earlier-run>
 | `--jobs <n>` | `4` | Files to run at once |
 | `--out <dir>` | `.upstream/runs/<timestamp>` | Results directory. Must be new or empty. |
 | `--compare <dir>` | none | Prints tests that became passing or failing since an earlier results directory |
+| `--baseline <file>` | none | Exits with an error when a test fails that does not fail in this saved results file, such as `results/latest.json`. A test new since that run must pass. CI runs `synthetic--` with it. |
 | `--bindings <list>` | `service,entrypoints,vars,unsafeEval,loader,kv,r2,queues,analyticsEngine` | Binding kinds to configure. Other bindings are dropped and recorded. |
 | `--engine-binary <path>` | `RIVET_ENGINE_BINARY`, then RivetKit's bundled engine | `rivet-engine` for `orange dev` to start |
 

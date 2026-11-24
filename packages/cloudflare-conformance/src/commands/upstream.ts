@@ -5,9 +5,9 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs, promisify } from "node:util";
 
-import { readOrangeBuild } from "../results/save.js";
+import { readOrangeBuild, readRunSnapshot } from "../results/save.js";
 import { readWorkerdMetadata } from "../runners/workerd.js";
-import { summarizeResults } from "../upstream/classify.js";
+import { areaOf, fileName, summarizeResults } from "../upstream/classify.js";
 import {
 	compareWithRunDirectory,
 	formatComparison,
@@ -57,6 +57,8 @@ Options:
   --jobs <n>              Files to run at once (default 4)
   --out <dir>             Results directory (default .upstream/runs/<timestamp>)
   --compare <dir>         Print tests that changed against an earlier results directory
+  --baseline <file>       Exit with an error when a test fails that does not fail in this saved
+                          results file, such as results/latest.json
   --bindings <list>       Binding kinds to configure (default ${defaultBindings.join(",")})
                           Kinds: ${bindingKinds.join(", ")}
   --engine-binary <path>  rivet-engine to run (default: RIVET_ENGINE_BINARY, then RivetKit's bundled engine)`;
@@ -151,6 +153,7 @@ export async function upstream(
 			jobs: { type: "string", default: "4" },
 			out: { type: "string" },
 			compare: { type: "string" },
+			baseline: { type: "string" },
 			bindings: { type: "string", default: defaultBindings.join(",") },
 			"engine-binary": { type: "string" },
 		},
@@ -176,6 +179,11 @@ export async function upstream(
 		values.compare === undefined ? undefined : resolve(values.compare);
 	if (compareDirectory !== undefined && !existsSync(compareDirectory)) {
 		throw new Error(`--compare ${compareDirectory} does not exist`);
+	}
+	const baselinePath =
+		values.baseline === undefined ? undefined : resolve(values.baseline);
+	if (baselinePath !== undefined && !existsSync(baselinePath)) {
+		throw new Error(`--baseline ${baselinePath} does not exist`);
 	}
 	const outputDirectory = resolve(
 		values.out ??
@@ -381,9 +389,41 @@ export async function upstream(
 			),
 		);
 	}
+	if (baselinePath !== undefined) {
+		const newFailures = await failuresMissingFrom(baselinePath, results, rows);
+		if (newFailures.length > 0) {
+			process.exitCode = 1;
+			io.error(
+				`\n${newFailures.length} tests fail that do not fail in ${baselinePath}:\n${newFailures.map((test) => `  ${test}`).join("\n")}`,
+			);
+		}
+	}
 	if (hostChangesByFile.length > 0) {
 		throw new Error(
 			`Host safety net: ${hostChangesByFile.map(({ id }) => id).join(", ")} changed the host. The run stopped. Check every change listed above before running again.`,
 		);
 	}
+}
+
+// Failed tests, as `<file id> > <test>`, that the saved run at `baselinePath` does not record as
+// failed. A test new since that run counts too, so a new test must pass.
+async function failuresMissingFrom(
+	baselinePath: string,
+	results: readonly UpstreamFileResult[],
+	rows: ReturnType<typeof summarizeResults>,
+): Promise<string[]> {
+	const baseline = await readRunSnapshot(baselinePath);
+	const known = new Set(
+		baseline.tests
+			.filter((test) => test.status === "fail")
+			.map((test) => `${test.file} > ${test.test}`),
+	);
+	// Summary rows name files without the directory prefix, so map them back by name and area.
+	const idByRowKey = new Map(
+		results.map((result) => [`${fileName(result.id)}|${areaOf(result.id)}`, result.id]),
+	);
+	return rows
+		.filter((row) => row.status === "fail")
+		.map((row) => `${idByRowKey.get(`${row.file}|${row.area}`) ?? row.file} > ${row.test}`)
+		.filter((test) => !known.has(test));
 }

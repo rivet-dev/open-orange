@@ -67,3 +67,27 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:e2e 'tests/${{ matrix.area }}/*.test.ts'
+
+  workerd-parity:
+    name: workerd parity
+    # Runs the Orange-written synthetic/ tests, scored on workerd first. A test that fails here and
+    # not in results/latest.json fails the job.
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install capnp
+        run: |
+          sudo apt-get install -y --no-install-recommends capnproto ||
+            { sudo apt-get update && sudo apt-get install -y --no-install-recommends capnproto; }
+      - uses: actions/cache@v4
+        with:
+          path: packages/cloudflare-conformance/.upstream/cache
+          key: workerd-tests-${{ hashFiles('packages/cloudflare-conformance/upstream.json') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter ./packages/cloudflare-conformance upstream --filter 'synthetic--' --jobs 8 --baseline results/latest.json

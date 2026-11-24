@@ -155,13 +155,14 @@ write must fit in one Rivet commit of 128 MiB of changed SQLite pages.
 The KV rows use workerd's private `_cf_KV` table. Orange also stores the alarm
 in `_cf_ALARM` and the bookmark counter in `_cf_METADATA`. Each of these tables
 is created only when the object first uses KV, alarms, or bookmarks. As with
-workerd's `_cf_` tables, they appear in `sqlite_master`, and user `sql.exec()`
-calls that read or change them fail with `not authorized`. RivetKit's own
+workerd's `_cf_` tables, they appear in `sqlite_master`. A user `sql.exec()`
+call that reads them fails with workerd's `access to <table>.<column> is
+prohibited`, and one that changes them fails with `not authorized`. RivetKit's own
 `_rivet_` tables hold schedules, connections, and queue messages. Orange keeps
 the object's name, facet class, and WebSocket hibernation settings in a private
 `_rivet_openorange_metadata` table, created only when the object has one of
 them. These tables appear in `sqlite_master`, user SQL that reads or changes
-them fails with `not authorized`, and `deleteAll()` keeps them. KV operations made inside `transactionSync()` use its
+them fails in the same way, and `deleteAll()` keeps them. KV operations made inside `transactionSync()` use its
 savepoint, so rolled back writes are not observable afterward.
 
 The same table backs asynchronous `get()`, `put()`, `delete()`, `list()`, and

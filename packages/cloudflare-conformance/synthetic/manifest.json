@@ -106,7 +106,6 @@
 					"SQLite prepareMulti w/BEGIN TRANSACTION",
 					"SQLite Regulator blocks RENAME TO reserved name",
 					"SQLite restrict internal functions to nested parse",
-					"SQLite authorizer is called in default column expressions",
 					"SQLite authorizer matches default function names case-insensitively",
 					"SQLite R*Tree extension is enabled"
 				]

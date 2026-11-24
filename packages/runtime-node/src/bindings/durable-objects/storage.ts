@@ -297,15 +297,72 @@ function sqlIdentifiers(query: string): string {
 	return query.replace(/'(?:''|[^'])*'|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\//g, " ");
 }
 
-function assertNoReservedNames(query: string): void {
+const reservedNames = /(?:^|[^A-Za-z0-9_])(_(?:cf|rivet)_[A-Za-z0-9_]*)/gi;
+
+function assertAuthorizedSql(
+	query: string,
+	database: RivetSynchronousSqliteExecutor,
+): void {
 	// Keep Cloudflare's `_cf_` objects and the Rivet host's `_rivet_` objects
 	// private from user SQL. The native regulator applies its `_cf_` check to
 	// resolved SQLite object names; masking SQL strings and comments gives this
 	// JavaScript bridge the same practical fence.
 	// https://github.com/cloudflare/workerd/blob/23263780e6ba38c7f230497a6abc1a4ff72124fb/src/workerd/api/sql.c%2B%2B#L141-L146
-	if (/(?:^|[^A-Za-z0-9_])_(?:cf|rivet)_[A-Za-z0-9_]*/i.test(sqlIdentifiers(query))) {
+	const masked = sqlIdentifiers(query);
+	// workerd refuses ATTACH, DETACH, and every PRAGMA outside its allow-list. Orange has no
+	// PRAGMA allow-list, but keeps these refusals: an attached database lives outside the object's
+	// Rivet database, and `writable_schema` lets SQL rewrite the schema of the reserved tables.
+	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/util/sqlite.c%2B%2B#L1328-L1331
+	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/util/sqlite.c%2B%2B#L540-L568
+	if (/(?:^|;)\s*(?:ATTACH|DETACH|PRAGMA\s+(?:main\s*\.\s*)?writable_schema)\b/i.test(masked)) {
 		throw new Error("not authorized");
 	}
+	const names = [...masked.matchAll(reservedNames)];
+	if (names.length === 0) return;
+	throw new Error(reservedReadMessage(masked, names, database) ?? "not authorized");
+}
+
+// workerd's authorizer refuses a column read (SQLITE_READ) of a reserved table, and SQLite then
+// reports "access to <table>.<column> is prohibited" for the first column it resolves. Every other
+// use of a reserved name fails with "not authorized". So when each reserved name is a table that
+// the statement only reads from, the error names that table and the column SQLite resolves first:
+// the first column for `*`, otherwise the first of its columns that the statement names.
+// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/util/sqlite.c%2B%2B#L1142-L1144
+// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/tests/sql-test.js#L346-L351
+function reservedReadMessage(
+	masked: string,
+	names: RegExpExecArray[],
+	database: RivetSynchronousSqliteExecutor,
+): string | undefined {
+	const isRead = (match: RegExpExecArray) => {
+		const before = masked.slice(0, match.index + match[0].length - match[1].length);
+		const words = before.match(/([A-Za-z]+)[\s"`[]*$/);
+		if (words?.[1].toUpperCase() === "JOIN") return true;
+		if (words?.[1].toUpperCase() !== "FROM") return false;
+		return !/\bDELETE\s+FROM[\s"`[]*$/i.test(before);
+	};
+	if (!names.every(isRead)) return undefined;
+	const [first] = names;
+	const columns = database.executeSync(
+		"SELECT m.name, c.name FROM sqlite_master AS m, pragma_table_info(m.name) AS c " +
+			"WHERE m.type = 'table' AND m.name = ? COLLATE NOCASE ORDER BY c.cid",
+		[first[1]],
+	).rows;
+	if (columns.length === 0) return undefined;
+	const table = String(columns[0][0]);
+	const select = masked
+		.slice(0, first.index)
+		.match(/\bSELECT\b(?![\s\S]*\bSELECT\b)([\s\S]*)$/i);
+	const resultList = select?.[1] ?? "";
+	let column = String(columns[0][1]);
+	if (!/^\s*(?:(?:DISTINCT|ALL)\s+)?(?:[A-Za-z0-9_"`[\]]+\.)?\*/i.test(resultList)) {
+		const named = new Map(
+			columns.map(([, name]) => [String(name).toLowerCase(), String(name)]),
+		);
+		const words = masked.slice(select?.index ?? first.index).match(/[A-Za-z0-9_]+/g) ?? [];
+		column = words.map((word) => named.get(word.toLowerCase())).find(Boolean) ?? column;
+	}
+	return `access to ${table}.${column} is prohibited`;
 }
 
 const schemaListing =
@@ -657,7 +714,7 @@ class SqlStorageImplementation implements SqlStorage {
 			if (statementless > 0) this.exec(query.slice(0, statementless), ...bindings);
 			throw new Error("SQL code did not contain a statement.");
 		}
-		assertNoReservedNames(query);
+		assertAuthorizedSql(query, this.#database());
 		const transactionControl = findTransactionControl(query);
 		if (transactionControl?.afterStatements === false) {
 			throw new Error(transactionControlMessage);

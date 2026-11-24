@@ -265,7 +265,7 @@ test("keeps Cloudflare and Rivet-reserved SQLite names private", () => {
 	);
 	const sql = storageFor(database).sql;
 
-	assert.throws(() => sql.exec("SELECT * FROM _cf_KV"), /not authorized/);
+	assert.throws(() => sql.exec("DELETE FROM _cf_KV"), /not authorized/);
 	assert.throws(
 		() => sql.exec("CREATE TABLE _CF_private (value)"),
 		/not authorized/,

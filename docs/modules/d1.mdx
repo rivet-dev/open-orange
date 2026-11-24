@@ -8,7 +8,7 @@ description: Run D1 databases on OpenOrange, where each database is one Rivet Ac
 <BindingStatus
   binding="d1"
   works="`prepare()`, `batch()`, `exec()`, sessions, and `orange d1` migrations, with JSON, FTS5, and window functions"
-  differs="`meta.rows_read` and `meta.rows_written` are approximate, and `ATTACH` and the `PRAGMA`s that D1 refuses run"
+  differs="`meta.rows_read` and `meta.rows_written` are approximate, and the `PRAGMA`s that D1 refuses run"
   missing="`DELETE ... LIMIT`, `UPDATE ... LIMIT`, SQLite math functions such as `cos()`, `query()`, `dump()`, and read replicas"
 />
 
@@ -240,14 +240,16 @@ parser has no `LIMIT` on `DELETE` and `UPDATE`, with or without `RETURNING` and
 
 - JSON, FTS5, `RETURNING`, upsert, window functions, CTEs, `STRICT` tables,
   and generated columns run. Foreign keys are enforced by default.
-- SQL that names a `_cf_` or `_rivet_` table fails with `not authorized`.
+- SQL that reads a `_cf_` or `_rivet_` table fails with
+  `access to <table>.<column> is prohibited`. Other SQL that names one fails
+  with `not authorized`.
 - Orange leaves its `_rivet_` tables out of `sqlite_master`, `sqlite_schema`,
   and `PRAGMA table_list`, so a tool that dumps every listed table works. A
   query that renames the `name` and `tbl_name` columns, or only counts rows,
   still sees them.
-- `ATTACH`, `PRAGMA`s, and internal functions that D1 refuses run, against the
-  database itself. Orange blocks only the reserved names and transaction
-  control.
+- `PRAGMA`s and internal functions that D1 refuses run, against the database
+  itself. `ATTACH`, `DETACH`, and `PRAGMA writable_schema` fail with
+  `not authorized`, as on Cloudflare.
 - A prepared statement with several statements runs them all and returns the
   last statement's rows. `wrangler dev` rejects it. Bindings on it fail with
   `OpenOrange does not yet support bindings on multi-statement SQL`.

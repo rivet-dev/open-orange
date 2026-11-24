@@ -6,33 +6,33 @@
 	"stars": 0,
 	"origin": "probe",
 	"directory": ".",
-	"ranAt": "2026-11-10T02:21:41.327Z",
+	"ranAt": "2026-11-24T22:18:08.988Z",
 	"orange": {
-		"sha": "ee0b731",
-		"dirty": null
+		"sha": "f96bfc1",
+		"dirty": false
 	},
-	"rivetkit": "0.0.0-sqlite-sync-3-0-6-final.cf8679c",
+	"rivetkit": "3.1.2-rc.6",
 	"runtime": "workerd",
-	"node": "v24.21.0",
+	"node": "v26.13.1",
 	"status": "partial",
 	"install": null,
 	"build": null,
 	"boot": {
 		"ok": true,
-		"seconds": 2
+		"seconds": 1
 	},
 	"steps": [
 		{
 			"name": "storage: a value survives the object's sleep",
 			"kind": "sleep",
 			"status": "pass",
-			"seconds": 11.1
+			"seconds": 11
 		},
 		{
 			"name": "alarm: fires on time",
 			"kind": "alarm",
 			"status": "pass",
-			"seconds": 0.6
+			"seconds": 0.5
 		},
 		{
 			"name": "alarm: wakes a sleeping object with no request",
@@ -44,13 +44,13 @@
 			"name": "alarm: a future alarm survives a restart",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 17.4
+			"seconds": 16.6
 		},
 		{
 			"name": "alarm: an alarm due while the process is down fires after a restart, with no request",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 1.6
+			"seconds": 0.8
 		},
 		{
 			"name": "hibernation: a socket stays open through the object's sleep, and a message wakes it",
@@ -68,13 +68,13 @@
 			"name": "open socket: an idle socket stays open past the sleep timeout",
 			"kind": "websocket",
 			"status": "pass",
-			"seconds": 20.1
+			"seconds": 20
 		},
 		{
 			"name": "open socket: an idle object drops its in-memory state while its socket stays open",
 			"kind": "websocket",
 			"status": "pass",
-			"seconds": 20
+			"seconds": 20.1
 		},
 		{
 			"name": "open socket: the object sleeps after its last socket closes",
@@ -86,20 +86,20 @@
 			"name": "open socket: webSocketClose gets the client's close code",
 			"kind": "websocket",
 			"status": "pass",
-			"seconds": 5
+			"seconds": 5.1
 		},
 		{
 			"name": "open socket: a restart closes it with 1012, and a reconnect finds storage",
 			"kind": "restart",
 			"status": "fail",
-			"seconds": 1.3,
+			"seconds": 0.6,
 			"error": "The input did not match the regular expression /1012/. Input:\n\n'Error: WebSocket closed (1006 )'\n"
 		},
 		{
 			"name": "open socket: a crash closes it with 1006, and a reconnect finds storage",
 			"kind": "restart",
 			"status": "pass",
-			"seconds": 6.4
+			"seconds": 5.6
 		},
 		{
 			"name": "KV-backed class: the storage API keeps a value",
@@ -118,31 +118,31 @@
 			"name": "Workflows: create, step, status, complete",
 			"kind": "binding",
 			"status": "pass",
-			"seconds": 0.1
+			"seconds": 0
 		},
 		{
 			"name": "Workflows: sendEvent releases a waiting instance",
 			"kind": "binding",
 			"status": "pass",
-			"seconds": 0.2
+			"seconds": 0
 		},
 		{
 			"name": "Workflows: terminate() ends a waiting instance",
 			"kind": "binding",
 			"status": "pass",
-			"seconds": 0.2
+			"seconds": 0
 		},
 		{
 			"name": "Workflows: pause() and resume()",
 			"kind": "binding",
 			"status": "pass",
-			"seconds": 0.3
+			"seconds": 0
 		},
 		{
 			"name": "Workflows: restart() runs a finished instance again",
 			"kind": "binding",
 			"status": "pass",
-			"seconds": 0.2
+			"seconds": 0
 		}
 	],
 	"changes": [],

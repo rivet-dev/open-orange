@@ -16,7 +16,6 @@
 				"Under `orange dev`, a restart closes open sockets with `1012` and a crash with `1006`. In both cases a reconnect works and storage survives.",
 				"Orange pings every network socket every 30 s, because Cloudflare closes idle sockets on pool URLs at 125 s with `1006`. With pings, idle sockets stayed open until a rollout closed them at 695 s. A Worker and its objects never see the pings. `wrangler dev` kept idle sockets open for 360 s with no pings. Real Cloudflare is not measured: its docs say idle sockets get closed and recommend a heartbeat.",
 				"A client whose connection is cut gives the object `webSocketClose` with `1006` within about 1 s. A client that stays connected but stops answering pings is closed with `1006` at about 90 s. The object sleeps after both.",
-				"`webSocketClose` gets `1001 \"gateway disconnected\"` where a client closed cleanly with `1000`. `wrangler dev` passes the client's code.",
 				"The object hibernates, but its actor does not sleep with a socket open. Real projects' steps that wait for every actor to sleep fail with `Some actor was still awake`. The real-project results show each of those steps again under a sleep check that also accepts the emulation."
 			],
 			"writtenFor": "partial",

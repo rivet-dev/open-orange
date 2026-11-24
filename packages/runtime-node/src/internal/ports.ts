@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	type FSWatcher,
+	linkSync,
 	mkdirSync,
 	openSync,
 	lstatSync,
@@ -15,7 +16,8 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { get } from "node:http";
-import { createServer, type Server } from "node:net";
+import { connect, createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isRecord } from "../bindings/unknown-values.js";
@@ -288,6 +290,48 @@ function engineStartLockChange(lockPath: string): Promise<void> {
 	});
 }
 
+// Runs `start` while this process holds the lock file. The holder's pid is in the file, so a
+// lock whose holder died is taken over. Without `timeoutMs`, it waits as long as the holder lives.
+async function withLockFile<T>(lockPath: string, start: () => Promise<T>, timeoutMs?: number): Promise<T> {
+	mkdirSync(dirname(lockPath), { recursive: true });
+	// The pid goes into a file of this process first, and a hard link makes it the lock, so the
+	// lock file is never empty, even when this process dies while it takes the lock.
+	const pidPath = `${lockPath}.${randomUUID()}`;
+	writeFileSync(pidPath, String(process.pid));
+	const deadline = timeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
+	try {
+		for (;;) {
+			try {
+				linkSync(pidPath, lockPath);
+				break;
+			} catch (error: unknown) {
+				if (!isRecord(error) || error.code !== "EEXIST") throw error;
+			}
+			let holder: number;
+			try {
+				holder = Number(readFileSync(lockPath, "utf8"));
+			} catch {
+				continue;
+			}
+			if (!processIsAlive(holder)) {
+				rmSync(lockPath, { force: true });
+				continue;
+			}
+			if (Date.now() > deadline) {
+				throw new Error(`Timed out after ${(timeoutMs ?? 0) / 1_000} s waiting for the lock ${lockPath}, which pid ${holder} holds.`);
+			}
+			await engineStartLockChange(lockPath);
+		}
+	} finally {
+		rmSync(pidPath, { force: true });
+	}
+	try {
+		return await start();
+	} finally {
+		rmSync(lockPath, { force: true });
+	}
+}
+
 // The sessions of one storage directory share one Engine. A session holds this
 // lock until its Engine is healthy and runtime.json records it, so the next
 // session reuses that Engine instead of spawning a second one on the same port
@@ -296,33 +340,7 @@ export async function withRivetEngineStartLock<T>(
 	storagePath: string,
 	start: () => Promise<T>,
 ): Promise<T> {
-	const lockPath = join(storagePath, "engine-start.lock");
-	mkdirSync(storagePath, { recursive: true });
-	for (;;) {
-		try {
-			writeFileSync(lockPath, String(process.pid), { flag: "wx" });
-			break;
-		} catch (error: unknown) {
-			if (!isRecord(error) || error.code !== "EEXIST") throw error;
-		}
-		let holder: string;
-		try {
-			holder = readFileSync(lockPath, "utf8");
-		} catch {
-			continue;
-		}
-		// An empty file is a lock whose holder is still writing its pid.
-		if (holder !== "" && !processIsAlive(Number(holder))) {
-			rmSync(lockPath, { force: true });
-			continue;
-		}
-		await engineStartLockChange(lockPath);
-	}
-	try {
-		return await start();
-	} finally {
-		rmSync(lockPath, { force: true });
-	}
+	return await withLockFile(join(storagePath, "engine-start.lock"), start);
 }
 
 /** The port in the Engine stamp of this storage directory, whether or not that Engine still runs. */
@@ -476,8 +494,52 @@ export function engineLogDiskBudget(storagePath: string, environment: NodeJS.Pro
 export interface StartRivetEngineOptions {
 	binaryPath: string;
 	host: string;
+	/** Called once the Engine's guard, peer, and metrics ports accept connections. */
+	onPortsBound?(): void;
 	port: number;
 	storagePath: string;
+}
+
+// resolveRivetEnginePort frees the ports it checks before the Engine binds them, about a second
+// later. Every Orange process on this machine picks its Engine ports under this lock and holds it
+// until its Engine binds them, so the Engine of a parallel `orange dev`, whose port set can also
+// overlap this one, cannot bind one of them in between. Such an Engine exits with "Address in
+// use" on its peer port, or keeps restarting its guard while the other Engine answers its port.
+const enginePortsLockPath = join(tmpdir(), "open-orange", "engine-ports.lock");
+// The holder releases the lock once its Engine binds its ports, waits at most 15 s for an earlier
+// Engine to stop first, and gives up on a start after 60 s.
+const enginePortsLockTimeoutMs = 120_000;
+
+/** Starts or reuses the local Engine of a storage directory, and returns its port. */
+export async function startLocalRivetEngine(
+	options: Omit<StartRivetEngineOptions, "onPortsBound" | "port"> & ResolveRivetEnginePortOptions,
+): Promise<number> {
+	const { port, started } = await withLockFile(
+		enginePortsLockPath,
+		async () => {
+			const port = await resolveRivetEnginePort(options);
+			const portsBound = Promise.withResolvers<void>();
+			const started = ensureRivetEngine({ ...options, onPortsBound: portsBound.resolve, port });
+			await Promise.race([portsBound.promise, started]);
+			return { port, started };
+		},
+		enginePortsLockTimeoutMs,
+	);
+	await started;
+	return port;
+}
+
+function acceptsConnections(host: string, port: number): Promise<boolean> {
+	return new Promise((resolveAccepts) => {
+		const socket = connect({ host, port });
+		const finish = (accepts: boolean): void => {
+			socket.destroy();
+			resolveAccepts(accepts);
+		};
+		socket.setTimeout(500, () => finish(false));
+		socket.once("connect", () => finish(true));
+		socket.once("error", () => finish(false));
+	});
 }
 
 // The longest a fresh Engine takes to answer /health, which includes recovering its storage.
@@ -492,7 +554,7 @@ const engineStartTimeoutMs = 60_000;
  * https://github.com/rivet-dev/rivet/blob/a00b07f483aa3fb07ab403614bcb79d7a8be0322/rivetkit-rust/packages/engine-process/src/lib.rs#L150-L260
  * https://github.com/rivet-dev/rivet/blob/a00b07f483aa3fb07ab403614bcb79d7a8be0322/rivetkit-rust/packages/engine-process/src/lib.rs#L502-L617
  */
-export async function ensureRivetEngine(options: StartRivetEngineOptions): Promise<void> {
+async function ensureRivetEngine(options: StartRivetEngineOptions): Promise<void> {
 	const endpoint = `http://${options.host.includes(":") ? `[${options.host}]` : options.host}:${options.port}`;
 	if (await engineIsHealthy(new URL(endpoint))) return;
 	// An Engine of an earlier session can still be stopping. It holds the storage lock until it
@@ -590,11 +652,23 @@ export async function ensureRivetEngine(options: StartRivetEngineOptions): Promi
 	// reaches storage is the readiness signal. The Engine sends no event, so the start polls it.
 	const adminToken = process.env.RIVET__AUTH__ADMIN_TOKEN ?? "default";
 	const deadline = Date.now() + engineStartTimeoutMs;
+	let portsBound = false;
 	for (;;) {
 		if (!processIsAlive(pid)) {
 			throw new Error(
 				`The Rivet Engine exited during startup ${await Promise.race([exit, delay(1_000).then(() => "for an unknown reason")])}. Its logs are in ${logsDir}.\n${logTail(stdoutPath)}\n${logTail(stderrPath)}`,
 			);
+		}
+		if (!portsBound) {
+			const bound = await Promise.all([
+				acceptsConnections(options.host, options.port),
+				acceptsConnections("127.0.0.1", peerPort),
+				acceptsConnections(options.host, options.port + 10),
+			]);
+			if (bound.every(Boolean)) {
+				portsBound = true;
+				options.onPortsBound?.();
+			}
 		}
 		if (await engineStorageIsReady(endpoint, adminToken)) return;
 		if (Date.now() > deadline) {

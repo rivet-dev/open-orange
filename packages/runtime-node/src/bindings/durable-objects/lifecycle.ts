@@ -8,11 +8,7 @@ import {
 	type RivetInternalActorDefinition,
 	type RivetRegistry,
 } from "../../internal/rivetkit.js";
-import {
-	ensureRivetEngine,
-	resolveRivetEnginePort,
-	withRivetEngineStartLock,
-} from "../../internal/ports.js";
+import { startLocalRivetEngine, withRivetEngineStartLock } from "../../internal/ports.js";
 import { discoverInstalledRivetKitBuild } from "../../internal/rivetkit-build.js";
 
 export interface DurableObjectRegistryLifecycle {
@@ -65,11 +61,10 @@ export async function startDurableObjectRegistry(
 	}
 	return await withRivetEngineStartLock(storagePath, async () => {
 		const host = options.engineHost ?? "127.0.0.1";
-		const port = await resolveRivetEnginePort({ host, portSeed, storagePath });
-		await ensureRivetEngine({
+		const port = await startLocalRivetEngine({
 			binaryPath: discoverInstalledRivetKitBuild().engineBinaryPath,
 			host,
-			port,
+			portSeed,
 			storagePath,
 		});
 		return await startDurableObjectRegistryOnPort(options, port);

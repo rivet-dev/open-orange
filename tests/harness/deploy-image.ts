@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { waitFor, withDeadline } from "./orange-dev.js";
 import { freePort } from "./free-port.js";
+import { startStandaloneEngine } from "./orange-serve.js";
 
 // Builds a real `orange deploy` image and runs it the way a runner pool does.
 export const dockerSkip = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0 ? false : "Docker is not running, so no image can be built here";
-const requireFromRivetKit = createRequire(createRequire(import.meta.url).resolve("rivetkit"));
-const { getEnginePath } = requireFromRivetKit("@rivetkit/engine-cli") as { getEnginePath(): string };
+const engineToken = "test-only-engine-token";
 
 export function dockerBuild(outdir: string, tag: string): void {
 	const build = spawnSync("docker", ["build", "--quiet", "--platform", "linux/amd64", "-f", join(outdir, "Dockerfile"), "-t", tag, join(outdir, "context")], { encoding: "utf8" });
@@ -21,64 +17,24 @@ export function dockerBuild(outdir: string, tag: string): void {
 
 // An Engine on the host stands in for the cluster. The container reaches it through host.docker.internal.
 export async function withEngine<Value>(body: (endpoint: string) => Promise<Value>): Promise<Value> {
-	const directory = await mkdtemp(join(tmpdir(), "open-orange-secrets-engine-"));
-	const [guardPort, peerPort, metricsPort] = [await freePort(), await freePort(), await freePort()];
-	await mkdir(join(directory, "log"));
-	const configPath = join(directory, "config.json");
-	const endpoint = `http://host.docker.internal:${guardPort}`;
-	await writeFile(
-		configPath,
-		JSON.stringify({
-			topology: {
-				datacenter_label: 1,
-				datacenters: { default: { datacenter_label: 1, is_leader: true, peer_url: `http://127.0.0.1:${peerPort}/`, public_url: `${endpoint}/` } },
-			},
-		}),
-	);
-	const engine: ChildProcess = spawn(getEnginePath(), ["--config", configPath], {
-		cwd: directory,
-		env: {
-			...process.env,
-			RIVET__API_PEER__HOST: "127.0.0.1",
-			RIVET__API_PEER__PORT: String(peerPort),
-			RIVET__AUTH__ADMIN_TOKEN: "test-only-engine-token",
-			RIVET__GUARD__HOST: "0.0.0.0",
-			RIVET__GUARD__PORT: String(guardPort),
-			RIVET__METRICS__HOST: "127.0.0.1",
-			RIVET__METRICS__PORT: String(metricsPort),
-			RIVET__OBJECT_STORAGE__PRIMARY__FILE_SYSTEM__PATH: join(directory, "objects"),
-			RIVET__STORAGE__AUTO_PROVISION_PARTITIONS: "1",
-			RIVET__STORAGE__BALANCING__ENABLED: "false",
-			RIVET__STORAGE__COLD_STORE__DISK_CACHE_BYTES: "0",
-			RIVET__STORAGE__LOG_DIRECTORY: join(directory, "log"),
-			RIVET__STORAGE__LOG_SHARD__MAX_DISK_BYTES: String(1024 * 1024 * 1024),
-		},
-		stdio: "ignore",
-	});
+	const engine = await startStandaloneEngine({ adminToken: engineToken, guardHost: "0.0.0.0", publicHost: "host.docker.internal" });
 	try {
-		await waitFor(
-			"the Engine to start",
-			async () => {
-				const names = await fetch(`http://127.0.0.1:${guardPort}/actors/names?namespace=default`, {
-					headers: { authorization: "Bearer test-only-engine-token" },
-				}).catch(() => undefined);
-				return names?.status === 200;
-			},
-			60_000,
-		);
 		// A cluster creates its pool. This Engine is empty, so the test does.
-		const pool = await fetch(`http://127.0.0.1:${guardPort}/pools/default?namespace=default`, {
+		const pool = await fetch(`http://127.0.0.1:${engine.guardPort}/pools/default?namespace=default`, {
 			body: "{}",
-			headers: { authorization: "Bearer test-only-engine-token", "content-type": "application/json" },
+			headers: { authorization: `Bearer ${engineToken}`, "content-type": "application/json" },
 			method: "PUT",
 		});
 		assert.ok(pool.ok, `${pool.status} ${await pool.text()}`);
-		return await body(endpoint);
+		try {
+			return await body(`http://host.docker.internal:${engine.guardPort}`);
+		} catch (error: unknown) {
+			// A Worker that cannot reach the Engine fails here, so the Engine's own output goes along.
+			if (error instanceof Error) error.message += `\n\nThe Engine during this test:\n${engine.report().slice(-4_000)}`;
+			throw error;
+		}
 	} finally {
-		const exit = new Promise((done) => engine.once("exit", done));
-		engine.kill("SIGTERM");
-		await withDeadline(exit, "Engine stop", 20_000).catch(() => engine.kill("SIGKILL"));
-		await rm(directory, { force: true, recursive: true });
+		await engine.stop();
 	}
 }
 
@@ -92,7 +48,7 @@ async function runWorker(
 ): Promise<{ exited: string } | { text: string }> {
 	const port = await freePort();
 	const name = `oo-secrets-${port}`;
-	const run = spawnSync("docker", ["run", "-d", "--platform", "linux/amd64", "--name", name, "--add-host", "host.docker.internal:host-gateway", "-p", `127.0.0.1:${port}:8080`, "-e", `RIVET_ENDPOINT=${endpoint.replace("http://", "http://default:test-only-engine-token@")}`, "-e", "PORT=8080", ...flags, tag], { encoding: "utf8", env: { ...process.env, ...environment } });
+	const run = spawnSync("docker", ["run", "-d", "--platform", "linux/amd64", "--name", name, "--add-host", "host.docker.internal:host-gateway", "-p", `127.0.0.1:${port}:8080`, "-e", `RIVET_ENDPOINT=${endpoint.replace("http://", `http://default:${engineToken}@`)}`, "-e", "PORT=8080", ...flags, tag], { encoding: "utf8", env: { ...process.env, ...environment } });
 	assert.equal(run.status, 0, run.stderr);
 	const logs = (): string => {
 		const tail = spawnSync("docker", ["logs", "--tail", "40", name], { encoding: "utf8" });

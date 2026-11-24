@@ -8,3 +8,5 @@ tests/fixtures/examples/*/.wrangler/
 examples/*/worker-configuration.d.ts
 tests/fixtures/examples/*/worker-configuration.d.ts
 .DS_Store
+# workerd source for reference searches. See CLAUDE.md.
+.workerd-ref/

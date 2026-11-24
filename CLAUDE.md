@@ -56,68 +56,55 @@ Take the first rule that applies:
 
 ## Commits and pull requests
 
-- Commit titles and pull request titles are conventional commits (`feat`, `fix`, `chore`, `docs`, `refactor`), with an optional scope.
+- Commit titles and pull request titles are conventional commits (`feat`, `fix`,
+  `chore`, `docs`, `refactor`), with an optional scope.
 - A pull request description is a short, high-level bullet list of what changed.
 
-## Cloudflare conformance workflow
+## Conformance
 
 - When updating the pinned Wrangler version or supported compatibility date and
   flags, run the Cloudflare conformance CLI's `generate` command, review the API
   and Wrangler CLI-help diffs, run `check`, and record any confirmed deviations.
 - Keep Orange's complete command tree and normalized help output aligned with
   the pinned Wrangler release. Help parity proves only CLI surface parity;
-  command behavior must have its own conformance fixtures.
+  command behavior needs its own conformance fixtures.
 - When implementing a command, global, binding, module export, or other coherent
   API slice, enable it in `support.json` as partial, run `check`, and iterate on
   the implementation and Cloudflare comparison tests without weakening the
   generated types. Mark it implemented only after its behavioral conformance
   tests pass.
+- A module is complete only when one commit holds all three: its implementation
+  under `packages/runtime-node/src/` (globals, modules, bindings, or events), its
+  `docs/modules/` page, and its type and behavioral conformance tests with an
+  accurate `support.json` status. The page changes in the same commit as the
+  module's configuration, behavior, conformance status, or deviations.
+- Test workerd behavior with a `.wd-test` file in
+  `packages/cloudflare-conformance/synthetic/`. `pnpm upstream` scores it on
+  workerd first, so only behavior that workerd shows counts.
 
-## Cloudflare implementation references
+## workerd and Miniflare references
 
-- When Cloudflare behavior or an implementation approach is unclear, inspect
-  the workerd source and, where useful, the historical Miniflare v2 TypeScript
-  source. Treat them as implementation references; the pinned declarations and
-  the [Compatibility contract](#compatibility-contract) remain Orange's
-  contract.
-- Prefer workerd for current runtime semantics, not for its limits. Miniflare
-  v2 is useful for its JavaScript/TypeScript implementation patterns, but it
-  predates modern Workers RPC and is not an oracle for Durable Object method
-  RPC.
-- Whenever Orange code materially follows or adapts specific workerd or
-  Miniflare v2 behavior, add a concise comment beside that code explaining what
-  is mirrored and linking to the exact upstream lines. The URL must be a GitHub
-  permalink containing a full commit SHA and line range, never a moving branch
-  or tag URL. This applies even when the implementation is adapted rather than
-  copied, including protocol details and edge cases such as stream extraction.
+- When Cloudflare behavior or an implementation approach is unclear, read the
+  workerd source and tests. Keep a clone at the commit that
+  `packages/cloudflare-conformance/upstream.json` pins, and search it with `rg`:
 
-## Upstream example corpus
+  ```sh
+  git clone --filter=blob:none https://github.com/cloudflare/workerd.git .workerd-ref
+  git -C .workerd-ref checkout "$(jq -r .commit packages/cloudflare-conformance/upstream.json)"
+  rg -n "DataCloneError" .workerd-ref/src/workerd/api
+  rg -l "getEntrypoint" .workerd-ref/src/workerd/api/tests
+  ```
 
-- Manually copy upstream examples into `tests/cloudflare-examples/<area>/<id>/`; tests must
-  never fetch mutable examples at runtime.
-- Every example has an `example.json` manifest with exactly one stable `id`, a
-  repository-relative `source` entrypoint, a repository-relative
-  `wranglerConfig`, the upstream `reference` URL it was copied from, and an
-  `expectation` of `expected-pass` or `known-broken`.
-- A `known-broken` example must include a concise `reason`. Keep its source
-  unchanged so it remains evidence of an OpenOrange gap, and update its
-  expectation when the gap is fixed.
-- Run `tsx scripts/validate-example-manifests.ts` after adding or changing an
-  example. The validator checks manifest shape, unique IDs, referenced local
-  files, valid reference URLs, and required known-broken reasons; it does not
-  fetch or execute examples.
-
-## Runnable examples
-
-- Keep `examples/<name>/` as plain Cloudflare Workers projects with no
-  OpenOrange imports, a `wrangler.jsonc`, and a `README.md`.
-- `examples/` holds only what a user would copy: a starting point, or Orange
-  configuration that Cloudflare's own docs cannot teach. An example that only
-  proves a feature goes in `tests/fixtures/examples/`. Real proof goes in
-  `packages/cloudflare-conformance/real-projects/`.
-- Every example and example fixture needs one end-to-end scenario in
-  `tests/examples/runnable-examples.test.ts`; the test fails for one without a scenario.
-- Upstream copies used as compatibility evidence stay in `tests/cloudflare-examples/`.
+- workerd is the reference for current runtime semantics, not for its limits.
+  The historical Miniflare v2 TypeScript source is useful for implementation
+  patterns, but it predates modern Workers RPC and is not an oracle for Durable
+  Object method RPC.
+- When Orange code follows or adapts specific workerd or Miniflare v2 behavior,
+  add a concise comment beside it that says what is mirrored and links to the
+  exact upstream lines. The link is a GitHub permalink with a full commit SHA
+  and a line range, such as the pinned commit above, never a branch or tag URL.
+  This applies to adapted code too, including protocol details and edge cases
+  such as stream extraction.
 
 ## Tests
 
@@ -136,179 +123,66 @@ Take the first rule that applies:
 - A real-project result describes the newest Orange: run it on the current
   `main` or the latest release. A step that fails because the host lacks a
   tool is a harness failure to fix, not an Orange result.
-- Run one area with `pnpm test:e2e 'tests/<area>/*.test.ts'`, one file with
-  `pnpm test:e2e tests/<area>/<name>.test.ts`, and everything with `pnpm test`.
 
-## Module documentation
+### Which tests to run
 
-- Keep one public MDX document for each Cloudflare runtime capability tracked by
-  the current milestone under `docs/modules/`, including capabilities that are
-  still unimplemented. Update it in the same commit whenever configuration,
-  behavior, conformance status, or deviations change.
-- Each module document must state its support status, show Wrangler-compatible
-  configuration, explain how Orange implements it, describe its behavioral and
-  type conformance coverage, and list every known deviation from Cloudflare,
-  in the [docs page format](#docs-page-format).
-- Never put secret values, credentials, or private infrastructure details in
-  public docs.
+Run the area that covers your change, one area or file at a time. Each area
+starts many `orange dev` processes and Rivet Engines, so CI runs the areas on
+16-core runners. Let CI run the rest. Run one file with
+`pnpm test:e2e tests/<area>/<name>.test.ts`.
 
-### Docs page format
+| You changed | Run |
+| --- | --- |
+| `packages/runtime-node/src/bindings/durable-objects/` | `pnpm test:e2e 'tests/durable-objects/*.test.ts'` |
+| `bindings/worker-loader/` | `pnpm test:e2e tests/bindings/worker-loader.test.ts` and `pnpm upstream --filter worker-loader` in `packages/cloudflare-conformance` |
+| Other `bindings/` | `pnpm test:e2e 'tests/bindings/*.test.ts'` |
+| `rpc/`, `session/`, `globals/websocket.ts` | `pnpm test:e2e 'tests/rpc-and-websockets/*.test.ts'` |
+| `events/` | `pnpm test:e2e 'tests/events/*.test.ts'` |
+| `modules/`, other `globals/` | `pnpm test:e2e 'tests/node-compat/*.test.ts'` |
+| Outbound `fetch()` and `connect()` (`internal/global-outbound.ts`, `internal/happy-eyeballs.ts`) | `pnpm test:e2e 'tests/outbound/*.test.ts'` |
+| `src/commands/migrate*.ts` | `pnpm test:e2e 'tests/migrate/*.test.ts'` |
+| Other `src/` (CLI, config, build, serve) | `pnpm test:e2e 'tests/cli/*.test.ts'` |
+| `examples/`, `tests/fixtures/examples/`, `tests/cloudflare-examples/` | `pnpm test:e2e 'tests/examples/*.test.ts'` |
 
-Every page in `docs/` is for a person skimming it. In about one screen they
-get the concept and a quickstart that works. Everything else (compatibility
-tables, limits, differences from Cloudflare, edge cases, internals, errors,
-measurements, test evidence) goes in one collapsed `<AiContext>` at the end.
-`docs/modules/durable-objects.mdx` is the reference binding page. The docs
-components live in `website/src/components/docs/`, and pages use them without
-an import.
+## Examples
 
-A binding page, in this order:
+- `examples/<name>/` is a plain Cloudflare Workers project with no OpenOrange
+  imports, a `wrangler.jsonc`, and a `README.md`. It holds only what a user
+  would copy: a starting point, or Orange configuration that Cloudflare's own
+  docs cannot teach. An example that only proves a feature goes in
+  `tests/fixtures/examples/`. Real proof goes in
+  `packages/cloudflare-conformance/real-projects/`.
+- Every example and example fixture needs one end-to-end scenario in
+  `tests/examples/runnable-examples.test.ts`, which fails for one without a
+  scenario.
+- Upstream examples used as compatibility evidence are copied by hand into
+  `tests/cloudflare-examples/<area>/<id>/`. Tests never fetch them at runtime.
+  Each has an `example.json` manifest. Run
+  `tsx scripts/validate-example-manifests.ts` after adding or changing one; it
+  names any missing or invalid field.
+- A `known-broken` example keeps its source unchanged, so it stays evidence of
+  an OpenOrange gap. Change its expectation when the gap is fixed.
 
-1. **`# Title`**, then **`<BindingStatus>`**. Its status, backend, scaling,
-   check counts and migration value come from data. The page writes three
-   one-line props: `works`, `differs`, and `missing`.
-2. **One or two sentences** on what the binding is on OpenOrange. A diagram
-   here only if one already exists (`x.svg` and `x-dark.svg` in
-   `docs/images/`).
-3. **`## Quickstart`**: `<Steps>` with three to five steps, each titled with an
-   imperative verb: the `wrangler.jsonc`, the code, and the run with its
-   output. Requirements go above `<Steps>`, never in step 1.
-4. **`## How it works`**: at most three short bullets or three sentences.
-5. **`<AiContext summary="Compatibility, limits and details">`**: everything
-   else, starting with `#### Compatibility` (one `Feature | Status | Notes`
-   table) and `#### Limits`, then the rest, ending with `#### Conformance` and
-   `<BindingEvidence>`.
+## Docs and website
 
-A guide (migrate, deploy, operations, errors) opens with one or two sentences
-and a `## Quickstart` as `<Steps>`, then at most three short task sections of a
-sentence and a command each, then `<AiContext>` with the reference: every flag,
-refused value, error, and edge case.
-
-Writing rules:
-
-- Write for a person deciding whether to use it or setting it up. Short
-  sentences, present tense, "you".
-- The human sections hold no caveats, exceptions, numbers the reader does not
-  need to run it, or lists of what is missing. `<BindingStatus>` already says
-  what differs and what is missing.
-- No `## Compatibility`, `## Limits`, or other reference section outside
-  `<AiContext>`. Inside it, use `####` and `#####` headings only, so "On this
-  page" lists only the human sections. Keep the heading text of any section
-  that other pages link to, so its anchor still works; a link to an anchor
-  inside `<AiContext>` opens it.
-- State a deviation or by-design behavior as a plain fact about what Orange
-  does, never as a warning, risk, or finding. Leave out internals the reader
-  cannot act on.
-- Say each fact once.
-- Every command shows its real output: copy it from the page or from the CLI
-  source in `src/commands/`, or show the command without output. Never invent
-  output.
-- A terminal session is one `sh` block: each command starts with `$ `, and its
-  output follows on the next lines, never in a separate block. The site mutes
-  the prompt and dims the output.
-- Configuration examples use `wrangler.jsonc`.
-- Every diagram has a light and a dark version: `x.svg` and `x-dark.svg` in
-  `docs/images/`.
-
-Each binding's migration value (in `website/src/data/binding-migration.ts`) is
-one of four, with one line of detail and a link to the guide when there is a
-path:
-
-- **Live migration:** the app keeps serving while the data moves, as with
-  `orange migrate`'s copy on first request and backfill.
-- **Migration with downtime:** a supported path that needs a cutover or a
-  maintenance window, such as an export and import.
-- **Not supported:** the binding holds data on Cloudflare, and Orange has no
-  way to move it yet.
-- **Not needed:** stateless or external, so there is nothing to move.
-
-Change a value in the same commit as the migration code or guide.
-
-Skeleton:
-
-```mdx
----
-title: KV
-description: One sentence on what runs the binding on OpenOrange.
----
-
-# KV
-
-<BindingStatus
-  binding="kv"
-  works="One line: what runs as on Cloudflare"
-  differs="One line: what behaves differently"
-  missing="One line: what is not there"
-/>
-
-One or two sentences on what it is on OpenOrange.
-
-## Quickstart
-
-<Steps>
-<Step title="Bind the namespace">
-
-One or two sentences, then the `wrangler.jsonc`.
-
-</Step>
-<Step title="Run it">
-
-The command, then its output.
-
-</Step>
-</Steps>
-
-## How it works
-
-- At most three short bullets.
-
-<AiContext summary="Compatibility, limits and details">
-
-#### Compatibility
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-
-#### Limits
-
-| What | Limit | What happens over it |
-| --- | --- | --- |
-
-#### Conformance
-
-<BindingEvidence bindings={["kv"]} />
-
-</AiContext>
-```
-
-### Module completion checklist
-
-A module is not complete until the same commit includes all three:
-
-- Its implementation under `packages/runtime-node/src/` in the appropriate
-  globals, modules, bindings, or events folder.
-- Its `docs/modules/` MDX page with support status, Wrangler-compatible
-  configuration, implementation details, conformance coverage, and known
-  deviations.
-- Its static type-conformance and behavioral conformance tests, with its status
-  accurately registered in `support.json`.
-
-## Agent skill
-
-- The `rivet-open-orange` agent skill lives in `rivet-dev/skills` at
-  `skills/rivet-open-orange/`. When a commit changes a command, flag, output line,
-  `orange doctor --json` event, or step that the skill names, open a PR there too.
-
-## Website docs
-
-- `website/` builds every docs page from `docs/*.mdx` and `docs/modules/*.mdx`,
-  and its compatibility and binding status pages from
-  `packages/cloudflare-conformance/` results, at build time. Edit those sources,
-  never copies inside `website/`.
+- Before you write or edit a page in `docs/`, read `docs/CLAUDE.md`. It holds
+  the page format and the writing rules.
+- `website/` builds the docs pages from `docs/` and the compatibility and
+  binding status pages from `packages/cloudflare-conformance/` results, at
+  build time. Edit those sources, never copies inside `website/`.
 - The only hand-written docs page is the introduction,
   `website/src/pages/docs/index.astro`. Its intro and quickstart mirror
   `README.md`. When either changes, update the other in the same commit so both
   show the same steps, commands, and order.
+- Public docs hold no secret values, credentials, or private infrastructure
+  details.
+
+## Agent skill
+
+- The `rivet-open-orange` agent skill lives in `rivet-dev/skills` at
+  `skills/rivet-open-orange/`. When a commit changes a command, flag, output
+  line, `orange doctor --json` event, or step that the skill names, open a PR
+  there too.
 
 ## Development scripts
 

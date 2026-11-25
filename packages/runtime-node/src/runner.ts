@@ -1174,6 +1174,10 @@ export async function startRuntime(
 					cf: inboundRequestCf(incoming),
 					headers: requestHeaders(incoming),
 					method: incoming.method ?? "GET",
+					// As on workerd, a Worker gets its request with redirect "manual", so fetch(request) returns
+					// a 3xx as it is instead of following it. Undici's default is "follow".
+					// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/global-scope.c%2B%2B#L355-L357
+					redirect: "manual",
 					signal: requestAbort.signal,
 				});
 				// `orange dev` is the mode without an external Engine. It takes mail as `wrangler dev` does,
@@ -1241,6 +1245,7 @@ export async function startRuntime(
 					cf: inboundRequestCf(incoming),
 					headers: requestHeaders(incoming),
 					method: incoming.method ?? "GET",
+					redirect: "manual",
 				});
 				// An asset is never a WebSocket, so the upgrade fails with its response.
 				const assetResponse = assets === undefined ? undefined : await assets.route(request);

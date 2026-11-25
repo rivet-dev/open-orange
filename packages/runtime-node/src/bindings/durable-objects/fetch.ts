@@ -208,6 +208,9 @@ export async function handleDurableObjectFetch(
 		body: head.body ? (upload?.body ?? new Uint8Array()) : null,
 		headers: head.headers,
 		method: head.method,
+		// As on workerd, the object gets redirect "manual", whatever the caller's request had.
+		// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/global-scope.c%2B%2B#L355-L357
+		redirect: "manual",
 	};
 	if (head.cf !== undefined) Reflect.set(init, "cf", head.cf);
 	try {

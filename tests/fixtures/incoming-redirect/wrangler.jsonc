@@ -1,0 +1,8 @@
+{
+  "name": "orange-test-incoming-redirect",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-03",
+  "services": [{ "binding": "SELF", "service": "orange-test-incoming-redirect" }],
+  "durable_objects": { "bindings": [{ "name": "ECHO", "class_name": "Echo" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Echo"] }]
+}

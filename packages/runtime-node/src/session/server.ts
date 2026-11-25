@@ -105,6 +105,9 @@ function callerRequest(
 		body: head.body && !upgrade ? incomingBody(incoming) : null,
 		headers: head.headers,
 		method: head.method,
+		// As on workerd, the callee gets redirect "manual", whatever the caller's request had.
+		// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/global-scope.c%2B%2B#L355-L357
+		redirect: "manual",
 		...(signal === undefined ? {} : { signal }),
 	};
 	if (init.body !== null) Reflect.set(init, "duplex", "half");

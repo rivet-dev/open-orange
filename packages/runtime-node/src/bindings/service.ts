@@ -306,7 +306,9 @@ export async function fetchEntrypoint(
 	const instance = instantiate(services, name, props, fetchTraceEvent(request));
 	const callerSignal = request.signal;
 	const callee = new AbortController();
-	const calleeRequest = new Request(request, { signal: null });
+	// As on workerd, the callee gets redirect "manual", whatever the caller's request had.
+	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/global-scope.c%2B%2B#L355-L357
+	const calleeRequest = new Request(request, { redirect: "manual", signal: null });
 	// Workerd sends a stream's declared expectedLength as Content-Length.
 	// https://github.com/cloudflare/workerd/blob/b73ce3ae105c35bafaaad864095079524573a465/src/workerd/api/tests/streams-test.js#L19-L96
 	const bodyLength = requestBodyLength(request);

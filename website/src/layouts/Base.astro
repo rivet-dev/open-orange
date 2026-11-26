@@ -49,6 +49,8 @@ const jsonLd = structuredData.length
 		{noindex && <meta name="robots" content="noindex" />}
 		<meta name="theme-color" content="#F26B1D" />
 		{!noindex && <link rel="canonical" href={canonical} />}
+		<!-- The ⌘K result title (Search.astro): the tab title up to its dash. -->
+		<meta data-pagefind-meta="title[content]" content={title.split(' — ')[0]} />
 		<link rel="sitemap" href="/sitemap-index.xml" />
 		<link rel="icon" href="/favicon.png" type="image/png" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -75,7 +77,8 @@ const jsonLd = structuredData.length
 	<body class="flex min-h-screen flex-col overflow-x-clip">
 		<a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-md focus:bg-plate focus:px-3 focus:py-2 focus:text-white">Skip to content</a>
 		<Nav />
-		<main id="main" class="flex-1">
+		<!-- Pagefind indexes only pages with data-pagefind-body, so noindex pages stay out of ⌘K search too. -->
+		<main id="main" class="flex-1" data-pagefind-body={noindex ? undefined : ''}>
 			<slot />
 		</main>
 		<Footer />

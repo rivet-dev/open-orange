@@ -37,7 +37,7 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 	) : (
 		<span slot="name" class="row-name" set:html={inline(e.name)} />
 	)}
-	<span slot="a" class="row-preview" set:html={inline(e.orange)} />
+	<span slot="a" class="row-preview" data-pagefind-ignore set:html={inline(e.orange)} />
 	<span slot="end" class="row-num whitespace-nowrap">
 		{tests.length ? <span class={TONE_CLASS[testsPass === tests.length ? 'pass' : testsPass === 0 ? 'fail' : 'warn'].text}>{testsPass}/{tests.length} pass</span> : null}
 		{code.length ? <span class="text-ink-faint">{tests.length ? ' · ' : ''}{code.length} {code.length === 1 ? 'file' : 'files'}</span> : null}
@@ -70,7 +70,7 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 		{tests.length ? (
 			<>
 				<dt>Tests</dt>
-				<dd>
+				<dd data-pagefind-ignore>
 					<ul class="results">
 						{tests.map(({ ref, row }) => (
 							<li>
@@ -91,7 +91,7 @@ const haystack = `${e.name} ${e.orange} ${e.cloudflare} ${e.notes ?? ''}`.toLowe
 		{code.length || docs.length ? (
 			<>
 				<dt>Source</dt>
-				<dd class="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
+				<dd class="flex flex-wrap gap-x-4 gap-y-1 text-[13px]" data-pagefind-ignore>
 					{code.map((c) => (
 						<a href={CONFORMANCE.fileUrl(c.path, c.lines)} class="link break-all font-mono text-[12.5px]" rel="noopener">{c.path}{c.lines ? `:${c.lines}` : ''}</a>
 					))}

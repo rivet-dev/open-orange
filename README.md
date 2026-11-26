@@ -110,7 +110,7 @@ See [self-hosting](https://openorange.dev/docs/deploy/#self-host) in the deploy 
 
 ## How pricing compares
 
-Cloudflare's meters, priced on raw AWS: Graviton EC2 in us-east-1 with 40% headroom, and S3 in your account. See [the cost model](https://openorange.dev/#cost).
+Cloudflare's meters, priced on raw AWS: Graviton EC2 in us-east-1 with 40% headroom, and S3 in your account. [Pricing](https://openorange.dev/pricing/) has every meter on AWS, Google Cloud and Azure, and how each number is built.
 
 | | Cloudflare | OpenOrange | |
 |---|---|---|---|

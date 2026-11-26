@@ -24,6 +24,7 @@ const container = Astro.url.pathname.startsWith('/docs/') ? 'container-docs' : '
 				{NAV.map((item) => (
 					<li><a href={item.href} class={linkClass}>{item.label}</a></li>
 				))}
+				<li><a href="/pricing/" class={linkClass}>Pricing</a></li>
 				<li><a href="/docs/architecture/" class={linkClass}>Architecture</a></li>
 				<li><a href="/docs/compatibility/" class={linkClass}>Compatibility</a></li>
 			</ul>

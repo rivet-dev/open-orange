@@ -53,14 +53,14 @@ const trail = [
 >
 	<div class="container-docs">
 		<div class:list={['lg:grid lg:grid-cols-[13.5rem_minmax(0,1fr)] lg:gap-12 xl:gap-16', !wide && 'xl:grid-cols-[13.5rem_minmax(0,1fr)_12rem]']}>
-			<aside class="hidden lg:block">
+			<aside class="hidden lg:block" data-pagefind-ignore>
 				<div data-docs-sidebar class="sticky top-[72px] max-h-[calc(100vh-72px)] overflow-y-auto pb-12 pt-10 [scrollbar-width:thin]">
 					<Sidebar groups={groups} current={href} />
 				</div>
 			</aside>
 
 			<div class="min-w-0 pb-20 pt-6 lg:pt-10">
-				<details class="docs-menu card mb-8 lg:hidden">
+				<details class="docs-menu card mb-8 lg:hidden" data-pagefind-ignore>
 					<summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-[14px] font-medium">
 						<span class="flex min-w-0 items-center gap-2">
 							<svg width="16" height="16" viewBox="0 0 18 18" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" class="shrink-0 text-ink-faint" aria-hidden="true"><path d="M2 4.5h14M2 9h14M2 13.5h14" /></svg>
@@ -73,7 +73,8 @@ const trail = [
 					</div>
 				</details>
 
-				<article>
+				<!-- The sidebar group, shown under each ⌘K result (Search.astro). -->
+				<article data-pagefind-meta={`section:Docs › ${current?.group ?? 'Getting started'}`}>
 					<header class="border-b border-line pb-8">
 						{current && <p class="label text-orange-deep">{current.group}</p>}
 						<h1 class="mt-2 text-balance text-[2.25rem] font-medium leading-[1.1] tracking-[-0.03em] md:text-[2.75rem]">{title}</h1>
@@ -86,7 +87,7 @@ const trail = [
 					<slot name="after" />
 				</article>
 
-				<footer class="mt-16">
+				<footer class="mt-16" data-pagefind-ignore>
 					{source && (
 						<a href={`https://github.com/rivet-dev/open-orange/blob/main/${source}`} class="inline-flex items-center gap-1.5 text-[13.5px] font-medium text-ink-faint transition-colors hover:text-ink">
 							<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M11.5 1.5l3 3-9 9H2.5v-3l9-9z" /></svg>
@@ -113,7 +114,7 @@ const trail = [
 			</div>
 
 			{wide ? null : toc.length > 0 ? (
-				<aside class="hidden xl:block">
+				<aside class="hidden xl:block" data-pagefind-ignore>
 					<nav aria-label="On this page" class="sticky top-[72px] max-h-[calc(100vh-72px)] overflow-y-auto pb-12 pt-10 [scrollbar-width:thin]">
 						<p class="label pb-3">On this page</p>
 						<ul class="flex flex-col gap-1.5 border-l border-line text-[13px] leading-snug">

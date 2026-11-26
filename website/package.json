@@ -6,7 +6,7 @@
 	"description": "Marketing site for OpenOrange: run Cloudflare Workers, Durable Objects, KV, Queues and Workflows on AWS, GCP, Azure or your own cloud.",
 	"scripts": {
 		"dev": "astro dev",
-		"build": "astro build",
+		"build": "astro build && pagefind --site dist",
 		"preview": "astro preview",
 		"check": "astro check"
 	},
@@ -19,6 +19,7 @@
 		"@fontsource/inter": "5.3.0",
 		"@resvg/resvg-js": "2.6.2",
 		"@tailwindcss/vite": "^4.3.3",
+		"pagefind": "1.6.0",
 		"satori": "0.63.2",
 		"sharp": "0.34.5",
 		"tailwindcss": "^4.3.3"

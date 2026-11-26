@@ -1,0 +1,166 @@
+---
+// Pricing: what OpenOrange costs (the deploy options), then what the same work
+// costs on each cloud next to Cloudflare. Every number is from COST and
+// CLOUD_PRICES in src/data/site.ts; the home page receipt (Cost.astro) is the
+// short version, on AWS only.
+import Base from '@/layouts/Base.astro';
+import Cta from '@/components/Cta.astro';
+import Tip from '@/components/Tip.astro';
+import { CLOUD_PRICES, CLOUD_PRICES_CHECKED, COST, DEPLOY_TARGETS, SITE } from '@/data/site';
+
+const usd = (n: number) => `$${n < 0.1 ? n.toPrecision(2) : n.toFixed(2)}`;
+const times = (cloudflare: number, cloud: number) => `${(cloudflare / cloud).toFixed(1)}×`;
+// The lowest price in a row, or none when every cloud ties.
+const cheapest = (prices: Record<string, number>) => {
+	const values = Object.values(prices);
+	const low = Math.min(...values);
+	return values.every((v) => v === low) ? undefined : low;
+};
+
+// Self-hosted first: it is the free one, and the one this page is about.
+const target = (id: string) => DEPLOY_TARGETS.find((t) => t.id === id)!;
+const plans = [
+	{ ...target('self-host'), price: 'Free', note: 'You pay only your cloud bill.', cta: { label: 'Self-hosting guide', href: `${SITE.docsDeploy}#self-host`, primary: true } },
+	// Rivet Cloud and BYOC as rivet.dev/pricing lists them: a Free plan, then usage; BYOC has no list price.
+	{ ...target('rivet-cloud'), price: 'Free to start', note: 'Then usage-based. Rivet runs the cluster.', cta: { label: 'Rivet Cloud pricing', href: `${SITE.rivet}/pricing/`, primary: false } },
+	{ ...target('byoc'), price: 'Contact us', note: 'Rivet runs it inside your account.', cta: { label: 'Talk to an engineer', href: SITE.talkToEngineer, primary: false } },
+];
+---
+
+<Base
+	title={`${SITE.name} pricing — free and open source`}
+	description="OpenOrange is free and open source. Self-host it and pay only your cloud bill, or let Rivet run it. Compare Cloudflare's prices with AWS, Google Cloud and Azure."
+>
+	<section class="container-x pb-14 pt-20 md:pb-20 md:pt-28">
+		<h1 class="h-hero max-w-3xl">Pricing</h1>
+		<p class="lede mt-6 max-w-2xl">OpenOrange is free and open source under Apache 2.0. Run it yourself, or have Rivet run it for you.</p>
+
+		<ul class="mt-12 grid gap-4 md:grid-cols-3">
+			{plans.map((p) => (
+				<li class:list={['card flex flex-col p-6 md:p-7', p.cta.primary && 'border-orange/50']}>
+					<p class="h-card">{p.label}</p>
+					<p class="stat mt-4 text-[2.25rem]">{p.price}</p>
+					<p class="mt-2 text-[15px] text-ink-soft">{p.note}</p>
+					<dl class="mb-7 mt-6 space-y-3 border-t border-line pt-5 text-[14px]">
+						<div><dt class="label">Runs on</dt><dd class="mt-0.5 text-ink-soft">{p.runsOn}</dd></div>
+						<div><dt class="label">Operated by</dt><dd class="mt-0.5 text-ink-soft">{p.operatedBy}</dd></div>
+					</dl>
+					<a href={p.cta.href} class:list={['mt-auto self-start', p.cta.primary ? 'btn-primary' : 'btn-secondary']}>{p.cta.label}</a>
+				</li>
+			))}
+		</ul>
+	</section>
+
+	<section id="compare" class="rule scroll-mt-20">
+		<div class="container-x section-tight">
+			<h2 class="h-section max-w-3xl">The same work, against Cloudflare.</h2>
+			<p class="lede mt-5 max-w-2xl">Each Cloudflare meter, priced on the cloud you run OpenOrange on. The lowest price is in orange.</p>
+
+			<div class="card mt-12">
+				<table class="meters w-full text-[15px]" style={`--cols: ${1 + CLOUD_PRICES.length}`}>
+					<thead>
+						<tr>
+							<th class="w-[30%]">Meter</th>
+							<th>Cloudflare</th>
+							{CLOUD_PRICES.map((c) => <th>{c.name}</th>)}
+						</tr>
+					</thead>
+					{COST.groups.map((g) => (
+						<tbody>
+							<tr class="group-row"><th colspan={2 + CLOUD_PRICES.length} scope="rowgroup">{g.title}</th></tr>
+							{g.meters.map((m) => {
+								const low = cheapest(m.prices);
+								return (
+									<tr>
+										<th scope="row" class="font-medium">
+											{m.title}
+											<span class="block text-[13px] font-normal text-ink-faint">per {m.unit}</span>
+										</th>
+										<td class="font-mono text-[14px] text-ink-soft"><Tip tip={m.cloudflareNote} align="start">{usd(m.cloudflare)}</Tip></td>
+										{CLOUD_PRICES.map((c, i) => (
+											<td class="font-mono text-[14px]">
+												<Tip tip={m.notes[c.id]} align={i === CLOUD_PRICES.length - 1 ? 'end' : 'start'} class:list={[m.prices[c.id] === low ? 'font-semibold text-orange-deep' : 'text-ink']}>{usd(m.prices[c.id])}</Tip>
+												<span class="block font-sans text-[12.5px] text-ink-faint">{times(m.cloudflare, m.prices[c.id])}<span class="max-md:hidden"> cheaper</span></span>
+											</td>
+										))}
+									</tr>
+								);
+							})}
+						</tbody>
+					))}
+				</table>
+			</div>
+			<p class="caption mt-4 max-w-4xl">
+				Compute is ARM VMs with {Math.round((COST.headroom - 1) * 100)}% headroom; storage and writes are object storage in your account. Hover a price for its inputs. On-demand list prices checked {CLOUD_PRICES_CHECKED}; Cloudflare Workers Paid prices from <a href={COST.source.workers} class="underline decoration-ink-faint/40 underline-offset-2 hover:text-ink" rel="noopener">Workers</a> and <a href={COST.source.durableObjects} class="underline decoration-ink-faint/40 underline-offset-2 hover:text-ink" rel="noopener">Durable Objects</a> pricing, checked {SITE.verified}.
+			</p>
+		</div>
+	</section>
+
+	<Cta />
+</Base>
+
+<style>
+	.meters th,
+	.meters td {
+		padding: 0.875rem 1rem;
+		text-align: left;
+		vertical-align: top;
+	}
+	.meters thead th {
+		padding-top: 1.125rem;
+		border-bottom: 1px solid var(--color-line);
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-ink-faint);
+	}
+	.meters tbody tr + tr > * {
+		border-top: 1px solid var(--color-line);
+	}
+	.meters .group-row th {
+		padding-top: 1.25rem;
+		padding-bottom: 0.25rem;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--color-orange-deep);
+	}
+	.meters tbody + tbody .group-row th {
+		border-top: 1px solid var(--color-line);
+	}
+	/* Phones: each row stacks, its name on a line of its own and the prices in
+	   --cols equal columns below, so no column hides past the edge. */
+	@media (max-width: 767px) {
+		.meters,
+		.meters thead,
+		.meters tbody {
+			display: block;
+		}
+		.meters tr {
+			display: grid;
+			grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+		}
+		.meters thead th:first-child {
+			display: none;
+		}
+		.meters th[scope] {
+			grid-column: 1 / -1;
+		}
+		.meters th,
+		.meters td {
+			padding: 0.625rem 0.75rem;
+		}
+		.meters th[scope='row'] {
+			padding-bottom: 0;
+		}
+		.meters thead th {
+			letter-spacing: 0.02em;
+		}
+		.meters tbody tr + tr > * {
+			border-top: 0;
+		}
+		.meters tbody tr + tr {
+			border-top: 1px solid var(--color-line);
+		}
+	}
+</style>

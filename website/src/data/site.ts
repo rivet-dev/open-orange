@@ -123,18 +123,75 @@ export const CLOUDFLARE_METERS: MeterRow[] = [
 	{ meter: 'Plan minimum', price: '$5 / month' },
 ];
 
-// The cost section converts Cloudflare's meters to raw AWS prices, unit for
-// unit, on ARM (Graviton). Compute runs on EC2 with 40% headroom for
-// autoscaling: a Durable Object GB-hour becomes 1.4 GB-hours of r7g (memory
-// optimized), a Workers CPU-hour becomes 1.4 vCPU-hours of c7g. Durable
-// Objects, D1, KV, Queues and Workflows all keep their state in actor SQLite,
-// stored in S3 in your account. Writes cost S3 requests, amortized across
-// many writes; WRITE_ESTIMATE is that cost per write, from one measured run.
-// AWS: on-demand Linux, us-east-1. Cloudflare: Workers Paid pricing pages.
+// The cost model converts Cloudflare's meters to raw cloud prices, unit for
+// unit, on ARM. Compute runs on VMs with 40% headroom for autoscaling: a
+// Durable Object GB-hour becomes 1.4 GB-hours of a 32 GB machine, a Workers
+// CPU-hour becomes 1.4 vCPU-hours of an 8 GB machine. Durable Objects, D1, KV,
+// Queues and Workflows all keep their state in actor SQLite, stored in object
+// storage in your account. Writes cost object-storage requests, amortized
+// across many writes; WRITE_ESTIMATE is that cost per write, from one measured
+// run. The home page receipt (Cost.astro) shows AWS; /pricing/ shows every
+// cloud. Cloudflare: Workers Paid pricing pages.
 const HEADROOM = 1.4;
-const R7G_XLARGE = { name: 'r7g.xlarge', hourly: 0.2142, vcpu: 4, memoryGb: 32 };
-const C7G_XLARGE = { name: 'c7g.xlarge', hourly: 0.145, vcpu: 4, memoryGb: 8 };
-const S3_STORAGE = 0.023;
+
+type Machine = { name: string; hourly: number; vcpu: number; memoryGb: number };
+export type CloudId = 'aws' | 'gcp' | 'azure';
+export type CloudPrices = {
+	id: CloudId;
+	name: string;
+	region: string;
+	/** 4 vCPU, 32 GB: prices Durable Object GB-hours. */
+	memory: Machine;
+	/** 4 vCPU, 8 GB: prices Workers vCPU-hours. */
+	cpu: Machine;
+	storage: { name: string; perGbMonth: number };
+	/** Object-storage writes (PUT, LIST) per 1,000. */
+	writeOps: number;
+	/** Internet egress, first paid tier. */
+	egress: { perGb: number; note: string };
+	source: { compute: string; storage: string };
+};
+
+// On-demand Linux list prices, read from each vendor's pricing API on
+// CLOUD_PRICES_CHECKED. Google bills vCPU and memory apart; its machine prices
+// are 4 × $0.03086 per vCPU-hour plus GB × $0.00351 per GB-hour (C4A, Americas).
+export const CLOUD_PRICES_CHECKED = '2026-11-26';
+export const CLOUD_PRICES: CloudPrices[] = [
+	{
+		id: 'aws',
+		name: 'AWS',
+		region: 'us-east-1',
+		memory: { name: 'r7g.xlarge', hourly: 0.2142, vcpu: 4, memoryGb: 32 },
+		cpu: { name: 'c7g.xlarge', hourly: 0.145, vcpu: 4, memoryGb: 8 },
+		storage: { name: 'S3 Standard', perGbMonth: 0.023 },
+		writeOps: 0.005,
+		egress: { perGb: 0.09, note: 'first 10 TB' },
+		source: { compute: 'https://aws.amazon.com/ec2/pricing/on-demand/', storage: 'https://aws.amazon.com/s3/pricing/' },
+	},
+	{
+		id: 'gcp',
+		name: 'Google Cloud',
+		region: 'us-east1',
+		memory: { name: 'c4a-highmem-4', hourly: 0.23576, vcpu: 4, memoryGb: 32 },
+		cpu: { name: 'c4a-highcpu-4', hourly: 0.15152, vcpu: 4, memoryGb: 8 },
+		storage: { name: 'Cloud Storage Standard', perGbMonth: 0.02 },
+		writeOps: 0.005,
+		egress: { perGb: 0.12, note: 'Premium tier up to 1 TB; Standard tier is $0.085' },
+		source: { compute: 'https://cloud.google.com/compute/vm-instance-pricing', storage: 'https://cloud.google.com/storage/pricing' },
+	},
+	{
+		id: 'azure',
+		name: 'Azure',
+		region: 'East US',
+		memory: { name: 'E4ps v6', hourly: 0.184, vcpu: 4, memoryGb: 32 },
+		cpu: { name: 'D4pls v6', hourly: 0.124, vcpu: 4, memoryGb: 8 },
+		storage: { name: 'Blob Storage Hot LRS', perGbMonth: 0.0208 },
+		writeOps: 0.005,
+		egress: { perGb: 0.087, note: 'after the first 100 GB' },
+		source: { compute: 'https://azure.microsoft.com/pricing/details/virtual-machines/linux/', storage: 'https://azure.microsoft.com/pricing/details/storage/blobs/' },
+	},
+];
+const AWS = CLOUD_PRICES[0];
 // Measured on Rivet Engine, 6 nodes: 5,000 concurrent agents, each awake 60 s
 // writing one 64-byte SQLite upsert every 10 s, then sleeping with its data
 // kept. 150,189 writes per 5 minutes (1.32 billion a month) made $232 a month
@@ -156,29 +213,39 @@ export type CostMeter = {
 	unit: string;
 	cloudflare: number;
 	cloudflareNote: string;
+	/** On AWS, as the home page receipt shows it. */
 	openorange: number;
 	openorangeNote: string;
+	/** The same unit on each cloud. */
+	prices: Record<CloudId, number>;
+	notes: Record<CloudId, string>;
 };
 
-const storage = (id: string, title: string, cloudflare: number): CostMeter => ({
-	id,
-	title,
-	unit: 'GB-month',
-	cloudflare,
-	cloudflareNote: `$${cloudflare.toFixed(2)} per GB-month`,
-	openorange: S3_STORAGE,
-	openorangeNote: 'S3 Standard in your account',
-});
-// A write-type operation, priced at `writes` actor SQLite writes each.
-const writes = (id: string, title: string, unit: string, cloudflare: number, cloudflareNote: string, count: number, what: string): CostMeter => ({
-	id,
-	title,
-	unit,
-	cloudflare,
-	cloudflareNote,
-	openorange: WRITE_ESTIMATE.perMillion * count,
-	openorangeNote: `${what}, at the measured S3 request cost per write`,
-});
+// A meter priced on every cloud in CLOUD_PRICES.
+const meterOn = (
+	base: Omit<CostMeter, 'openorange' | 'openorangeNote' | 'prices' | 'notes'>,
+	price: (c: CloudPrices) => number,
+	note: (c: CloudPrices) => string,
+): CostMeter => {
+	const prices = Object.fromEntries(CLOUD_PRICES.map((c) => [c.id, price(c)])) as Record<CloudId, number>;
+	const notes = Object.fromEntries(CLOUD_PRICES.map((c) => [c.id, note(c)])) as Record<CloudId, string>;
+	return { ...base, openorange: prices.aws, openorangeNote: notes.aws, prices, notes };
+};
+
+const storage = (id: string, title: string, cloudflare: number) =>
+	meterOn(
+		{ id, title, unit: 'GB-month', cloudflare, cloudflareNote: `$${cloudflare.toFixed(2)} per GB-month` },
+		(c) => c.storage.perGbMonth,
+		(c) => `${c.storage.name} in your account`,
+	);
+// A write-type operation, priced at `count` actor SQLite writes each. The
+// measured cost per write scales with the cloud's object-storage write price.
+const writes = (id: string, title: string, unit: string, cloudflare: number, cloudflareNote: string, count: number, what: string) =>
+	meterOn(
+		{ id, title, unit, cloudflare, cloudflareNote },
+		(c) => WRITE_ESTIMATE.perMillion * count * (c.writeOps / AWS.writeOps),
+		(c) => `${what}, at the measured ${c.storage.name} request cost per write`,
+	);
 
 export const COST = {
 	headroom: HEADROOM,
@@ -186,24 +253,16 @@ export const COST = {
 		{
 			title: 'Compute',
 			meters: [
-				{
-					id: 'durable-objects',
-					title: 'Durable Object compute',
-					unit: 'GB-hour',
-					cloudflare: (12.5 / 1_000_000) * 3600,
-					cloudflareNote: '$12.50 per million GB-s',
-					openorange: (R7G_XLARGE.hourly / R7G_XLARGE.memoryGb) * HEADROOM,
-					openorangeNote: `${R7G_XLARGE.name} (Graviton), ${R7G_XLARGE.memoryGb} GB for $${R7G_XLARGE.hourly}/h, plus 40% headroom`,
-				},
-				{
-					id: 'workers',
-					title: 'Workers compute',
-					unit: 'vCPU-hour',
-					cloudflare: (0.02 / 1_000_000) * 3_600_000,
-					cloudflareNote: '$0.02 per million CPU-ms, plus $0.30 per million requests',
-					openorange: (C7G_XLARGE.hourly / C7G_XLARGE.vcpu) * HEADROOM,
-					openorangeNote: `${C7G_XLARGE.name} (Graviton), ${C7G_XLARGE.vcpu} vCPU for $${C7G_XLARGE.hourly}/h, plus 40% headroom. No request fee.`,
-				},
+				meterOn(
+					{ id: 'durable-objects', title: 'Durable Object compute', unit: 'GB-hour', cloudflare: (12.5 / 1_000_000) * 3600, cloudflareNote: '$12.50 per million GB-s' },
+					(c) => (c.memory.hourly / c.memory.memoryGb) * HEADROOM,
+					(c) => `${c.memory.name} (ARM), ${c.memory.memoryGb} GB for $${c.memory.hourly}/h, plus 40% headroom`,
+				),
+				meterOn(
+					{ id: 'workers', title: 'Workers compute', unit: 'vCPU-hour', cloudflare: (0.02 / 1_000_000) * 3_600_000, cloudflareNote: '$0.02 per million CPU-ms, plus $0.30 per million requests' },
+					(c) => (c.cpu.hourly / c.cpu.vcpu) * HEADROOM,
+					(c) => `${c.cpu.name} (ARM), ${c.cpu.vcpu} vCPU for $${c.cpu.hourly}/h, plus 40% headroom. No request fee.`,
+				),
 			],
 		},
 		{

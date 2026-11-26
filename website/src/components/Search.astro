@@ -1,0 +1,215 @@
+---
+// ⌘K search over every page of the site, with the dialog UX of rivet-website's
+// TypesenseSearch.tsx. The index is static: `pagefind --site dist` writes it to
+// /pagefind/ after `astro build` (package.json), from each page's
+// data-pagefind-body (Base.astro). `astro dev` has no index; search the
+// output of `pnpm build && pnpm preview` instead.
+---
+
+<button
+	type="button"
+	class="flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-full text-ink-soft transition-colors hover:bg-paper-mid hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange motion-reduce:transition-none xl:mr-2 xl:w-44 xl:justify-start xl:border xl:border-line xl:bg-surface xl:pl-3 xl:pr-1.5 xl:text-ink-faint xl:hover:border-ink/25 xl:hover:bg-surface"
+	aria-label="Search"
+	aria-keyshortcuts="Meta+K Control+K"
+	data-cmdk-open
+>
+	<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" class="shrink-0"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+	<span class="hidden text-[13.5px] xl:inline">Search…</span>
+	<kbd class="kbd ml-auto hidden xl:inline-flex" data-cmdk-kbd>⌘K</kbd>
+</button>
+
+<dialog class="cmdk m-0 w-full max-w-none bg-transparent p-0 text-ink backdrop:bg-paper/80 backdrop:backdrop-blur-sm" aria-label="Search" data-cmdk>
+	<!-- The panel is the dialog's only child, so a click outside it closes. -->
+	<div class="mx-4 mt-[12vh] max-w-xl overflow-hidden rounded-xl border border-line bg-surface shadow-[0_24px_60px_-12px_rgb(0_0_0/0.25)] sm:mx-auto">
+		<div class="flex items-center gap-3 border-b border-line px-4">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" class="shrink-0 text-ink-faint"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+			<!-- 16px: iOS Safari zooms on focus below that. -->
+			<input
+				type="search"
+				class="h-13 w-full bg-transparent text-base outline-none placeholder:text-ink-faint [&::-webkit-search-cancel-button]:hidden"
+				placeholder="Search the docs…"
+				autocomplete="off"
+				spellcheck="false"
+				role="combobox"
+				aria-expanded="false"
+				aria-controls="cmdk-results"
+				aria-autocomplete="list"
+				data-cmdk-input
+			/>
+			<kbd class="kbd">Esc</kbd>
+		</div>
+		<ul id="cmdk-results" role="listbox" aria-label="Results" class="max-h-[min(60vh,26rem)] overflow-y-auto empty:hidden" data-cmdk-results></ul>
+		<p class="px-4 py-6 text-center text-[13.5px] text-ink-faint" aria-live="polite" data-cmdk-status>Search bindings, commands, errors and guides.</p>
+	</div>
+</dialog>
+
+<style>
+	.kbd {
+		align-items: center;
+		height: 1.25rem;
+		padding: 0 0.375rem;
+		border: 1px solid var(--color-line);
+		border-radius: 0.3rem;
+		background: var(--color-paper-mid);
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 500;
+		color: var(--color-ink-faint);
+	}
+	.cmdk[open] {
+		max-height: none;
+		height: 100%;
+	}
+	.cmdk :global(mark) {
+		border-radius: 2px;
+		padding: 0 1px;
+		background: var(--color-orange-soft);
+		color: var(--color-orange-deep);
+	}
+	.cmdk :global([aria-selected='true']) {
+		background: var(--color-paper-mid);
+	}
+</style>
+
+<script>
+	type Hit = { url: string; title: string; section: string; excerpt: string };
+	type Pagefind = {
+		search: (q: string) => Promise<{ results: { data: () => Promise<{ url: string; excerpt: string; meta: Record<string, string> }> }[] }>;
+	};
+
+	const dialog = document.querySelector<HTMLDialogElement>('[data-cmdk]')!;
+	const input = dialog.querySelector<HTMLInputElement>('[data-cmdk-input]')!;
+	const list = dialog.querySelector<HTMLUListElement>('[data-cmdk-results]')!;
+	const status = dialog.querySelector<HTMLElement>('[data-cmdk-status]')!;
+	const IDLE = status.textContent;
+
+	if (!/Mac|iPhone|iPad/.test(navigator.platform)) for (const kbd of document.querySelectorAll('[data-cmdk-kbd]')) kbd.textContent = 'Ctrl K';
+
+	// Loaded on first open, so pages that never search never fetch it. A
+	// variable path keeps Vite from bundling a file that exists only after build.
+	const PAGEFIND = '/pagefind/pagefind.js';
+	let pagefind: Promise<Pagefind> | undefined;
+	const load = () => (pagefind ??= import(/* @vite-ignore */ PAGEFIND));
+
+	let hits: Hit[] = [];
+	let selected = 0;
+	let timer = 0;
+	let latest = 0;
+
+	const open = () => {
+		if (dialog.open) return;
+		dialog.showModal();
+		input.select();
+		load().catch(() => {});
+	};
+	for (const button of document.querySelectorAll('[data-cmdk-open]')) button.addEventListener('click', open);
+	document.addEventListener('keydown', (event) => {
+		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+			event.preventDefault();
+			if (dialog.open) dialog.close();
+			else open();
+		}
+	});
+	dialog.addEventListener('click', (event) => {
+		if (event.target === dialog) dialog.close();
+	});
+
+	// Pagefind excerpts are escaped text with <mark> around matches. Build text
+	// nodes rather than set HTML, so the page content never becomes markup.
+	// A detached <textarea> decodes entities and, unlike DOMParser, keeps the
+	// leading space after a <mark>.
+	const decoder = document.createElement('textarea');
+	const decode = (html: string) => {
+		decoder.innerHTML = html;
+		return decoder.value;
+	};
+	const excerpt = (value: string) => {
+		const p = document.createElement('p');
+		p.className = 'mt-1 line-clamp-2 text-[13px] leading-snug text-ink-faint';
+		value.split(/<\/?mark>/).forEach((part, i) => {
+			if (i % 2) p.append(Object.assign(document.createElement('mark'), { textContent: decode(part) }));
+			else p.append(decode(part));
+		});
+		return p;
+	};
+
+	const render = () => {
+		list.replaceChildren(
+			...hits.map((hit, i) => {
+				const li = document.createElement('li');
+				li.id = `cmdk-hit-${i}`;
+				li.setAttribute('role', 'option');
+				const a = Object.assign(document.createElement('a'), { href: hit.url, className: 'block border-b border-line px-4 py-3 last:border-0', tabIndex: -1 });
+				a.append(
+					Object.assign(document.createElement('span'), { className: 'block text-[14.5px] font-medium', textContent: hit.title }),
+					Object.assign(document.createElement('span'), { className: 'block text-[12px] text-orange-deep', textContent: hit.section }),
+				);
+				if (hit.excerpt) a.append(excerpt(hit.excerpt));
+				a.addEventListener('mousemove', () => select(i));
+				li.append(a);
+				return li;
+			}),
+		);
+		input.setAttribute('aria-expanded', String(hits.length > 0));
+		select(selected);
+	};
+
+	const select = (i: number) => {
+		if (!hits.length) return input.removeAttribute('aria-activedescendant');
+		selected = (i + hits.length) % hits.length;
+		for (const [j, li] of [...list.children].entries()) li.setAttribute('aria-selected', String(j === selected));
+		input.setAttribute('aria-activedescendant', `cmdk-hit-${selected}`);
+		list.children[selected]?.scrollIntoView({ block: 'nearest' });
+	};
+
+	const show = (message: string | null) => {
+		status.textContent = message;
+		status.hidden = message === null;
+	};
+
+	const search = async (q: string) => {
+		// Only the newest query may render, so a slow reply to an older one
+		// never replaces newer results.
+		const id = ++latest;
+		try {
+			const { results } = await (await load()).search(q);
+			const data = await Promise.all(results.slice(0, 10).map((r) => r.data()));
+			if (id !== latest) return;
+			hits = data.map((d) => ({ url: d.url, title: d.meta.title ?? d.url, section: d.meta.section ?? 'OpenOrange', excerpt: d.excerpt }));
+			selected = 0;
+			render();
+			show(hits.length ? null : `No results for “${q}”`);
+		} catch (error) {
+			if (id !== latest) return;
+			console.error(error);
+			hits = [];
+			render();
+			show('Search is unavailable right now.');
+		}
+	};
+
+	input.addEventListener('input', () => {
+		clearTimeout(timer);
+		const q = input.value.trim();
+		if (!q) {
+			latest++;
+			hits = [];
+			render();
+			return show(IDLE);
+		}
+		timer = window.setTimeout(() => search(q), 100);
+	});
+
+	input.addEventListener('keydown', (event) => {
+		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+			event.preventDefault();
+			select(selected + (event.key === 'ArrowDown' ? 1 : -1));
+		} else if (event.key === 'Enter' && hits[selected]) {
+			event.preventDefault();
+			const { url } = hits[selected];
+			// ⌘/Ctrl+Enter opens in a new tab, like a ⌘-click.
+			if (event.metaKey || event.ctrlKey) window.open(url, '_blank');
+			else location.href = url;
+		}
+	});
+</script>

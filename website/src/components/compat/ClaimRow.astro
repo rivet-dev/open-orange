@@ -26,7 +26,7 @@ const s = CLAIM_LABEL[claim.status];
 	) : (
 		<span slot="name" class="row-name" set:html={inline(claim.title)} />
 	)}
-	<span slot="a" class="row-preview" set:html={inline(claim.orange)} />
+	<span slot="a" class="row-preview" data-pagefind-ignore set:html={inline(claim.orange)} />
 	<ResultCount slot="end" evidence={claim.evidence} />
 
 	<dl>
@@ -65,7 +65,7 @@ const s = CLAIM_LABEL[claim.status];
 		{claim.evidence.length ? (
 			<>
 				<dt>Results</dt>
-				<dd><EvidenceList evidence={claim.evidence} /></dd>
+				<dd data-pagefind-ignore><EvidenceList evidence={claim.evidence} /></dd>
 			</>
 		) : null}
 	</dl>

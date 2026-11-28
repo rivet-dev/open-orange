@@ -29,25 +29,64 @@ function trimSqlQuery(sql: string): string {
 	return trimmedSql;
 }
 
-// The checks below look only at the end of a statement. Wrangler's splitter tests the whole statement
-// for each character, which is quadratic in its size: a 1 MB row took 5 minutes.
-const statementTailLength = 8;
-
+// A `;` only ends a statement outside a CREATE [TEMP|TEMPORARY] TRIGGER body - inside one
+// it separates the trigger's own inner statements, up to the trigger's closing END. This
+// mirrors sqlite3_complete()'s statement machine, which only enters that mode on CREATE
+// TRIGGER itself, never on a bare BEGIN or a CASE expression. This file's previous BEGIN/CASE
+// depth counter wrongly treated a parenthesized `CASE ... END`, or one followed by a comma, as
+// a compound block too, which sqlite3_complete() itself never does.
+// https://github.com/sqlite/sqlite/blob/version-3.46.0/src/complete.c#L104-L260
+// Adapted from the same machine already ported in this repo for a different purpose:
+// https://github.com/rivet-dev/open-orange/blob/3f14b96d687d852e36b271f5ab4219d7bee1dc5f/packages/runtime-node/src/bindings/durable-objects/storage.ts#L395-L440
 function splitSqlIntoStatements(sql: string): string[] {
 	const statements: string[] = [];
 	let statement = "";
-	let tail = "";
 	const append = (text: string): void => {
 		statement += text;
-		tail = (tail + text).slice(-statementTailLength);
 	};
-	// How many BEGIN or CASE blocks are open. A `;` inside one does not end the statement.
-	let compoundDepth = 0;
+	let inTriggerBody = false;
+	// Saw CREATE, waiting for an optional TEMP/TEMPORARY and then TRIGGER.
+	let afterCreate = false;
+	// Inside a trigger body, the word just completed was END - only a `;` reached right
+	// after that word (whitespace and comments aside) closes the trigger's own statement.
+	let justSawEnd = false;
+	let pendingWord = "";
+	const endPendingWord = (): void => {
+		if (pendingWord.length === 0) return;
+		const word = pendingWord;
+		pendingWord = "";
+		if (inTriggerBody) {
+			justSawEnd = word === "END";
+			return;
+		}
+		if (word === "CREATE") {
+			afterCreate = true;
+			return;
+		}
+		if (afterCreate && (word === "TEMP" || word === "TEMPORARY")) return;
+		if (afterCreate && word === "TRIGGER") {
+			inTriggerBody = true;
+			afterCreate = false;
+			justSawEnd = false;
+			return;
+		}
+		afterCreate = false;
+	};
 	let index = 0;
 	while (index < sql.length) {
 		const char = String.fromCodePoint(sql.codePointAt(index) ?? 0);
 		index += char.length;
-		if (compoundDepth > 0 && /\sEND[;\s]$/i.test(tail + char)) compoundDepth -= 1;
+		const isIdentifierChar = /[A-Za-z0-9_]/.test(char);
+		if (!isIdentifierChar) {
+			endPendingWord();
+			// Only whitespace and comments may sit between the trigger's own closing END
+			// and its `;` - anything else (a CASE's END, say) means this was not that END.
+			if (inTriggerBody && justSawEnd && char !== ";" && !/\s/.test(char)) {
+				const startsLineComment = char === "-" && sql[index] === "-";
+				const startsBlockComment = char === "/" && sql[index] === "*";
+				if (!startsLineComment && !startsBlockComment) justSawEnd = false;
+			}
+		}
 		switch (char) {
 			case "'":
 			case '"':
@@ -91,19 +130,20 @@ function splitSqlIntoStatements(sql: string): string[] {
 				append(char);
 				continue;
 			case ";":
-				if (compoundDepth === 0) {
+				if (inTriggerBody && !justSawEnd) {
+					append(char);
+				} else {
 					statements.push(statement);
 					statement = "";
-					tail = "";
-				} else {
-					append(char);
+					inTriggerBody = false;
+					justSawEnd = false;
 				}
 				break;
 			default:
+				if (isIdentifierChar) pendingWord += char.toUpperCase();
 				append(char);
 				break;
 		}
-		if (/\s(BEGIN|CASE)\s$/i.test(tail)) compoundDepth += 1;
 	}
 	statements.push(statement);
 	return statements.map((value) => value.trim()).filter((value) => value.length > 0);
